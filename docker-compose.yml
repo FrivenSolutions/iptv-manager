@@ -1,0 +1,25 @@
+# Works with `docker compose up -d --build` and as a Portainer Git stack.
+# Settings below can be overridden with environment variables (Portainer: "Environment variables").
+services:
+  iptv-manager:
+    build: .
+    image: iptv-manager:latest
+    # Built from this repo, never pulled from a registry: keeps "re-pull image" in
+    # Portainer (docker compose pull) from looking for it on Docker Hub.
+    pull_policy: build
+    container_name: iptv-manager
+    restart: unless-stopped
+    ports:
+      - "${IPTV_PORT:-8080}:8080"
+    volumes:
+      # A named volume is created with the right ownership for the container's
+      # non-root user. To use a host folder instead, chown it to 1000:1000 first.
+      - iptv-data:/data
+    environment:
+      # Only affects log timestamps; guide times are stored with their UTC offsets.
+      TZ: ${TZ:-UTC}
+      # Optional: if set, becomes the admin password on every start (also password recovery).
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+
+volumes:
+  iptv-data:

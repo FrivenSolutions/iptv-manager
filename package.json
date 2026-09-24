@@ -1,0 +1,27 @@
+{
+  "name": "iptv-manager",
+  "version": "1.0.0",
+  "description": "Lightweight IPTV playlist manager: ingest M3U/XMLTV/Xtream Codes sources, filter categories, and re-serve trimmed M3U, XMLTV and Xtream Codes outputs.",
+  "type": "module",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "author": "frittsasaurus",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/frittsasaurus/iptv-manager.git"
+  },
+  "homepage": "https://github.com/frittsasaurus/iptv-manager#readme",
+  "bugs": {
+    "url": "https://github.com/frittsasaurus/iptv-manager/issues"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "sax": "^1.6.1"
+  }
+}

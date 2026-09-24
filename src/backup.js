@@ -1,0 +1,215 @@
+// Settings export/import. Categories and channels are referenced by source-relative
+// names/keys rather than database ids, so an export restores onto a fresh install.
+import { HttpError } from './http.js';
+import { OPS } from './filters.js';
+import { parseJellyfin } from './outputs/epg.js';
+import { now } from './db.js';
+
+export const FORMAT = 'iptv-manager-settings';
+export const FORMAT_VERSION = 1;
+
+const SOURCE_FIELDS = ['name', 'type', 'url', 'epg_urls', 'xc_host', 'xc_username', 'xc_password', 'xc_stream_ext',
+  'hdhr_host', 'user_agent', 'live_only', 'refresh_minutes', 'enabled', 'sort'];
+const OUTPUT_FIELDS = ['name', 'token', 'stream_mode', 'include_all', 'number_start', 'epg_days', 'xc_enabled',
+  'xc_username', 'xc_password'];
+
+const pick = (row, keys) => Object.fromEntries(keys.map((k) => [k, row[k] ?? null]));
+
+export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
+  const sources = db.all('SELECT * FROM sources ORDER BY sort, id');
+  const outputs = db.all('SELECT * FROM outputs ORDER BY id');
+  const catRef = new Map(db.all('SELECT id, source_id, name FROM categories').map((c) => [c.id, c]));
+  const chRef = new Map(db.all('SELECT id, source_id, key FROM channels').map((c) => [c.id, c]));
+
+  // Only rows that carry edits, or that output overrides/rules point at, need exporting.
+  const catOverrides = db.all('SELECT * FROM output_category_overrides');
+  const chOverrides = db.all('SELECT * FROM output_channel_overrides');
+  const chRules = db.all('SELECT * FROM output_channel_rules ORDER BY sort, id');
+  const neededCats = new Set([...catOverrides.map((r) => r.category_id), ...chRules.map((r) => r.category_id)]);
+  const neededChans = new Set(chOverrides.map((r) => r.channel_id));
+
+  return {
+    format: FORMAT,
+    version: FORMAT_VERSION,
+    exported_at: new Date().toISOString(),
+    app_version: appVersion,
+    includes_secrets: !!secrets,
+    settings: { base_url: db.getSetting('base_url') || '' },
+    sources: sources.map((s) => {
+      const src = { ref: s.id, ...pick(s, SOURCE_FIELDS), live_only: !!s.live_only, enabled: !!s.enabled };
+      if (!secrets) {
+        src.xc_password = null;
+        src.url = s.url && /[?&](username|password)=/i.test(s.url) ? null : s.url;
+        src.epg_urls = s.epg_urls.split(/\r?\n/).filter((u) => !/[?&](username|password)=/i.test(u)).join('\n');
+      }
+      src.categories = db.all('SELECT id, name, custom_name, jellyfin FROM categories WHERE source_id = ?', [s.id])
+        .filter((c) => c.custom_name || c.jellyfin || neededCats.has(c.id))
+        .map((c) => ({ name: c.name, custom_name: c.custom_name, jellyfin: parseJellyfin(c.jellyfin) }));
+      src.channels = db.all(
+        `SELECT id, key, name, custom_name, custom_logo, custom_epg_id, custom_chno FROM channels WHERE source_id = ?`,
+        [s.id],
+      )
+        .filter((c) => c.custom_name || c.custom_logo || c.custom_epg_id || c.custom_chno || neededChans.has(c.id))
+        .map((c) => pick(c, ['key', 'name', 'custom_name', 'custom_logo', 'custom_epg_id', 'custom_chno']));
+      return src;
+    }),
+    outputs: outputs.map((o) => ({
+      ...pick(o, OUTPUT_FIELDS),
+      include_all: !!o.include_all,
+      xc_enabled: !!o.xc_enabled,
+      xc_password: secrets ? o.xc_password : null,
+      sources: db.all('SELECT source_id FROM output_sources WHERE output_id = ? ORDER BY sort', [o.id]).map((r) => r.source_id),
+      rules: db.all('SELECT source_id, action, op, value FROM output_rules WHERE output_id = ? ORDER BY sort, id', [o.id])
+        .map((r) => ({ source: r.source_id, action: r.action, op: r.op, value: r.value })),
+      category_overrides: catOverrides.filter((r) => r.output_id === o.id && catRef.has(r.category_id)).map((r) => {
+        const c = catRef.get(r.category_id);
+        return { source: c.source_id, category: c.name, state: r.state };
+      }),
+      channel_rules: chRules.filter((r) => r.output_id === o.id && catRef.has(r.category_id)).map((r) => {
+        const c = catRef.get(r.category_id);
+        return { source: c.source_id, category: c.name, action: r.action, op: r.op, value: r.value };
+      }),
+      channel_overrides: chOverrides.filter((r) => r.output_id === o.id && chRef.has(r.channel_id)).map((r) => {
+        const c = chRef.get(r.channel_id);
+        return { source: c.source_id, key: c.key, state: r.state };
+      }),
+    })),
+  };
+}
+
+function check(cond, msg) {
+  if (!cond) throw new HttpError(400, `Invalid settings file: ${msg}`);
+}
+
+function validate(data) {
+  check(data && data.format === FORMAT, 'not an IPTV Manager settings export');
+  check(Number(data.version) <= FORMAT_VERSION, `made by a newer version (format ${data.version})`);
+  check(Array.isArray(data.sources) && Array.isArray(data.outputs), 'missing sources or outputs');
+  const refs = new Set();
+  for (const s of data.sources) {
+    check(s.ref != null && !refs.has(s.ref), 'duplicate or missing source ref');
+    refs.add(s.ref);
+    check(['m3u', 'xc', 'hdhr'].includes(s.type), `source "${s.name}" has an unknown type`);
+  }
+  const rule = (r) => ['include', 'exclude'].includes(r.action) && OPS.includes(r.op) && typeof r.value === 'string';
+  const tokens = new Set();
+  const users = new Set();
+  for (const o of data.outputs) {
+    check(typeof o.token === 'string' && o.token && !tokens.has(o.token), `output "${o.name}" has a missing or duplicate token`);
+    tokens.add(o.token);
+    if (o.xc_username) {
+      check(!users.has(o.xc_username), `Xtream Codes username "${o.xc_username}" is used twice`);
+      users.add(o.xc_username);
+    }
+    check(['direct', 'redirect', 'proxy'].includes(o.stream_mode), `output "${o.name}" has an unknown stream mode`);
+    check((o.rules || []).every(rule) && (o.channel_rules || []).every(rule), `output "${o.name}" has an invalid rule`);
+    const used = [...(o.sources || []), ...[...(o.category_overrides || []), ...(o.channel_rules || []), ...(o.channel_overrides || [])].map((x) => x.source)];
+    for (const r of used) {
+      check(refs.has(r), `output "${o.name}" refers to a source that is not in the file`);
+    }
+  }
+}
+
+/**
+ * Replace every source and output with the contents of an export. Categories and channels
+ * that the file references are created as inactive placeholders; the first refresh fills
+ * them in and keeps their edits, since ingest upserts on (source, name) and (source, key).
+ */
+export function importSettings(db, data) {
+  validate(data);
+  const t = now();
+  const summary = { sources: 0, outputs: 0 };
+  const sourceIds = db.tx(() => {
+    db.run('DELETE FROM outputs');
+    db.run('DELETE FROM sources');
+    if (data.settings && typeof data.settings.base_url === 'string') db.setSetting('base_url', data.settings.base_url);
+
+    const ids = new Map();
+    const catIds = new Map(); // "ref|name" -> id
+    const chIds = new Map(); // "ref|key" -> id
+    const ensureCat = (ref, name) => {
+      const k = `${ref}|${name}`;
+      if (!catIds.has(k)) {
+        const r = db.get(
+          `INSERT INTO categories (source_id, name, active, first_seen, last_seen) VALUES (?, ?, 0, ?, ?)
+           ON CONFLICT (source_id, name) DO UPDATE SET name = excluded.name RETURNING id`,
+          [ids.get(ref), String(name), t, t],
+        );
+        catIds.set(k, r.id);
+      }
+      return catIds.get(k);
+    };
+
+    data.sources.forEach((s, i) => {
+      const r = db.get(
+        `INSERT INTO sources (name, type, url, epg_urls, xc_host, xc_username, xc_password, xc_stream_ext, hdhr_host, user_agent,
+                              live_only, refresh_minutes, enabled, sort, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        [String(s.name || 'Source'), s.type, s.url ?? null, String(s.epg_urls || ''), s.xc_host ?? null, s.xc_username ?? null,
+          s.xc_password ?? null, s.xc_stream_ext === 'm3u8' ? 'm3u8' : 'ts', s.hdhr_host ?? null, String(s.user_agent || ''), s.live_only !== false,
+          Number.isFinite(Number(s.refresh_minutes)) ? Number(s.refresh_minutes) : 720, s.enabled !== false, s.sort ?? i, t],
+      );
+      ids.set(s.ref, r.id);
+      summary.sources++;
+      for (const c of s.categories || []) {
+        const id = ensureCat(s.ref, c.name);
+        db.run('UPDATE categories SET custom_name = ?, jellyfin = ? WHERE id = ?', [
+          c.custom_name || null, parseJellyfin((c.jellyfin || []).join(',')).join(',') || null, id,
+        ]);
+      }
+      for (const c of s.channels || []) {
+        const row = db.get(
+          `INSERT INTO channels (source_id, key, name, custom_name, custom_logo, custom_epg_id, custom_chno, active, first_seen, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id`,
+          [r.id, String(c.key), String(c.name || c.key), c.custom_name ?? null, c.custom_logo ?? null, c.custom_epg_id ?? null,
+            c.custom_chno ?? null, t, t],
+        );
+        chIds.set(`${s.ref}|${c.key}`, row.id);
+      }
+    });
+
+    for (const o of data.outputs) {
+      const r = db.get(
+        `INSERT INTO outputs (name, token, stream_mode, include_all, number_start, epg_days, xc_enabled, xc_username,
+                              xc_password, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        [String(o.name || 'Output'), o.token, o.stream_mode, !!o.include_all, o.number_start ?? null, Number(o.epg_days) || 7,
+          !!o.xc_enabled && !!o.xc_username && !!o.xc_password, o.xc_username || null, o.xc_password || null, t, t],
+      );
+      summary.outputs++;
+      (o.sources || []).forEach((ref, i) => {
+        db.run('INSERT OR IGNORE INTO output_sources (output_id, source_id, sort) VALUES (?, ?, ?)', [r.id, ids.get(ref), i]);
+      });
+      (o.rules || []).forEach((x, i) => {
+        db.run('INSERT INTO output_rules (output_id, source_id, action, op, value, sort) VALUES (?, ?, ?, ?, ?, ?)', [
+          r.id, x.source != null && ids.has(x.source) ? ids.get(x.source) : null, x.action, x.op, x.value, i,
+        ]);
+      });
+      for (const x of o.category_overrides || []) {
+        db.run('INSERT OR REPLACE INTO output_category_overrides (output_id, category_id, state) VALUES (?, ?, ?)', [
+          r.id, ensureCat(x.source, x.category), x.state === 'include' ? 'include' : 'exclude',
+        ]);
+      }
+      (o.channel_rules || []).forEach((x, i) => {
+        db.run('INSERT INTO output_channel_rules (output_id, category_id, action, op, value, sort) VALUES (?, ?, ?, ?, ?, ?)', [
+          r.id, ensureCat(x.source, x.category), x.action, x.op, x.value, i,
+        ]);
+      });
+      for (const x of o.channel_overrides || []) {
+        let id = chIds.get(`${x.source}|${x.key}`);
+        if (!id) {
+          id = db.get(
+            `INSERT INTO channels (source_id, key, name, active, first_seen, last_seen) VALUES (?, ?, ?, 0, ?, ?) RETURNING id`,
+            [ids.get(x.source), String(x.key), String(x.key), t, t],
+          ).id;
+          chIds.set(`${x.source}|${x.key}`, id);
+        }
+        db.run('INSERT OR REPLACE INTO output_channel_overrides (output_id, channel_id, state) VALUES (?, ?, ?)', [
+          r.id, id, x.state === 'include' ? 'include' : 'exclude',
+        ]);
+      }
+    }
+    return [...ids.values()];
+  });
+  return { ...summary, sourceIds };
+}
