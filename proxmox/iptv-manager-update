@@ -7,11 +7,16 @@
 #   iptv-manager-update --status         show the installed version and auto-update state
 #   iptv-manager-update --enable-auto [HH:MM]   update automatically every night (default 04:00)
 #   iptv-manager-update --disable-auto   turn nightly updates off
+#   iptv-manager-update --setup          (re)install the systemd units, incl. the web "Update now" hook
 #
 # From the Proxmox host:  pct exec <container id> -- iptv-manager-update
 #
 # If the new version does not answer its health check within ~30 seconds, the previous
 # version is restored and restarted, so a bad update never leaves the service down.
+#
+# The web interface cannot update anything itself (it runs unprivileged). Its "Update now"
+# button writes $DATA_DIR/update/request; a systemd path unit notices the file and runs this
+# script as root, which reports progress in $DATA_DIR/update/status.json and last.log.
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/iptv-manager}"
@@ -20,18 +25,56 @@ SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 LOCK_FILE="${LOCK_FILE:-/run/lock/iptv-manager-update.lock}"
 HEALTH_TRIES="${HEALTH_TRIES:-30}"
 SERVICE=iptv-manager
+SERVICE_USER=iptvm
 TIMER=iptv-manager-update.timer
+UPDATE_UNIT=iptv-manager-update.service
+PATH_UNIT=iptv-manager-update.path
 
 export LANG=C.UTF-8 LC_ALL=C.UTF-8
 
-log() { echo "[iptv-manager-update] $*"; }
-die() { echo "[iptv-manager-update] error: $*" >&2; exit 1; }
+REPORTING=0    # set while an update runs, so failures land in status.json too
+LOGFILE=""
+
+log() {
+  echo "[iptv-manager-update] $*"
+  [ -z "$LOGFILE" ] || echo "$(date '+%H:%M:%S') $*" >> "$LOGFILE"
+}
+die() {
+  echo "[iptv-manager-update] error: $*" >&2
+  [ -z "$LOGFILE" ] || echo "$(date '+%H:%M:%S') error: $*" >> "$LOGFILE"
+  [ "$REPORTING" = 1 ] && report "${FAIL_STATE:-failed}" "$*"
+  exit 1
+}
 
 load_conf() {
   # shellcheck disable=SC1090
   [ -f "$CONF" ] && . "$CONF"
   PORT="${PORT:-8080}"
   BRANCH="${IPTV_BRANCH:-main}"
+  DATA_DIR="${DATA_DIR:-/var/lib/iptv-manager}"
+  UPDATE_DIR="$DATA_DIR/update"
+}
+
+json_str() {
+  local s="${1//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/ }"
+  printf '"%s"' "${s//$'\t'/ }"
+}
+
+# Progress for the web interface: state is running, updated, current, skipped, rolled_back or failed.
+report() {
+  mkdir -p "$UPDATE_DIR"
+  local tmp="$UPDATE_DIR/status.json.tmp" now
+  now="$(date +%s)"
+  {
+    printf '{"state":%s,"message":%s,"trigger":%s,"started_at":%s,' \
+      "$(json_str "$1")" "$(json_str "$2")" "$(json_str "${TRIGGER:-manual}")" "${STARTED_AT:-$now}"
+    printf '"finished_at":%s,"from":%s,"to":%s}\n' \
+      "$([ "$1" = running ] && echo null || echo "$now")" "$(json_str "${OLD:-}")" "$(json_str "${NEW:-}")"
+  } > "$tmp"
+  mv -f "$tmp" "$UPDATE_DIR/status.json"
+  chown "$SERVICE_USER:$SERVICE_USER" "$UPDATE_DIR/status.json" 2>/dev/null || true
 }
 
 describe() { git -C "$APP_DIR" log -1 --format='%h %s (%cd)' --date=short "${1:-HEAD}"; }
@@ -64,17 +107,36 @@ update() {
   local force="$1"
   if command -v flock >/dev/null; then
     exec 9>"$LOCK_FILE"
-    flock -n 9 || die "another update is already running"
+    # The run already in progress owns status.json; just step aside.
+    flock -n 9 || { log "Another update is already running"; exit 0; }
   fi
+  # A request from the web interface is consumed first, so the path unit does not fire again.
+  TRIGGER=manual
+  if [ -e "$UPDATE_DIR/request" ]; then
+    TRIGGER=web
+    rm -f "$UPDATE_DIR/request"
+  elif [ -n "${INVOCATION_ID:-}" ]; then
+    TRIGGER=scheduled
+  fi
+  STARTED_AT="$(date +%s)"
+  mkdir -p "$UPDATE_DIR"
+  LOGFILE="$UPDATE_DIR/last.log"
+  : > "$LOGFILE"
+  chown "$SERVICE_USER:$SERVICE_USER" "$LOGFILE" 2>/dev/null || true
+  REPORTING=1
+  report running "Checking for a new version"
+
   fetch
   if [ "$OLD" = "$NEW" ] && [ "$force" != 1 ]; then
     log "Already up to date: $(describe)"
+    report current "Already up to date"
     return 0
   fi
   # A release that already failed its health check is not retried every night.
   local bad_file="$APP_DIR/.git/iptv-manager-failed-release"
   if [ "$force" != 1 ] && [ -f "$bad_file" ] && [ "$(cat "$bad_file")" = "$NEW" ]; then
     log "Skipping $(describe "$NEW"): it failed to start last time. Retry with --force."
+    report skipped "The latest version failed to start last time, so it was skipped"
     return 0
   fi
   local old_lock new_lock
@@ -82,12 +144,18 @@ update() {
   new_lock="$(git -C "$APP_DIR" rev-parse "$NEW:package-lock.json")"
   [ "$OLD" = "$NEW" ] || log "Updating $(describe "$OLD")"
   log "        to $(describe "$NEW")"
+  report running "Installing $(git -C "$APP_DIR" log -1 --format=%h "$NEW")"
   git -C "$APP_DIR" reset --quiet --hard "$NEW"
   if [ "$force" = 1 ]; then deps "" "$new_lock"; else deps "$old_lock" "$new_lock"; fi
+  log "Restarting"
+  report running "Restarting the app"
   systemctl restart "$SERVICE"
   if healthy; then
     rm -f "$bad_file"
     log "Updated and running: $(describe)"
+    # Let the new version install any changes to its own systemd units.
+    bash "$APP_DIR/proxmox/iptv-manager-update" --setup >/dev/null 2>&1 || log "warning: --setup of the new version failed"
+    report updated "Updated to $(describe)"
     return 0
   fi
   echo "$NEW" > "$bad_file"
@@ -96,7 +164,7 @@ update() {
   deps "$new_lock" "$old_lock"
   systemctl restart "$SERVICE"
   if healthy; then
-    die "the update was rolled back; still running $(describe). See: journalctl -u $SERVICE"
+    FAIL_STATE=rolled_back die "the new version did not start, so it was rolled back; still running $(describe). See: journalctl -u $SERVICE"
   fi
   die "the rollback did not start either. See: journalctl -u $SERVICE"
 }
@@ -109,6 +177,56 @@ check() {
     log "Update available:"
     log "  installed $(describe "$OLD")"
     log "  latest    $(describe "$NEW")"
+  fi
+}
+
+# Write a unit only when its content changed; echo "changed" if it did.
+write_unit() {
+  local file="$SYSTEMD_DIR/$1" content="$2"
+  if [ ! -f "$file" ] || [ "$(cat "$file")" != "$content" ]; then
+    printf '%s\n' "$content" > "$file"
+    echo changed
+  fi
+}
+
+# Idempotent: runs at the start of every invocation, so older installs gain new units.
+setup() {
+  mkdir -p "$SYSTEMD_DIR" "$UPDATE_DIR"
+  chown "$SERVICE_USER:$SERVICE_USER" "$UPDATE_DIR" 2>/dev/null || true
+  local changed=""
+  changed+="$(write_unit "$UPDATE_UNIT" "[Unit]
+Description=Update IPTV Manager from its git repository
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /usr/local/bin/iptv-manager-update")"
+  # The timer is installed disabled; --enable-auto turns it on and sets its time.
+  changed+="$(write_unit "$TIMER" "[Unit]
+Description=Nightly IPTV Manager update
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target")"
+  changed+="$(write_unit "$PATH_UNIT" "[Unit]
+Description=Run IPTV Manager updates requested from its web interface
+
+[Path]
+PathExists=$UPDATE_DIR/request
+Unit=$UPDATE_UNIT
+
+[Install]
+WantedBy=multi-user.target")"
+  if [ -n "$changed" ]; then
+    systemctl daemon-reload
+  fi
+  if ! systemctl is-enabled "$PATH_UNIT" >/dev/null 2>&1 || [ -n "$changed" ]; then
+    systemctl enable --now "$PATH_UNIT" >/dev/null 2>&1 || log "warning: could not enable $PATH_UNIT"
   fi
 }
 
@@ -136,9 +254,10 @@ status() {
   else
     log "Nightly updates: off (enable with: iptv-manager-update --enable-auto)"
   fi
+  if systemctl is-enabled "$PATH_UNIT" >/dev/null 2>&1; then log "Web updates:     on"; else log "Web updates:     off (run --setup)"; fi
 }
 
-usage() { sed -n '2,15p' "$(readlink -f "$0")" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,20p' "$(readlink -f "$0")" | sed 's/^# \{0,1\}//'; }
 
 main() {
   [ "$(id -u)" = 0 ] || [ -n "${IPTV_UPDATE_ALLOW_NONROOT:-}" ] || die "run as root"
@@ -148,13 +267,17 @@ main() {
   [ -e "$bin_link" ] || ln -sfn "$APP_DIR/proxmox/iptv-manager-update" "$bin_link" 2>/dev/null || true
   load_conf
   case "${1:-}" in
+    -h | --help) usage; return 0 ;;
+    --setup) setup; log "Systemd units are in place; the web interface can request updates"; return 0 ;;
+  esac
+  setup
+  case "${1:-}" in
     "") update 0 ;;
     --force) update 1 ;;
     --check) check ;;
     --status) status ;;
     --enable-auto) enable_auto "${2:-}" ;;
     --disable-auto) disable_auto ;;
-    -h | --help) usage ;;
     *) usage; die "unknown option '$1'" ;;
   esac
 }

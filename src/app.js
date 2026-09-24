@@ -17,6 +17,7 @@ import { serveChannel, serveSegment } from './stream.js';
 import { HDHR_API } from './hdhomerun.js';
 import { currentVersion } from './version.js';
 import { UpdateChecker, installType, DEFAULT_UPDATE_REPO } from './updates.js';
+import { WebUpdater } from './webupdate.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = path.join(ROOT, 'public');
@@ -40,7 +41,7 @@ const UI_HEADERS = {
 export function createApp({
   dataDir, adminPassword = '', log = defaultLog, hdhrApiBase = HDHR_API,
   updateApiBase = 'https://api.github.com', updateRepo = process.env.IPTV_UPDATE_REPO || DEFAULT_UPDATE_REPO,
-  updateCheckDelayMs = 60_000, appCommit,
+  updateCheckDelayMs = 60_000, appCommit, webUpdatePathUnit,
 } = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.rmSync(path.join(dataDir, 'tmp'), { recursive: true, force: true });
@@ -91,6 +92,7 @@ export function createApp({
     installType: installType(ROOT),
     repo: updateRepo,
   };
+  ctx.webUpdate = new WebUpdater({ dataDir, pathUnit: webUpdatePathUnit });
   ctx.updates = new UpdateChecker({
     db, commit: ctx.build.commit, apiBase: updateApiBase, repo: updateRepo, delayMs: updateCheckDelayMs, log,
   });

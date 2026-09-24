@@ -257,11 +257,21 @@ export function registerApi(router, ctx) {
     repo: ctx.build.repo,
     enabled: ctx.updates.enabled,
     ...ctx.updates.state(),
+    web_update: ctx.webUpdate.view(),
   });
   router.get('/api/updates', (req, res) => sendJson(res, 200, updateView()));
   router.post('/api/updates/check', async (req, res) => {
     await ctx.updates.check();
     sendJson(res, 200, updateView());
+  });
+  // Ask the root updater (via its systemd path unit) to update now; see src/webupdate.js.
+  router.post('/api/updates/apply', (req, res) => {
+    if (!ctx.webUpdate.available) {
+      throw new HttpError(409, 'Updating from the web is not set up on this install');
+    }
+    if (!ctx.webUpdate.request()) throw new HttpError(409, 'An update is already in progress');
+    ctx.log('Update requested from the web interface');
+    sendJson(res, 202, updateView());
   });
 
   // --- backup ----------------------------------------------------------------

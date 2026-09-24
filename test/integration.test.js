@@ -797,6 +797,59 @@ test('rule order is saved and returned as given, for category and channel rules'
   await api('DELETE', `/api/outputs/${o.id}`);
 });
 
+test('Update now: only where the updater path unit exists; one request at a time; progress reported', async () => {
+  // This test instance has no path unit (not a Proxmox install).
+  const none = await api('POST', '/api/updates/apply');
+  assert.equal(none.status, 409);
+  assert.match(none.data.error, /not set up/);
+  assert.equal((await api('GET', '/api/updates')).data.web_update.available, false);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-web-'));
+  const unit = path.join(dir, 'iptv-manager-update.path');
+  fs.writeFileSync(unit, '[Path]\n');
+  const data = path.join(dir, 'data');
+  const a = createApp({ dataDir: data, adminPassword: PASSWORD, log: () => {}, webUpdatePathUnit: unit, updateCheckDelayMs: 1e9 });
+  const b = `http://127.0.0.1:${(await a.start(0, '127.0.0.1')).port}`;
+  try {
+    const login = await fetch(`${b}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'fetch' }, body: JSON.stringify({ password: PASSWORD }) });
+    const c = login.headers.get('set-cookie').split(';')[0];
+    const call = async (method, p) => {
+      const r = await fetch(b + p, { method, headers: { cookie: c, 'x-requested-with': 'fetch' } });
+      return { status: r.status, data: await r.json() };
+    };
+    // Needs the admin session (and the CSRF header), like every other admin action.
+    assert.equal((await fetch(`${b}/api/updates/apply`, { method: 'POST', headers: { 'x-requested-with': 'fetch' } })).status, 401);
+
+    let r = await call('POST', '/api/updates/apply');
+    assert.equal(r.status, 202);
+    assert.ok(fs.existsSync(path.join(data, 'update', 'request')), 'request file written for the path unit');
+    assert.deepEqual([r.data.web_update.available, r.data.web_update.pending, r.data.web_update.busy], [true, true, true]);
+    assert.equal((await call('POST', '/api/updates/apply')).status, 409, 'no second request while one is pending');
+
+    // The root updater picks it up: consumes the request and reports progress.
+    fs.rmSync(path.join(data, 'update', 'request'));
+    const t = Math.floor(Date.now() / 1000);
+    const status = (s) => fs.writeFileSync(path.join(data, 'update', 'status.json'), JSON.stringify(s));
+    status({ state: 'running', message: 'Restarting the app', trigger: 'web', started_at: t, finished_at: null, from: 'a', to: 'b' });
+    fs.writeFileSync(path.join(data, 'update', 'last.log'), '10:00:00 Updating\n10:00:05 Restarting\n');
+    r = await call('GET', '/api/updates');
+    assert.equal(r.data.web_update.status.state, 'running');
+    assert.deepEqual(r.data.web_update.log, ['10:00:00 Updating', '10:00:05 Restarting']);
+    assert.equal((await call('POST', '/api/updates/apply')).status, 409, 'no request while one is running');
+
+    // A run that died long ago does not block the button forever.
+    status({ state: 'running', message: 'x', trigger: 'web', started_at: t - 3600, finished_at: null });
+    assert.equal((await call('POST', '/api/updates/apply')).status, 202);
+    fs.rmSync(path.join(data, 'update', 'request'));
+    status({ state: 'updated', message: 'Updated to b', trigger: 'web', started_at: t, finished_at: t + 20 });
+    r = await call('GET', '/api/updates');
+    assert.deepEqual([r.data.web_update.busy, r.data.web_update.status.state], [false, 'updated']);
+  } finally {
+    await a.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('update check: version, up to date, behind, GitHub down, switched off', async () => {
   let u = (await api('GET', '/api/updates')).data;
   assert.deepEqual([u.commit, u.enabled, u.checked_at], [RUNNING, true, undefined], 'nothing checked yet');

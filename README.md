@@ -140,6 +140,15 @@ service; it never runs apt or touches the container itself. If the new version d
 within about 30 seconds, the previous one is restored automatically. That release is then skipped
 until you run `iptv-manager-update --force`.
 
+**From the web interface.** When an update is available, **Settings → Version & updates** shows
+an **Update now** button. The app runs as an unprivileged user and cannot update itself. The button
+drops a request file in the app's data folder, and a systemd path unit that belongs to the updater
+runs `iptv-manager-update` as root. That is the same update, health check and rollback as running it
+by hand. The page shows the updater's progress, waits out the restart, and reloads into the new
+version. If the button's place shows a `--setup` command instead, the path unit isn't installed
+yet. Run `pct exec <container id> -- iptv-manager-update --setup` once; the updater also installs it
+by itself on its next run.
+
 | Command (inside the container, or via `pct exec <id> --`) | What it does |
 |---|---|
 | `iptv-manager-update` | Update now |
@@ -148,6 +157,7 @@ until you run `iptv-manager-update --force`.
 | `iptv-manager-update --enable-auto [HH:MM]` | Update every night (default 04:00, plus up to 30 min random delay) |
 | `iptv-manager-update --disable-auto` | Turn nightly updates off |
 | `iptv-manager-update --force` | Reinstall and restart, or retry a skipped release |
+| `iptv-manager-update --setup` | Install or repair the systemd units, including the one behind **Update now** |
 
 Nightly updates are off unless you turn them on. They install whatever is on the `main` branch.
 Forks can point an install at their own repository with `IPTV_REPO=<url>` (and `IPTV_BRANCH`).

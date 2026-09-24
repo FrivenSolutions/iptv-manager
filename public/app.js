@@ -1285,12 +1285,84 @@ const HOW_TO_UPDATE = {
   other: () => ['Run ', h('code', null, 'git pull'), ' in the app folder, then restart the app.'],
 };
 
+const UPDATE_RESULTS = {
+  updated: ['ok', 'Updated'],
+  current: ['ok', 'Already up to date'],
+  skipped: ['warn', 'Skipped'],
+  rolled_back: ['warn', 'Rolled back'],
+  failed: ['error', 'Failed'],
+};
+
 function updatesCard(initial) {
   const card = h('section', { class: 'card narrow' });
+  let watching = null; // { since, timer } while following an update
+
+  // Follow an update through the app restart; reload into the new version when it is done.
+  const follow = (since) => {
+    if (watching) return;
+    const started = Date.now();
+    watching = { since, timer: setInterval(async () => {
+      let u;
+      try {
+        u = await api('GET', '/api/updates');
+      } catch {
+        return; // the app is restarting
+      }
+      const wu = u.web_update;
+      const done = !wu.busy && wu.status && wu.status.state !== 'running' && (wu.status.started_at || 0) >= since - 5;
+      if (done || Date.now() - started > 10 * 60_000) {
+        clearInterval(watching.timer);
+        watching = null;
+        if (wu.status?.state === 'updated') {
+          toast('Updated; reloading');
+          setTimeout(() => location.reload(), 800);
+          return;
+        }
+      }
+      draw(u);
+    }, 2000) };
+  };
+
+  const webUpdate = (u) => {
+    const wu = u.web_update || {};
+    if (!wu.available) {
+      return u.install_type === 'proxmox'
+        ? h('p', { class: 'hint' }, 'To update from here, run this once on the Proxmox host: ',
+          h('code', null, 'pct exec <container id> -- iptv-manager-update --setup'))
+        : null;
+    }
+    const st = wu.status;
+    if (wu.busy) {
+      return h('div', { class: 'update-progress' },
+        h('p', null, h('span', { class: 'spinner' }), ' ', h('b', null, wu.pending ? 'Update requested, starting…' : st?.message || 'Updating…')),
+        wu.log?.length ? h('pre', { class: 'update-log' }, wu.log.join('\n')) : null,
+        h('p', { class: 'hint' }, 'The app restarts during the update; this page reconnects and reloads by itself.'));
+    }
+    const recent = st && st.finished_at && Date.now() / 1000 - st.finished_at < 86400;
+    const [kind, label] = UPDATE_RESULTS[st?.state] || [];
+    return h('div', null,
+      recent && label ? h('p', null, badge(label, kind), ' ', h('span', { class: 'meta' }, `${st.message} (${ago(st.finished_at)})`)) : null,
+      u.behind > 0 ? h('button', {
+        class: 'btn primary',
+        onclick: async (e) => {
+          if (!(await confirmBox('Install the update now? The app restarts, which takes up to about a minute; streams playing through it drop briefly. If the new version fails to start, the current one is restored automatically.', 'Update now'))) return;
+          e.target.disabled = true;
+          const since = Math.floor(Date.now() / 1000);
+          try {
+            draw(await attempt(() => api('POST', '/api/updates/apply')));
+            follow(since);
+          } catch {
+            e.target.disabled = false;
+          }
+        },
+      }, 'Update now') : null);
+  };
+
   const draw = (u) => {
     const gh = (sha) => `https://github.com/${u.repo}/commit/${sha}`;
     const short = (sha) => (sha ? sha.slice(0, 7) : 'unknown');
     const date = (d) => (d ? new Date(d).toLocaleDateString() : '');
+    const canApply = u.web_update?.available;
     let status;
     if (!u.checked_at) status = h('p', { class: 'meta' }, 'Not checked yet.');
     else if (u.behind > 0) {
@@ -1298,14 +1370,16 @@ function updatesCard(initial) {
         h('p', { class: 'update-available' }, `Update available: ${u.behind} new change${u.behind === 1 ? '' : 's'}.`),
         h('ul', { class: 'commit-list' }, u.commits.map((c) => h('li', null,
           h('a', { href: gh(c.sha), target: '_blank', rel: 'noopener' }, c.message), ' ', h('span', { class: 'meta' }, date(c.date))))),
-        h('p', { class: 'hint' }, (HOW_TO_UPDATE[u.install_type] || HOW_TO_UPDATE.other)()));
+        canApply ? null : h('p', { class: 'hint' }, (HOW_TO_UPDATE[u.install_type] || HOW_TO_UPDATE.other)()));
     } else if (u.behind === 0) status = h('p', null, badge('Up to date', 'ok'), ' ', h('span', { class: 'meta' }, u.note || ''));
     else status = h('p', { class: 'meta' }, u.note || 'Could not compare versions.');
+    if (u.web_update?.busy && !watching) follow(u.web_update.status?.started_at || Math.floor(Date.now() / 1000));
     fill(card,
       h('h2', null, 'Version & updates'),
       h('p', null, `IPTV Manager ${u.version} · `,
         u.commit ? h('a', { href: gh(u.commit), target: '_blank', rel: 'noopener', class: 'mono' }, short(u.commit)) : h('span', { class: 'meta' }, 'commit unknown')),
       status,
+      webUpdate(u),
       u.error ? h('p', { class: 'form-error' }, `Last check failed: ${u.error}`) : null,
       h('div', { class: 'row' },
         h('button', {
@@ -1329,7 +1403,9 @@ function updatesCard(initial) {
           onchange: (e) => attempt(() => api('PUT', '/api/settings', { update_check: e.target.checked }), e.target.checked ? 'Daily check on' : 'Daily check off'),
         }),
         ` Check GitHub (${u.repo}) for updates once a day`),
-      h('p', { class: 'hint' }, 'The check only reports new versions; updating is done the way this copy was installed.'));
+      h('p', { class: 'hint' }, u.web_update?.available
+        ? 'Update now runs the same updater as iptv-manager-update in the container, including its automatic rollback.'
+        : 'The check only reports new versions; updating is done the way this copy was installed.'));
   };
   draw(initial);
   return card;

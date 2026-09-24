@@ -115,34 +115,12 @@ PrivateTmp=true
 WantedBy=multi-user.target
 EOF
 
-cat > /etc/systemd/system/iptv-manager-update.service <<EOF
-[Unit]
-Description=Update IPTV Manager from its git repository
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/bin/bash /usr/local/bin/iptv-manager-update
-EOF
-
-# Installed but only enabled on request (AUTO_UPDATE=1 or iptv-manager-update --enable-auto).
-cat > /etc/systemd/system/iptv-manager-update.timer <<EOF
-[Unit]
-Description=Nightly IPTV Manager update
-
-[Timer]
-OnCalendar=*-*-* 04:00:00
-RandomizedDelaySec=30min
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-
 systemctl daemon-reload
 systemctl enable iptv-manager >/dev/null 2>&1
 systemctl restart iptv-manager
+# The update units (updater service, nightly timer, and the path unit behind the web
+# "Update now" button) are owned by the updater itself, so updates can change them.
+/usr/local/bin/iptv-manager-update --setup
 case "${AUTO_UPDATE:-}" in
   1) /usr/local/bin/iptv-manager-update --enable-auto ;;
   0) /usr/local/bin/iptv-manager-update --disable-auto ;;
