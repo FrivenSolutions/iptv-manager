@@ -1351,19 +1351,37 @@ async function refreshUpdateBadge() {
   } catch {}
 }
 
-const PATTERN_LABELS = {
-  ':\\s*$': 'ends with ":"',
-  '-\\s*$': 'ends with "-"',
-  '\\d\\s*$': 'ends with a number',
-  'no event\\s*$': 'ends with "NO EVENT"',
-};
+/**
+ * Plain-English reading of a simple pattern: an anchor (^ … / … $, with optional \s*)
+ * around a literal or a digit class. Anything more elaborate is called a custom pattern.
+ */
+function describePattern(p) {
+  let s = String(p || '').trim();
+  if (!s) return 'type a pattern';
+  try {
+    new RegExp(s, 'i');
+  } catch {
+    return 'not a valid pattern';
+  }
+  const start = s.startsWith('^');
+  if (start) s = s.slice(1).replace(/^\\s\*/, '');
+  const endRe = /(?:\\s\*)?\$$/;
+  const end = endRe.test(s);
+  if (end) s = s.replace(endRe, '');
+  const where = start && end ? 'is' : start ? 'starts with' : end ? 'ends with' : 'contains';
+  if (/^(?:\\d|\[0-9\])(?:\+|\{1,\})?$/.test(s)) return `${where} a number`;
+  if (s && /^(?:\\[^\w\s]|[^\\^$.*+?()[\]{}|])+$/.test(s)) {
+    return `${where === 'is' ? 'is exactly' : where} "${s.replace(/\\(.)/g, '$1')}"`;
+  }
+  return 'custom pattern';
+}
 
 /** Settings card for the regular expressions that mark a channel as an empty event placeholder. */
 function emptyEventCard(s) {
   let patterns = [...s.empty_event_patterns];
   const list = h('div', { class: 'form' });
   const testInput = h('input', { placeholder: 'Try a channel name, e.g. ESPN+ 03:' });
-  const testResult = h('span', { class: 'meta' });
+  const testResult = h('span', { class: 'pattern-result' });
   const runTest = () => {
     const name = testInput.value;
     if (!name) return (testResult.textContent = '');
@@ -1374,14 +1392,26 @@ function emptyEventCard(s) {
         return false;
       }
     });
-    testResult.textContent = hit ? `empty: matches ${PATTERN_LABELS[hit] || hit}` : 'not empty: kept';
+    testResult.className = `pattern-result ${hit ? 'empty' : 'kept'}`;
+    testResult.textContent = hit ? `Empty: ${describePattern(hit)}` : 'Not empty: kept';
   };
   const draw = () => {
     fill(list,
-      patterns.map((p, i) => h('div', { class: 'pattern-row' },
-        h('input', { value: p, oninput: (e) => { patterns[i] = e.target.value; runTest(); } }),
-        h('span', { class: 'meta' }, PATTERN_LABELS[p] || ''),
-        h('button', { class: 'icon-btn', title: 'Remove pattern', onclick: () => { patterns.splice(i, 1); draw(); runTest(); } }, '✕'))),
+      patterns.map((p, i) => {
+        const desc = h('span', { class: 'pattern-desc', title: describePattern(p) }, describePattern(p));
+        return h('div', { class: 'pattern-row' },
+          h('input', {
+            value: p,
+            spellcheck: 'false',
+            oninput: (e) => {
+              patterns[i] = e.target.value;
+              desc.textContent = desc.title = describePattern(e.target.value);
+              runTest();
+            },
+          }),
+          desc,
+          h('button', { class: 'icon-btn', title: 'Remove pattern', onclick: () => { patterns.splice(i, 1); draw(); runTest(); } }, '✕'));
+      }),
       patterns.length ? null : h('p', { class: 'meta' }, 'No patterns: the toggle hides nothing until you add one.'),
       h('div', { class: 'row' },
         h('button', { class: 'btn small', onclick: () => { patterns.push(''); draw(); [...list.querySelectorAll('input')].pop()?.focus(); } }, '+ Add pattern'),
