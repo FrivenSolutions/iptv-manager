@@ -175,6 +175,15 @@ run `journalctl -u iptv-manager -f`.
 Database changes are applied automatically on start, and your settings are kept. Export a backup
 first (**Settings → Backup & restore**) if you want a restore point.
 
+**Knowing when to update.** **Settings → Version & updates** shows the running version (the git
+commit). Once a day the app asks GitHub whether `main` has anything newer. When it does, an
+**Update available** badge appears in the top bar, and the card lists the new changes with the
+update steps for your install type. The check only reports; it never changes anything. You can
+run it with **Check now**, turn the daily check off with the switch on that card, or point it at a
+fork with the `IPTV_UPDATE_REPO=owner/name` environment variable. Docker images record their commit
+when they are built, from the `.git` folder in the build context. An image built without it shows
+"commit unknown" and can't be compared.
+
 ## Using it
 
 1. **Sources → Add source.** Paste an M3U URL, enter your Xtream Codes login, or choose

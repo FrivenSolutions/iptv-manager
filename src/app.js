@@ -15,6 +15,8 @@ import { writeEpg, EpgCache } from './outputs/epg.js';
 import { findXcOutput, playerApi } from './outputs/xc.js';
 import { serveChannel, serveSegment } from './stream.js';
 import { HDHR_API } from './hdhomerun.js';
+import { currentVersion } from './version.js';
+import { UpdateChecker, installType, DEFAULT_UPDATE_REPO } from './updates.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = path.join(ROOT, 'public');
@@ -35,7 +37,11 @@ const UI_HEADERS = {
     "default-src 'self'; img-src * data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
 };
 
-export function createApp({ dataDir, adminPassword = '', log = defaultLog, hdhrApiBase = HDHR_API } = {}) {
+export function createApp({
+  dataDir, adminPassword = '', log = defaultLog, hdhrApiBase = HDHR_API,
+  updateApiBase = 'https://api.github.com', updateRepo = process.env.IPTV_UPDATE_REPO || DEFAULT_UPDATE_REPO,
+  updateCheckDelayMs = 60_000, appCommit,
+} = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.rmSync(path.join(dataDir, 'tmp'), { recursive: true, force: true });
   const db = openDb(path.join(dataDir, 'iptv-manager.db'));
@@ -77,6 +83,17 @@ export function createApp({ dataDir, adminPassword = '', log = defaultLog, hdhrA
     epgCache: new EpgCache(path.join(dataDir, 'cache')),
   };
   ctx.jobs = new Jobs(ctx);
+  const running = currentVersion(ROOT);
+  ctx.build = {
+    version: APP_VERSION,
+    commit: appCommit === undefined ? running.commit : appCommit,
+    commitSource: appCommit === undefined ? running.source : 'test',
+    installType: installType(ROOT),
+    repo: updateRepo,
+  };
+  ctx.updates = new UpdateChecker({
+    db, commit: ctx.build.commit, apiBase: updateApiBase, repo: updateRepo, delayMs: updateCheckDelayMs, log,
+  });
 
   const router = new Router();
   registerApi(router, ctx);
@@ -229,10 +246,12 @@ export function createApp({ dataDir, adminPassword = '', log = defaultLog, hdhrA
     ctx,
     start(port, host) {
       ctx.jobs.start();
+      ctx.updates.start();
       return new Promise((resolve) => server.listen(port, host, () => resolve(server.address())));
     },
     async close() {
       ctx.jobs.stop();
+      ctx.updates.stop();
       await new Promise((r) => {
         server.close(() => r());
         server.closeAllConnections();

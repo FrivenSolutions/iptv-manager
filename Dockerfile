@@ -1,3 +1,10 @@
+# Stage 1: note which commit is being built, so the app can tell whether it is up to date.
+# The final image gets only version.json, never the .git history.
+FROM node:24-alpine AS version
+WORKDIR /src
+COPY . .
+RUN node src/version.js --write /version.json
+
 FROM node:24-alpine
 
 LABEL org.opencontainers.image.title="IPTV Manager" \
@@ -14,6 +21,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY src ./src
 COPY public ./public
+COPY --from=version /version.json ./version.json
 
 RUN mkdir -p /data && chown node:node /data
 USER node

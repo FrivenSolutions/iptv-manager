@@ -4,5 +4,6 @@ data-*
 test
 scripts
 proxmox
-.git
 *.md
+# .git stays in the build context: the first build stage reads the commit from it.
+# Only version.json reaches the final image.

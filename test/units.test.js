@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { readGitCommit, currentVersion } from '../src/version.js';
 import { parseM3U, isVod } from '../src/m3u.js';
 import { parseXmltv, parseXmltvTime } from '../src/xmltv.js';
 import { normalizeName, matchChannels } from '../src/epgmatch.js';
@@ -103,6 +107,29 @@ test('default empty-event patterns', () => {
   // Known trade-off of "ends with a number": a live event whose title ends in a number.
   assert.ok(isEmptyEvent('PPV 01: UFC 300', re));
   assert.deepEqual(compilePatterns(['(', 'ok$']).map(String), ['/ok$/i'], 'invalid patterns are skipped');
+});
+
+test('readGitCommit handles detached, loose and packed refs; version.json wins', () => {
+  const a = 'a'.repeat(40);
+  const b = 'b'.repeat(40);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-ver-'));
+  try {
+    const git = path.join(root, '.git');
+    fs.mkdirSync(path.join(git, 'refs', 'heads'), { recursive: true });
+    fs.writeFileSync(path.join(git, 'HEAD'), `${a}\n`);
+    assert.equal(readGitCommit(root), a, 'detached HEAD');
+    fs.writeFileSync(path.join(git, 'HEAD'), 'ref: refs/heads/main\n');
+    fs.writeFileSync(path.join(git, 'packed-refs'), `# pack-refs with: peeled\n${b} refs/heads/main\n`);
+    assert.equal(readGitCommit(root), b, 'packed ref');
+    fs.writeFileSync(path.join(git, 'refs', 'heads', 'main'), `${a}\n`);
+    assert.equal(readGitCommit(root), a, 'loose ref beats packed');
+    assert.deepEqual(currentVersion(root), { commit: a, source: 'git' });
+    fs.writeFileSync(path.join(root, 'version.json'), JSON.stringify({ commit: b }));
+    assert.deepEqual(currentVersion(root), { commit: b, source: 'build' });
+    assert.equal(readGitCommit(path.join(root, 'nope')), null);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('rule operators', () => {

@@ -247,6 +247,7 @@ function ensureShell(view) {
     const header = h('header', { class: 'topbar' },
       h('a', { class: 'brand', href: '#/' }, h('img', { src: '/favicon.svg', alt: '' }), 'IPTV Manager'),
       h('nav', null, links),
+      h('a', { class: 'update-badge', href: '#/settings', hidden: true }, 'Update available'),
       h('button', { class: 'btn ghost', onclick: async () => { await api('POST', '/api/logout'); route(); } }, 'Log out'));
     const main = h('main', { class: 'content' });
     fill($app, header, main);
@@ -293,6 +294,7 @@ async function route() {
   ensureShell(view);
   shell.main.replaceWith(main);
   shell.main = main;
+  refreshUpdateBadge();
 }
 
 function renderAuth(setup) {
@@ -1141,9 +1143,84 @@ async function settingsView(main) {
           cur.value = next.value = '';
         },
       }, field('Current password', cur), field('New password', next, 'At least 8 characters.'), h('button', { class: 'btn primary' }, 'Change password'))),
+    updatesCard(await api('GET', '/api/updates')),
     emptyEventCard(s),
-    backupCard(),
-    h('p', { class: 'meta' }, `IPTV Manager ${s.version}`));
+    backupCard());
+}
+
+// Functions, so each render gets its own nodes.
+const HOW_TO_UPDATE = {
+  docker: () => ['In Portainer, open the stack and click ', h('b', null, 'Pull and redeploy'),
+    ' (or turn on GitOps updates). With Docker Compose: ', h('code', null, 'git pull && docker compose up -d --build'), '.'],
+  proxmox: () => ['On the Proxmox host run ', h('code', null, 'pct exec <container id> -- iptv-manager-update'),
+    ', or turn on nightly updates with ', h('code', null, 'iptv-manager-update --enable-auto'), '.'],
+  other: () => ['Run ', h('code', null, 'git pull'), ' in the app folder, then restart the app.'],
+};
+
+function updatesCard(initial) {
+  const card = h('section', { class: 'card narrow' });
+  const draw = (u) => {
+    const gh = (sha) => `https://github.com/${u.repo}/commit/${sha}`;
+    const short = (sha) => (sha ? sha.slice(0, 7) : 'unknown');
+    const date = (d) => (d ? new Date(d).toLocaleDateString() : '');
+    let status;
+    if (!u.checked_at) status = h('p', { class: 'meta' }, 'Not checked yet.');
+    else if (u.behind > 0) {
+      status = h('div', null,
+        h('p', { class: 'update-available' }, `Update available: ${u.behind} new change${u.behind === 1 ? '' : 's'}.`),
+        h('ul', { class: 'commit-list' }, u.commits.map((c) => h('li', null,
+          h('a', { href: gh(c.sha), target: '_blank', rel: 'noopener' }, c.message), ' ', h('span', { class: 'meta' }, date(c.date))))),
+        h('p', { class: 'hint' }, (HOW_TO_UPDATE[u.install_type] || HOW_TO_UPDATE.other)()));
+    } else if (u.behind === 0) status = h('p', null, badge('Up to date', 'ok'), ' ', h('span', { class: 'meta' }, u.note || ''));
+    else status = h('p', { class: 'meta' }, u.note || 'Could not compare versions.');
+    fill(card,
+      h('h2', null, 'Version & updates'),
+      h('p', null, `IPTV Manager ${u.version} · `,
+        u.commit ? h('a', { href: gh(u.commit), target: '_blank', rel: 'noopener', class: 'mono' }, short(u.commit)) : h('span', { class: 'meta' }, 'commit unknown')),
+      status,
+      u.error ? h('p', { class: 'form-error' }, `Last check failed: ${u.error}`) : null,
+      h('div', { class: 'row' },
+        h('button', {
+          class: 'btn small',
+          onclick: async (e) => {
+            e.target.disabled = true;
+            try {
+              const r = await attempt(() => api('POST', '/api/updates/check'));
+              draw(r);
+              updateBadge(r);
+            } finally {
+              e.target.disabled = false;
+            }
+          },
+        }, 'Check now'),
+        u.checked_at ? h('span', { class: 'meta' }, `Last checked ${ago(u.checked_at)}`) : null),
+      h('label', { class: 'check' },
+        h('input', {
+          type: 'checkbox',
+          checked: u.enabled,
+          onchange: (e) => attempt(() => api('PUT', '/api/settings', { update_check: e.target.checked }), e.target.checked ? 'Daily check on' : 'Daily check off'),
+        }),
+        ` Check GitHub (${u.repo}) for updates once a day`),
+      h('p', { class: 'hint' }, 'The check only reports new versions; updating is done the way this copy was installed.'));
+  };
+  draw(initial);
+  return card;
+}
+
+// Top-bar "Update available" link, refreshed from the cached check at most every few minutes.
+let badgeFetchedAt = 0;
+function updateBadge(u) {
+  const el = shell?.header.querySelector('.update-badge');
+  if (!el) return;
+  el.hidden = !(u && u.behind > 0);
+  el.title = u && u.behind > 0 ? `${u.behind} new change${u.behind === 1 ? '' : 's'} on GitHub` : '';
+}
+async function refreshUpdateBadge() {
+  if (Date.now() - badgeFetchedAt < 5 * 60_000) return;
+  badgeFetchedAt = Date.now();
+  try {
+    updateBadge(await api('GET', '/api/updates'));
+  } catch {}
 }
 
 const PATTERN_LABELS = {

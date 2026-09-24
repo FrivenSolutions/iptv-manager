@@ -239,12 +239,29 @@ export function registerApi(router, ctx) {
       if (b && !/^https?:\/\/[^/]+(\/.*)?$/i.test(b)) throw new HttpError(400, 'Base URL must start with http:// or https://');
       db.setSetting('base_url', b);
     }
+    if (body.update_check !== undefined) db.setSetting('update_check', bool(body.update_check));
     if (body.empty_event_patterns !== undefined) {
       // null restores the defaults; a list (possibly empty) replaces them.
       db.setSetting('empty_event_patterns', body.empty_event_patterns === null ? null : JSON.stringify(validatePatterns(body.empty_event_patterns)));
     }
     touch();
     sendJson(res, 200, { ok: true, empty_event_patterns: emptyEventPatterns(db) });
+  });
+
+  // --- version & updates -----------------------------------------------------
+  const updateView = () => ({
+    version: ctx.build.version,
+    commit: ctx.build.commit,
+    commit_source: ctx.build.commitSource,
+    install_type: ctx.build.installType,
+    repo: ctx.build.repo,
+    enabled: ctx.updates.enabled,
+    ...ctx.updates.state(),
+  });
+  router.get('/api/updates', (req, res) => sendJson(res, 200, updateView()));
+  router.post('/api/updates/check', async (req, res) => {
+    await ctx.updates.check();
+    sendJson(res, 200, updateView());
   });
 
   // --- backup ----------------------------------------------------------------

@@ -32,6 +32,9 @@ const xcStreams = [
 // DeviceAuth deliberately contains characters that must be URL-encoded.
 const HDHR_AUTH = 'aB3+/x=Zq';
 const hdhr = { xmltvAllowed: false, guideRequests: 0 };
+// The "running" commit the app reports, and what the fake GitHub says is latest.
+const RUNNING = 'a'.repeat(40);
+const gh = { latest: RUNNING, newer: [], fail: false };
 
 const xmltvTime = (d) => d.toISOString().replace(/[-:T]/g, '').slice(0, 14) + ' +0000';
 function guide(ids) {
@@ -94,6 +97,28 @@ function startUpstream() {
       }
       res.writeHead(200, { 'content-type': 'video/mp2t' });
       return res.end(`TS-${u.pathname.split('/').pop()}`);
+    }
+    // A fake GitHub API for the update check.
+    if (u.pathname.startsWith('/repos/test/repo/')) {
+      if (gh.fail) {
+        res.writeHead(500);
+        return res.end();
+      }
+      if (u.pathname === '/repos/test/repo/commits/main') {
+        return json({ sha: gh.latest, commit: { message: 'Latest change\n\nLonger body', committer: { date: '2026-09-24T12:00:00Z' } } });
+      }
+      const m = /^\/repos\/test\/repo\/compare\/(\w+)\.\.\.(\w+)$/.exec(u.pathname);
+      if (m) {
+        if (m[1] !== RUNNING) {
+          res.writeHead(404);
+          return res.end();
+        }
+        return json({
+          ahead_by: gh.newer.length,
+          behind_by: 0,
+          commits: gh.newer.map((msg, i) => ({ sha: String(i).repeat(40), commit: { message: msg, committer: { date: '2026-09-2' + i + 'T00:00:00Z' } } })),
+        });
+      }
     }
     // A fake HDHomeRun box and SiliconDust guide service.
     if (u.pathname === '/hdhr/discover.json') {
@@ -179,7 +204,10 @@ async function api(method, p, body) {
 
 before(async () => {
   await startUpstream();
-  app = createApp({ dataDir, adminPassword: PASSWORD, log: () => {}, hdhrApiBase: up });
+  app = createApp({
+    dataDir, adminPassword: PASSWORD, log: () => {}, hdhrApiBase: up,
+    updateApiBase: up, updateRepo: 'test/repo', appCommit: RUNNING, updateCheckDelayMs: 1e9,
+  });
   const addr = await app.start(0, '127.0.0.1');
   base = `http://127.0.0.1:${addr.port}`;
 });
@@ -662,4 +690,39 @@ test('hide empty event channels: per-category toggle, editable patterns, backup 
   // null restores the defaults.
   await api('PUT', '/api/settings', { empty_event_patterns: null });
   assert.deepEqual(await names(), ['ESPN+ 02: Lakers vs Celtics', 'ESPN+ 06: Bills - Jets']);
+});
+
+test('update check: version, up to date, behind, GitHub down, switched off', async () => {
+  let u = (await api('GET', '/api/updates')).data;
+  assert.deepEqual([u.commit, u.enabled, u.checked_at], [RUNNING, true, undefined], 'nothing checked yet');
+
+  u = (await api('POST', '/api/updates/check')).data;
+  assert.deepEqual([u.behind, u.error, u.latest.sha], [0, null, RUNNING]);
+  assert.equal(u.latest.message, 'Latest change', 'first line only');
+
+  gh.latest = 'c'.repeat(40);
+  gh.newer = ['Older fix', 'Newest feature\n\ndetails'];
+  u = (await api('POST', '/api/updates/check')).data;
+  assert.equal(u.behind, 2);
+  assert.deepEqual(u.commits.map((c) => c.message), ['Newest feature', 'Older fix'], 'newest first');
+
+  // GitHub failing keeps the last good answer and reports the problem.
+  gh.fail = true;
+  u = (await api('POST', '/api/updates/check')).data;
+  assert.match(u.error, /HTTP 500/);
+  assert.equal(u.behind, 2);
+  gh.fail = false;
+
+  // The daily check can be switched off; a manual check still works.
+  await api('PUT', '/api/settings', { update_check: false });
+  u = (await api('GET', '/api/updates')).data;
+  assert.equal(u.enabled, false);
+  assert.equal((await api('POST', '/api/updates/check')).data.error, null);
+  await api('PUT', '/api/settings', { update_check: true });
+
+  // A version that GitHub doesn't know (fork, local changes) is reported, not an error.
+  const { UpdateChecker } = await import('../src/updates.js');
+  const st = await new UpdateChecker({ db: app.ctx.db, commit: 'f'.repeat(40), apiBase: up, repo: 'test/repo' }).check();
+  assert.deepEqual([st.behind, st.error], [null, null]);
+  assert.match(st.note, /not on GitHub/);
 });
