@@ -1,7 +1,8 @@
 // Category filtering and channel selection for an output profile.
 import { parseJellyfin } from './outputs/epg.js';
 
-export const OPS = ['contains', 'not_contains', 'starts_with', 'not_starts_with', 'equals', 'not_equals', 'regex'];
+export const OPS = ['contains', 'not_contains', 'starts_with', 'not_starts_with', 'ends_with', 'not_ends_with',
+  'equals', 'not_equals', 'regex'];
 
 export function testRule(rule, name) {
   const n = String(name || '').toLowerCase();
@@ -11,6 +12,8 @@ export function testRule(rule, name) {
     case 'not_contains': return !n.includes(v);
     case 'starts_with': return n.startsWith(v);
     case 'not_starts_with': return !n.startsWith(v);
+    case 'ends_with': return n.endsWith(v);
+    case 'not_ends_with': return !n.endsWith(v);
     case 'equals': return n === v;
     case 'not_equals': return n !== v;
     case 'regex':

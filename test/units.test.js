@@ -98,6 +98,11 @@ test('rule operators', () => {
   assert.ok(testRule(r('not_contains', 'adult'), 'US| SPORTS'));
   assert.ok(testRule(r('starts_with', 'us|'), 'US| SPORTS'));
   assert.ok(!testRule(r('not_starts_with', 'us'), 'US| SPORTS'));
+  assert.ok(testRule(r('ends_with', ' hd'), 'US: CNN HD'));
+  assert.ok(!testRule(r('ends_with', 'hd'), 'HD Movies'));
+  assert.ok(testRule(r('not_ends_with', 'backup'), 'ESPN'));
+  assert.ok(!testRule(r('not_ends_with', 'BACKUP'), 'ESPN backup'), 'case-insensitive');
+  assert.ok(testRule(r('ends_with', ''), 'anything'), 'an empty value matches like the other operators');
   assert.ok(testRule(r('regex', '^(us|uk)\\|'), 'UK| NEWS'));
   assert.ok(!testRule(r('regex', '('), 'anything'));
 });

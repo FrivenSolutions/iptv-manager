@@ -457,6 +457,23 @@ test('an excluded category excludes its channels even if picked by hand; picks r
   await api('PUT', `/api/outputs/${outputId}/categories`, { ids: [uk.id], state: null });
 });
 
+test('ends with / does not end with, for categories and channels', async () => {
+  const o = (await api('POST', '/api/outputs', { name: 'Endings' })).data;
+  const r = await api('PUT', `/api/outputs/${o.id}`, {
+    source_ids: [xcId],
+    rules: [{ action: 'include', op: 'ends_with', value: 'news' }, { action: 'exclude', op: 'not_ends_with', value: 's' }],
+  });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const cats = (await api('GET', `/api/outputs/${o.id}/categories`)).data;
+  assert.deepEqual(cats.filter((c) => c.included).map((c) => c.name), ['US| NEWS']);
+
+  const news = cats.find((c) => c.name === 'US| NEWS');
+  await api('PUT', `/api/outputs/${o.id}/categories/${news.id}/channel-rules`, { rules: [{ action: 'exclude', op: 'not_ends_with', value: ' hd' }] });
+  const names = [...(await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
+  assert.deepEqual(names, ['US: CNN HD']);
+  await api('DELETE', `/api/outputs/${o.id}`);
+});
+
 test('a second output with different criteria and direct mode', async () => {
   const o = (await api('POST', '/api/outputs', { name: 'Sports' })).data;
   await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [{ action: 'include', op: 'contains', value: 'sports' }] });

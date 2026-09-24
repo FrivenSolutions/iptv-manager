@@ -200,6 +200,8 @@ const OP_LABELS = {
   not_contains: 'does not contain',
   starts_with: 'starts with',
   not_starts_with: 'does not start with',
+  ends_with: 'ends with',
+  not_ends_with: 'does not end with',
   equals: 'equals',
   not_equals: 'does not equal',
   regex: 'matches regex',
@@ -214,6 +216,8 @@ function testRule(rule, name) {
     case 'not_contains': return !n.includes(v);
     case 'starts_with': return n.startsWith(v);
     case 'not_starts_with': return !n.startsWith(v);
+    case 'ends_with': return n.endsWith(v);
+    case 'not_ends_with': return !n.endsWith(v);
     case 'equals': return n === v;
     case 'not_equals': return n !== v;
     case 'regex': try { return new RegExp(rule.value, 'i').test(name); } catch { return false; }

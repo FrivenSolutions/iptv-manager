@@ -31,7 +31,7 @@ around 25 seconds.
   HD/FHD/4K tags are ignored). You can override the match per channel.
 - **Filtering per output**
   - Category rules: *contains*, *does not contain*, *starts with*, *does not start with*,
-    *equals*, *does not equal* and *regex*.
+    *ends with*, *does not end with*, *equals*, *does not equal* and *regex*.
   - Channel rules inside a category, with a live "matches N of M" count as you type.
   - Manual picks for categories and channels, including Select all and Deselect all.
   - A live preview of what the rules do before you save.
