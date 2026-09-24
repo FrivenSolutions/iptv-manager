@@ -214,6 +214,10 @@ const MIGRATIONS = [
   -- Hide channels whose programme on now has a placeholder title ("No Game Today").
   ALTER TABLE output_category_settings ADD COLUMN hide_by_guide INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- With hide_by_guide: also hide channels that have a guide id but nothing airing now.
+  ALTER TABLE output_category_settings ADD COLUMN hide_unlisted INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.

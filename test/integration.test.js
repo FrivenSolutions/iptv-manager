@@ -94,9 +94,11 @@ function startUpstream() {
       // Deliberately appended after the other programmes, like a merged guide: ingest must
       // still match these late <channel> entries.
       const now = Date.now();
-      const events = eventGuide.map(({ id, title }) =>
+      // fromH/toH place the listing in time (default: airing now); channelOnly lists the channel
+      // with no programmes at all.
+      const events = eventGuide.map(({ id, title, fromH = -1, toH = 1, channelOnly }) =>
         `<channel id="${id}"><display-name>${id}</display-name></channel>\n` +
-        `<programme start="${xmltvTime(new Date(now - 3600_000))}" stop="${xmltvTime(new Date(now + 3600_000))}" channel="${id}"><title>${title}</title></programme>\n`).join('');
+        (channelOnly ? '' : `<programme start="${xmltvTime(new Date(now + fromH * 3600_000))}" stop="${xmltvTime(new Date(now + toH * 3600_000))}" channel="${id}"><title>${title}</title></programme>\n`)).join('');
       return res.end(guide([['cnn.us', 'CNN'], ['sky.uk', 'Sky Sports'], ['foxnews.us', 'Fox News']]).replace('</tv>', `${events}</tv>`));
     }
     if (u.pathname.startsWith('/live/xu/xp/')) {
@@ -679,7 +681,7 @@ test('hide empty event channels: per-category toggle, editable patterns, backup 
   // Export keeps both the custom patterns and the toggle; a fresh instance reproduces the output.
   const exported = (await api('GET', '/api/export')).data;
   assert.deepEqual(exported.settings.empty_event_patterns, [':\\s*$', '-\\s*$', 'no event\\s*$']);
-  assert.deepEqual(exported.outputs.find((x) => x.token === o.token).category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true, hide_by_guide: false }]);
+  assert.deepEqual(exported.outputs.find((x) => x.token === o.token).category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true, hide_by_guide: false, hide_unlisted: false }]);
   const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-import2-'));
   const app2 = createApp({ dataDir: dir2, adminPassword: PASSWORD, log: () => {} });
   const base2 = `http://127.0.0.1:${(await app2.start(0, '127.0.0.1')).port}`;
@@ -722,7 +724,7 @@ test('export/import of empty-event settings: defaults, empty list, old files, ba
   let file = (await api('GET', '/api/export')).data;
   assert.equal(file.settings.empty_event_patterns, null);
   const events = file.outputs.find((o) => o.name === 'Events');
-  assert.deepEqual(events.category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true, hide_by_guide: false }]);
+  assert.deepEqual(events.category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true, hide_by_guide: false, hide_unlisted: false }]);
 
   // 2. The toggle's category does not exist on the new instance until its first refresh;
   //    the import creates it as a placeholder and the toggle applies once channels arrive.
@@ -844,7 +846,7 @@ test('hide channels by guide: title airing now, separate from the name toggle, c
   const file = (await api('GET', '/api/export')).data;
   assert.deepEqual(file.settings.guide_patterns, ['^bills']);
   assert.deepEqual(file.outputs.find((x) => x.token === o.token).category_options,
-    [{ source: xcId, category: 'US| NFL SUNDAY', hide_empty: false, hide_by_guide: true }]);
+    [{ source: xcId, category: 'US| NFL SUNDAY', hide_empty: false, hide_by_guide: true, hide_unlisted: false }]);
   const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-guide-'));
   const app2 = createApp({ dataDir: dir2, adminPassword: PASSWORD, log: () => {} });
   const base2 = `http://127.0.0.1:${(await app2.start(0, '127.0.0.1')).port}`;
@@ -862,6 +864,71 @@ test('hide channels by guide: title airing now, separate from the name toggle, c
     fs.rmSync(dir2, { recursive: true, force: true });
   }
   await api('PUT', '/api/settings', { guide_patterns: null });
+  await api('DELETE', `/api/outputs/${o.id}`);
+});
+
+test('hide channels with nothing listed now: sub-option of the guide toggle, with a stale-guide safety net', async () => {
+  xcCats.push({ category_id: '31', category_name: 'US| NBA LEAGUE PASS' });
+  xcStreams.push(
+    { num: 80, name: 'NBA 01', stream_id: 800, epg_channel_id: 'nba1', category_id: '31' }, // game on now
+    { num: 81, name: 'NBA 02', stream_id: 801, epg_channel_id: 'nba2', category_id: '31' }, // game later tonight
+    { num: 82, name: 'NBA 03', stream_id: 802, epg_channel_id: 'nba3', category_id: '31' }, // listed, no programmes
+    { num: 83, name: 'NBA 04', stream_id: 803, epg_channel_id: 'nba4', category_id: '31' }, // guide id unknown to the guide
+    { num: 84, name: 'NBA 05', stream_id: 804, epg_channel_id: '', category_id: '31' }, // no guide id at all
+    { num: 85, name: 'NBA 06', stream_id: 805, epg_channel_id: 'nba6', category_id: '31' }, // blank title now
+  );
+  eventGuide.push(
+    { id: 'nba1', title: 'Lakers at Celtics' },
+    { id: 'nba2', title: 'Knicks at Heat', fromH: 2, toH: 4 },
+    { id: 'nba3', channelOnly: true },
+    { id: 'nba6', title: '' },
+  );
+  await api('POST', `/api/sources/${xcId}/refresh`);
+  await app.ctx.jobs.idle();
+
+  const o = (await api('POST', '/api/outputs', { name: 'NBA' })).data;
+  await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [{ action: 'include', op: 'contains', value: 'nba' }] });
+  const cat = (await api('GET', `/api/outputs/${o.id}/categories`)).data.find((c) => c.name === 'US| NBA LEAGUE PASS');
+  const names = async () => [...(await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
+  const all = ['NBA 01', 'NBA 02', 'NBA 03', 'NBA 04', 'NBA 05', 'NBA 06'];
+
+  // The sub-option does nothing without the guide toggle, and the guide toggle alone hides nothing here.
+  await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_unlisted: true });
+  assert.deepEqual(await names(), all);
+  await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_by_guide: true, hide_unlisted: false });
+  assert.deepEqual(await names(), all);
+
+  await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_unlisted: true });
+  assert.deepEqual(await names(), ['NBA 01', 'NBA 05'], 'only the game on now and the channel with no guide id stay');
+  const view = (await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data;
+  assert.deepEqual([view.hide_by_guide, view.hide_unlisted, view.guide_current], [true, true, true]);
+  assert.deepEqual(view.channels.map((c) => [c.name, c.is_unlisted, c.reason]), [
+    ['NBA 01', false, 'category'], ['NBA 02', true, 'unlisted'], ['NBA 03', true, 'unlisted'],
+    ['NBA 04', true, 'unlisted'], ['NBA 05', false, 'category'], ['NBA 06', true, 'unlisted'],
+  ]);
+
+  // Hand picks still win.
+  const nba2 = view.channels.find((c) => c.name === 'NBA 02');
+  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [nba2.id], state: 'include' });
+  assert.ok((await names()).includes('NBA 02'));
+  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [nba2.id], state: null });
+
+  // Safety net: if the source's guide has nothing airing now for any channel (it ran out or
+  // failed to refresh), nothing is hidden as "unlisted".
+  const gen = app.ctx.db.get('SELECT epg_gen FROM sources WHERE id = ?', [xcId]).epg_gen;
+  const t = Math.floor(Date.now() / 1000);
+  app.ctx.db.run('UPDATE programmes SET stop_ts = ? WHERE source_id = ? AND gen = ? AND start_ts <= ?', [t - 1, xcId, gen, t]);
+  app.ctx.bump();
+  assert.deepEqual(await names(), all);
+  assert.equal((await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data.guide_current, false);
+
+  // Backed up with the other switches.
+  const file = (await api('GET', '/api/export')).data;
+  assert.deepEqual(file.outputs.find((x) => x.token === o.token).category_options,
+    [{ source: xcId, category: 'US| NBA LEAGUE PASS', hide_empty: false, hide_by_guide: true, hide_unlisted: true }]);
+  // Restore the guide for later tests.
+  await api('POST', `/api/sources/${xcId}/refresh`);
+  await app.ctx.jobs.idle();
   await api('DELETE', `/api/outputs/${o.id}`);
 });
 

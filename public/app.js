@@ -1034,7 +1034,7 @@ async function outputEditor(main, id) {
           h('span', { class: 'cat-name' }, c.custom_name || c.name, c.is_new ? badge('new', 'info') : null, jellyfinBadges(c),
             c.channel_rules?.length ? badge(`${c.channel_rules.length} channel rule${c.channel_rules.length === 1 ? '' : 's'}`, 'info') : null,
             c.hide_empty ? badge('hides empty events', 'info') : null,
-            c.hide_by_guide ? badge('hides by guide', 'info') : null,
+            c.hide_by_guide ? badge(c.hide_unlisted ? 'hides by guide + unlisted' : 'hides by guide', 'info') : null,
             h('span', { class: 'meta' }, ` ${sourceName(c.source_id)} · ${c.channel_count} ch · ${reasonText(st)}`)),
           h('button', { class: 'icon-btn', title: 'Edit group (display name, Jellyfin category)', onclick: () => editCategory(c, drawCats) }, '✎'),
           h('span', { class: 'segmented small' }, seg('Auto', null, ''), seg('Include', 'include', 'inc'), seg('Exclude', 'exclude', 'exc')));
@@ -1117,10 +1117,13 @@ async function outputEditor(main, id) {
 
     const included = chans.filter((ch) => ch.included).length;
     const overridden = chans.filter((ch) => ch.override).map((ch) => ch.id);
-    const reason = (ch) => ({ manual: 'picked by hand', rule: 'by rule', nomatch: 'no include rule matched', empty: 'empty event', guide: 'nothing on now' })[ch.reason] || '';
+    const reason = (ch) => ({
+      manual: 'picked by hand', rule: 'by rule', nomatch: 'no include rule matched', empty: 'empty event',
+      guide: 'nothing on now', unlisted: 'nothing listed now',
+    })[ch.reason] || '';
     const emptyCount = chans.filter((ch) => ch.is_empty_event).length;
     const guideCount = chans.filter((ch) => ch.is_guide_placeholder).length;
-    const withGuide = chans.filter((ch) => ch.now_title).length;
+    const unlistedCount = chans.filter((ch) => ch.is_unlisted).length;
     const setOption = async (key, on) => {
       await attempt(() => api('PUT', `/api/outputs/${id}/categories/${c.id}/options`, { [key]: on }));
       c[key] = on;
@@ -1148,12 +1151,22 @@ async function outputEditor(main, id) {
         h('label', { class: 'check second' },
           h('input', { type: 'checkbox', disabled: off, checked: data.hide_by_guide, onchange: (e) => setOption('hide_by_guide', e.target.checked) }),
           h('b', null, ' Hide channels by guide'),
-          h('span', { class: 'meta' }, ` · by what's on now · ${guideCount} of ${chans.length} show a placeholder now` +
-            (withGuide < chans.length ? ` (${chans.length - withGuide} have no listing now)` : ''))),
+          h('span', { class: 'meta' }, ` · by what's on now · ${guideCount} of ${chans.length} show a placeholder now`)),
         h('span', { class: 'hint' },
           'Hides a channel while the programme on now is titled like "No Game Today" or "Off Air", and shows it again when a real listing starts. ',
           h('a', { href: '#/settings' }, 'Edit the patterns'),
-          '. Players only notice when they reload the playlist, and channels with no listing are never hidden.')),
+          '. Players only notice when they reload the playlist.'),
+        h('label', { class: 'check sub' },
+          h('input', { type: 'checkbox', disabled: off || !data.hide_by_guide, checked: data.hide_unlisted, onchange: (e) => setOption('hide_unlisted', e.target.checked) }),
+          ' Also hide channels with nothing listed right now',
+          h('span', { class: 'meta' }, ` · ${unlistedCount} of ${chans.length}`)),
+        h('span', { class: 'hint sub' },
+          'For event channels whose guide stays empty until a game is scheduled. Counts channels that have a guide id but no programme ',
+          '(or a blank title) airing now. Channels without any guide id are never hidden, and if this source\'s guide has nothing airing ',
+          'now on any channel (it ran out or failed to refresh), nothing is hidden this way.'),
+        data.hide_unlisted && !data.guide_current
+          ? h('span', { class: 'hint sub warn-text' }, 'This source\'s guide has nothing airing now on any channel, so no channels are being hidden as "nothing listed". Check the source\'s guide refresh.')
+          : null),
       h('div', { class: 'ch-rules' },
         h('div', { class: 'ch-rules-head' },
           h('b', null, 'Channel rules'),
@@ -1170,7 +1183,8 @@ async function outputEditor(main, id) {
           h('input', { type: 'checkbox', disabled: off, checked: ch.included, onchange: (e) => setChannels([ch.id], e.target.checked ? 'include' : 'exclude') }),
           h('span', null, ch.custom_name || ch.name),
           !off && ch.reason !== 'category' ? h('span', { class: 'meta' }, reason(ch)) : null,
-          ch.now_title ? h('span', { class: `now-title ${ch.is_guide_placeholder ? 'placeholder' : ''}`, title: `On now: ${ch.now_title}` }, `▸ ${ch.now_title}`) : null,
+          ch.now_title ? h('span', { class: `now-title ${ch.is_guide_placeholder ? 'placeholder' : ''}`, title: `On now: ${ch.now_title}` }, `▸ ${ch.now_title}`)
+            : ch.is_unlisted ? h('span', { class: 'now-title placeholder', title: 'Nothing airing now in the guide' }, '▸ nothing listed') : null,
           ch.override && !off ? h('button', { class: 'link', onclick: (e) => { e.preventDefault(); setChannels([ch.id], null); } }, 'reset') : null)),
         chans.length ? null : h('p', { class: 'meta' }, 'No channels.')));
   };

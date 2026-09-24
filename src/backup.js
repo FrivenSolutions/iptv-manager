@@ -25,7 +25,7 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
   const catOverrides = db.all('SELECT * FROM output_category_overrides');
   const chOverrides = db.all('SELECT * FROM output_channel_overrides');
   const chRules = db.all('SELECT * FROM output_channel_rules ORDER BY sort, id');
-  const catSettings = db.all('SELECT * FROM output_category_settings WHERE hide_empty = 1 OR hide_by_guide = 1');
+  const catSettings = db.all('SELECT * FROM output_category_settings WHERE hide_empty = 1 OR hide_by_guide = 1 OR hide_unlisted = 1');
   const neededCats = new Set([...catOverrides, ...chRules, ...catSettings].map((r) => r.category_id));
   const customPatterns = db.getSetting('empty_event_patterns');
   const customGuide = db.getSetting('guide_patterns');
@@ -79,7 +79,10 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
       }),
       category_options: catSettings.filter((r) => r.output_id === o.id && catRef.has(r.category_id)).map((r) => {
         const c = catRef.get(r.category_id);
-        return { source: c.source_id, category: c.name, hide_empty: !!r.hide_empty, hide_by_guide: !!r.hide_by_guide };
+        return {
+          source: c.source_id, category: c.name,
+          hide_empty: !!r.hide_empty, hide_by_guide: !!r.hide_by_guide, hide_unlisted: !!r.hide_unlisted,
+        };
       }),
       channel_overrides: chOverrides.filter((r) => r.output_id === o.id && chRef.has(r.channel_id)).map((r) => {
         const c = chRef.get(r.channel_id);
@@ -216,8 +219,9 @@ export function importSettings(db, data) {
         ]);
       }
       for (const x of o.category_options || []) {
-        db.run('INSERT OR REPLACE INTO output_category_settings (output_id, category_id, hide_empty, hide_by_guide) VALUES (?, ?, ?, ?)', [
-          r.id, ensureCat(x.source, x.category), !!x.hide_empty, !!x.hide_by_guide,
+        db.run(`INSERT OR REPLACE INTO output_category_settings (output_id, category_id, hide_empty, hide_by_guide, hide_unlisted)
+                VALUES (?, ?, ?, ?, ?)`, [
+          r.id, ensureCat(x.source, x.category), !!x.hide_empty, !!x.hide_by_guide, !!x.hide_unlisted,
         ]);
       }
       (o.channel_rules || []).forEach((x, i) => {

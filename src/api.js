@@ -7,7 +7,7 @@ import { hashPassword, verifyPassword, makeSession, sessionCookie, randomToken, 
 import {
   OPS, loadOutput, evaluateCategories, isNewCategory, channelState,
   DEFAULT_EMPTY_EVENT_PATTERNS, emptyEventPatterns, compilePatterns, isEmptyEvent,
-  DEFAULT_GUIDE_PATTERNS, guidePatterns, guideHider,
+  DEFAULT_GUIDE_PATTERNS, guidePatterns, guideHider, hiddenReason,
 } from './filters.js';
 import { rematchSource } from './ingest.js';
 import { JELLYFIN_CATEGORIES, parseJellyfin } from './outputs/epg.js';
@@ -634,16 +634,20 @@ export function registerApi(router, ctx) {
       category_included: cat.included,
       hide_empty: cat.hide_empty,
       hide_by_guide: cat.hide_by_guide,
+      hide_unlisted: cat.hide_unlisted,
+      // False when the source's guide has nothing airing now at all (stale or failed refresh).
+      guide_current: guide.guideCurrent({ source_id: cat.source_id }),
       rules: cat.channel_rules.map(({ id, action, op, value }) => ({ id, action, op, value })),
       channels: rows.map((r) => {
         const override = overrides.get(r.id) || null;
         const ch = { ...r, source_id: cat.source_id };
-        const empty = isEmptyEvent(r.name, emptyRegexes);
-        const placeholder = guide.isPlaceholder(ch);
-        const hidden = cat.hide_empty && empty ? 'empty' : cat.hide_by_guide && placeholder ? 'guide' : null;
         return {
-          ...r, override, is_empty_event: empty, now_title: guide.titleOf(ch), is_guide_placeholder: placeholder,
-          ...channelState(r.name, cat.included, cat.channel_rules, override, hidden),
+          ...r, override,
+          is_empty_event: isEmptyEvent(r.name, emptyRegexes),
+          now_title: guide.titleOf(ch),
+          is_guide_placeholder: guide.isPlaceholder(ch),
+          is_unlisted: guide.isUnlisted(ch),
+          ...channelState(r.name, cat.included, cat.channel_rules, override, hiddenReason(cat, ch, emptyRegexes, guide)),
         };
       }),
     });
@@ -654,14 +658,14 @@ export function registerApi(router, ctx) {
     const o = mustGet(db, 'outputs', params.id);
     const cat = mustGet(db, 'categories', params.catId);
     const body = await readJson(req);
-    const cur = db.get('SELECT hide_empty, hide_by_guide FROM output_category_settings WHERE output_id = ? AND category_id = ?', [o.id, cat.id])
-      || { hide_empty: 0, hide_by_guide: 0 };
+    const cur = db.get('SELECT hide_empty, hide_by_guide, hide_unlisted FROM output_category_settings WHERE output_id = ? AND category_id = ?', [o.id, cat.id])
+      || { hide_empty: 0, hide_by_guide: 0, hide_unlisted: 0 };
+    const val = (k) => (body[k] === undefined ? cur[k] : bool(body[k]));
     db.run(
-      `INSERT INTO output_category_settings (output_id, category_id, hide_empty, hide_by_guide) VALUES (?, ?, ?, ?)
-       ON CONFLICT (output_id, category_id) DO UPDATE SET hide_empty = excluded.hide_empty, hide_by_guide = excluded.hide_by_guide`,
-      [o.id, cat.id,
-        body.hide_empty === undefined ? cur.hide_empty : bool(body.hide_empty),
-        body.hide_by_guide === undefined ? cur.hide_by_guide : bool(body.hide_by_guide)],
+      `INSERT INTO output_category_settings (output_id, category_id, hide_empty, hide_by_guide, hide_unlisted) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (output_id, category_id) DO UPDATE SET
+         hide_empty = excluded.hide_empty, hide_by_guide = excluded.hide_by_guide, hide_unlisted = excluded.hide_unlisted`,
+      [o.id, cat.id, val('hide_empty'), val('hide_by_guide'), val('hide_unlisted')],
     );
     touch();
     sendJson(res, 200, { ok: true });

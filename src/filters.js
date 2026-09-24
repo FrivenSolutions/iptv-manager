@@ -60,8 +60,8 @@ export function categoryState(cat, rules, override, includeAll) {
 export function channelState(name, catIncluded, rules, override, hidden = null) {
   if (!catIncluded) return { included: false, reason: 'category' };
   if (override) return { included: override === 'include', reason: 'manual' };
-  // Placeholders for events that aren't on: by name ("ESPN+ 03:") -> 'empty',
-  // or by what the guide says is on now ("No Game Today") -> 'guide'.
+  // Placeholders for events that aren't on: by name ("ESPN+ 03:") -> 'empty', by what the
+  // guide says is on now ("No Game Today") -> 'guide', or nothing in the guide now -> 'unlisted'.
   if (hidden) return { included: false, reason: hidden };
   const exclude = rules.find((r) => r.action === 'exclude' && testRule(r, name));
   if (exclude) return { included: false, reason: 'rule', rule_id: exclude.id };
@@ -130,12 +130,31 @@ export function guideHider(db, output, cats, t = Math.floor(Date.now() / 1000)) 
   const wanted = new Set(cats.filter((c) => c.hide_by_guide).map((c) => c.source_id));
   const titles = wanted.size ? nowTitles(db, output.sources.filter((s) => wanted.has(s.id)), t) : new Map();
   const regexes = wanted.size ? compilePatterns(guidePatterns(db)) : [];
+  // Sources whose guide has anything airing now. If a source has nothing at all, its guide has
+  // run out or failed to refresh, and "nothing listed" says nothing about its channels.
+  const current = new Set([...titles.keys()].map((k) => Number(k.slice(0, k.indexOf('|')))));
   const titleOf = (ch) => {
     const epgId = ch.custom_epg_id || ch.epg_id;
     return epgId ? titles.get(`${ch.source_id}|${epgId}`) ?? null : null;
   };
-  // No listing airing now means no information: the channel is not hidden.
-  return { titleOf, isPlaceholder: (ch) => { const tt = titleOf(ch); return !!tt && isEmptyEvent(tt, regexes); } };
+  return {
+    titleOf,
+    guideCurrent: (ch) => current.has(ch.source_id),
+    // A placeholder title airing now ("No Game Today").
+    isPlaceholder: (ch) => { const tt = titleOf(ch); return !!tt && isEmptyEvent(tt, regexes); },
+    // Has a guide id but nothing (or a blank title) airing now, while its source's guide is current.
+    // Channels without any guide id are never counted: there is nothing to go on.
+    isUnlisted: (ch) => !!(ch.custom_epg_id || ch.epg_id || ch.tvg_id) && current.has(ch.source_id) && !titleOf(ch),
+  };
+}
+
+/** Why a category's switches hide this channel: 'empty', 'guide', 'unlisted', or null. */
+export function hiddenReason(cat, ch, emptyRegexes, guide) {
+  if (cat.hide_empty && isEmptyEvent(ch.name, emptyRegexes)) return 'empty';
+  if (!cat.hide_by_guide) return null;
+  if (guide.isPlaceholder(ch)) return 'guide';
+  if (cat.hide_unlisted && guide.isUnlisted(ch)) return 'unlisted';
+  return null;
 }
 
 /** Channel rules of an output, grouped by category id. */
@@ -187,7 +206,7 @@ export function evaluateCategories(db, output) {
   cats.sort((a, b) => order.get(a.source_id) - order.get(b.source_id) || a.sort - b.sort);
   const chRules = loadChannelRules(db, output.id);
   const catSettings = new Map(
-    db.all('SELECT category_id, hide_empty, hide_by_guide FROM output_category_settings WHERE output_id = ?', [output.id])
+    db.all('SELECT category_id, hide_empty, hide_by_guide, hide_unlisted FROM output_category_settings WHERE output_id = ?', [output.id])
       .map((r) => [r.category_id, r]),
   );
   for (const c of cats) {
@@ -196,6 +215,7 @@ export function evaluateCategories(db, output) {
     c.channel_rules = chRules.get(c.id) || [];
     c.hide_empty = !!catSettings.get(c.id)?.hide_empty;
     c.hide_by_guide = !!catSettings.get(c.id)?.hide_by_guide;
+    c.hide_unlisted = !!catSettings.get(c.id)?.hide_unlisted;
     c.is_new = isNewCategory(c);
     c.jellyfin = parseJellyfin(c.jellyfin);
   }
@@ -227,8 +247,7 @@ export function selectChannels(db, output) {
   for (const ch of rows) {
     const cat = catById.get(ch.category_id);
     if (!cat) continue;
-    const hidden = cat.hide_empty && isEmptyEvent(ch.name, emptyRegexes) ? 'empty'
-      : cat.hide_by_guide && guide.isPlaceholder(ch) ? 'guide' : null;
+    const hidden = hiddenReason(cat, ch, emptyRegexes, guide);
     if (!channelState(ch.name, cat.included, cat.channel_rules, chOverrides.get(ch.id), hidden).included) continue;
     channels.push({ ch, cat });
   }
