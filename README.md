@@ -120,6 +120,13 @@ any setting with environment variables:
 CTID=120 IP=192.168.1.50/24 GW=192.168.1.1 STORAGE=local-zfs bash proxmox/create-lxc.sh
 ```
 
+To upgrade later, run `git pull`, then `bash proxmox/create-lxc.sh upgrade <container id>`. You can
+leave out the ID if there is only one IPTV Manager container. An upgrade only replaces the app in
+the existing container. It does not download a Debian template or run apt again, and it stops with
+an error rather than create a container. Running the plain install command while an IPTV Manager
+container exists does nothing and prints the upgrade command. Use `bash proxmox/create-lxc.sh new`
+only if you really want a second container.
+
 **Option B – an existing Debian/Ubuntu LXC or VM.** Inside it, as root, install git
 (`apt install -y git`), clone the repository, and run `bash proxmox/install.sh`.
 
@@ -134,7 +141,7 @@ run `journalctl -u iptv-manager -f`.
 |---|---|
 | Docker Compose | `git pull && docker compose up -d --build` |
 | Portainer | **Pull and redeploy** on the stack, or GitOps updates |
-| Proxmox LXC (option A) | `git pull`, then `CTID=<id> UPGRADE=1 bash proxmox/create-lxc.sh` |
+| Proxmox LXC (option A) | `git pull`, then `bash proxmox/create-lxc.sh upgrade <container id>` |
 | Existing LXC/VM (option B) | `git pull`, then `bash proxmox/install.sh` |
 
 Database changes are applied automatically on start, and your settings are kept. Export a backup

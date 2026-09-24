@@ -19,9 +19,12 @@ export DEBIAN_FRONTEND=noninteractive
 export LANG=C.UTF-8 LC_ALL=C.UTF-8
 unset LANGUAGE
 
-echo "==> Installing base packages"
-apt-get update -qq
-apt-get install -y -qq curl ca-certificates gnupg >/dev/null
+# Upgrades skip apt entirely; it only runs when something is actually missing.
+if ! command -v curl >/dev/null || ! command -v gpg >/dev/null; then
+  echo "==> Installing base packages"
+  apt-get update -qq
+  apt-get install -y -qq curl ca-certificates gnupg >/dev/null
+fi
 
 NODE_MAJOR="$(node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/' || true)"
 if [ "${NODE_MAJOR:-0}" -ge 24 ]; then
