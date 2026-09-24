@@ -14,6 +14,10 @@ SERVICE_USER=iptvm
 
 [ "$(id -u)" = 0 ] || { echo "Run this as root." >&2; exit 1; }
 export DEBIAN_FRONTEND=noninteractive
+# pct exec and SSH pass the caller's locale (e.g. en_US.UTF-8), which a fresh container
+# usually lacks; apt and perl then warn on every step. C.UTF-8 is always present.
+export LANG=C.UTF-8 LC_ALL=C.UTF-8
+unset LANGUAGE
 
 echo "==> Installing base packages"
 apt-get update -qq
