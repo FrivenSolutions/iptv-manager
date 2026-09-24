@@ -94,11 +94,21 @@ To update manually, open the stack and click **Pull and redeploy**. Your data st
 
 ### Proxmox
 
-**Option A – dedicated LXC (recommended).** On the Proxmox host, as root:
+**Option A – dedicated LXC (recommended).** On the Proxmox host, as root. Proxmox doesn't include
+git, so install it first:
 
 ```bash
+apt update && apt install -y git
 git clone https://github.com/frittsasaurus/iptv-manager.git
 cd iptv-manager
+bash proxmox/create-lxc.sh
+```
+
+Without git, download the code as an archive instead. Updating then means downloading it again.
+
+```bash
+wget -qO- https://github.com/frittsasaurus/iptv-manager/archive/refs/heads/main.tar.gz | tar xz
+cd iptv-manager-main
 bash proxmox/create-lxc.sh
 ```
 
@@ -110,8 +120,8 @@ any setting with environment variables:
 CTID=120 IP=192.168.1.50/24 GW=192.168.1.1 STORAGE=local-zfs bash proxmox/create-lxc.sh
 ```
 
-**Option B – an existing Debian/Ubuntu LXC or VM.** Clone the repository inside it and run
-`bash proxmox/install.sh` as root.
+**Option B – an existing Debian/Ubuntu LXC or VM.** Inside it, as root, install git
+(`apt install -y git`), clone the repository, and run `bash proxmox/install.sh`.
 
 **Option C – Docker.** Use the Docker instructions inside any VM or LXC that runs Docker.
 
