@@ -139,10 +139,9 @@ export function importSettings(db, data) {
     db.run('DELETE FROM outputs');
     db.run('DELETE FROM sources');
     if (data.settings && typeof data.settings.base_url === 'string') db.setSetting('base_url', data.settings.base_url);
-    if (data.settings && 'empty_event_patterns' in data.settings) {
-      const p = data.settings.empty_event_patterns;
-      db.setSetting('empty_event_patterns', p == null ? null : JSON.stringify(p.map((s) => s.trim())));
-    }
+    // An import replaces everything; files from before custom patterns existed mean "defaults".
+    const p = data.settings?.empty_event_patterns;
+    db.setSetting('empty_event_patterns', p == null ? null : JSON.stringify(p.map((s) => s.trim())));
 
     const ids = new Map();
     const catIds = new Map(); // "ref|name" -> id

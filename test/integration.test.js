@@ -692,6 +692,90 @@ test('hide empty event channels: per-category toggle, editable patterns, backup 
   assert.deepEqual(await names(), ['ESPN+ 02: Lakers vs Celtics', 'ESPN+ 06: Bills - Jets']);
 });
 
+test('export/import of empty-event settings: defaults, empty list, old files, bad files', async () => {
+  // A fresh instance to import into, reset for each case.
+  const fresh = async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-ee-'));
+    const a = createApp({ dataDir: dir, adminPassword: PASSWORD, log: () => {} });
+    const b = `http://127.0.0.1:${(await a.start(0, '127.0.0.1')).port}`;
+    const login = await fetch(`${b}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'fetch' }, body: JSON.stringify({ password: PASSWORD }) });
+    const cookie2 = login.headers.get('set-cookie').split(';')[0];
+    const call = async (method, p, body) => {
+      const r = await fetch(b + p, { method, headers: { cookie: cookie2, 'content-type': 'application/json', 'x-requested-with': 'fetch' }, body: body && JSON.stringify(body) });
+      return { status: r.status, data: await r.json() };
+    };
+    return { a, b, call, close: async () => { await a.close(); fs.rmSync(dir, { recursive: true, force: true }); } };
+  };
+  const names = async (b, tok) => [...(await (await fetch(`${b}/o/${tok}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
+
+  // 1. Defaults export as null, so a restore follows the built-in defaults.
+  await api('PUT', '/api/settings', { empty_event_patterns: null });
+  let file = (await api('GET', '/api/export')).data;
+  assert.equal(file.settings.empty_event_patterns, null);
+  const events = file.outputs.find((o) => o.name === 'Events');
+  assert.deepEqual(events.category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true }]);
+
+  // 2. The toggle's category does not exist on the new instance until its first refresh;
+  //    the import creates it as a placeholder and the toggle applies once channels arrive.
+  let t = await fresh();
+  try {
+    const custom = await t.call('PUT', '/api/settings', { empty_event_patterns: ['x$'] });
+    assert.equal(custom.status, 200);
+    assert.equal((await t.call('POST', '/api/import', file)).status, 200);
+    await t.a.ctx.jobs.idle();
+    assert.equal((await t.call('GET', '/api/settings')).data.empty_event_patterns.length, 4, 'defaults restored over the custom list');
+    assert.deepEqual(await names(t.b, events.token), ['ESPN+ 02: Lakers vs Celtics', 'ESPN+ 06: Bills - Jets']);
+  } finally {
+    await t.close();
+  }
+
+  // 3. An empty list round-trips as "no patterns": the toggle then hides nothing.
+  await api('PUT', '/api/settings', { empty_event_patterns: [] });
+  file = (await api('GET', '/api/export')).data;
+  assert.deepEqual(file.settings.empty_event_patterns, []);
+  t = await fresh();
+  try {
+    assert.equal((await t.call('POST', '/api/import', file)).status, 200);
+    await t.a.ctx.jobs.idle();
+    assert.deepEqual((await t.call('GET', '/api/settings')).data.empty_event_patterns, []);
+    assert.equal((await names(t.b, events.token)).length, 6);
+  } finally {
+    await t.close();
+    await api('PUT', '/api/settings', { empty_event_patterns: null });
+  }
+
+  // 4. A file from before these settings existed restores the defaults, and toggles are simply off.
+  const old = JSON.parse(JSON.stringify(file));
+  delete old.settings.empty_event_patterns;
+  for (const o of old.outputs) delete o.category_options;
+  t = await fresh();
+  try {
+    await t.call('PUT', '/api/settings', { empty_event_patterns: ['x$'] });
+    assert.equal((await t.call('POST', '/api/import', old)).status, 200);
+    await t.a.ctx.jobs.idle();
+    assert.equal((await t.call('GET', '/api/settings')).data.empty_event_patterns.length, 4);
+    assert.equal((await names(t.b, events.token)).length, 6);
+  } finally {
+    await t.close();
+  }
+
+  // 5. Bad files are rejected before anything is replaced.
+  t = await fresh();
+  try {
+    const bad1 = { ...file, settings: { ...file.settings, empty_event_patterns: ['('] } };
+    const bad2 = JSON.parse(JSON.stringify(file));
+    bad2.outputs[0].category_options = [{ source: 999, category: 'X', hide_empty: true }];
+    for (const bad of [bad1, bad2]) {
+      const r = await t.call('POST', '/api/import', bad);
+      assert.equal(r.status, 400, JSON.stringify(r.data));
+      assert.match(r.data.error, /Invalid settings file/);
+    }
+    assert.equal((await t.call('GET', '/api/outputs')).data.length, 0, 'nothing imported');
+  } finally {
+    await t.close();
+  }
+});
+
 test('rule order is saved and returned as given, for category and channel rules', async () => {
   const o = (await api('POST', '/api/outputs', { name: 'Order' })).data;
   const rules = [
