@@ -692,6 +692,27 @@ test('hide empty event channels: per-category toggle, editable patterns, backup 
   assert.deepEqual(await names(), ['ESPN+ 02: Lakers vs Celtics', 'ESPN+ 06: Bills - Jets']);
 });
 
+test('rule order is saved and returned as given, for category and channel rules', async () => {
+  const o = (await api('POST', '/api/outputs', { name: 'Order' })).data;
+  const rules = [
+    { action: 'include', op: 'contains', value: 'news' },
+    { action: 'include', op: 'starts_with', value: 'us|' },
+    { action: 'exclude', op: 'ends_with', value: 'adult' },
+    { action: 'exclude', op: 'contains', value: '24/7' },
+  ];
+  const saved = (await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [rules[1], rules[0], rules[3], rules[2]] })).data;
+  assert.deepEqual(saved.rules.map((r) => r.value), ['us|', 'news', '24/7', 'adult']);
+  const again = (await api('GET', `/api/outputs/${o.id}`)).data;
+  assert.deepEqual(again.rules.map((r) => r.value), ['us|', 'news', '24/7', 'adult']);
+
+  const cat = (await api('GET', `/api/outputs/${o.id}/categories`)).data.find((c) => c.name === 'US| NEWS');
+  const chRules = [{ action: 'exclude', op: 'contains', value: 'b' }, { action: 'include', op: 'contains', value: 'a' }, { action: 'exclude', op: 'contains', value: 'c' }];
+  await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/channel-rules`, { rules: chRules });
+  const view = (await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data;
+  assert.deepEqual(view.rules.map((r) => r.value), ['b', 'a', 'c']);
+  await api('DELETE', `/api/outputs/${o.id}`);
+});
+
 test('update check: version, up to date, behind, GitHub down, switched off', async () => {
   let u = (await api('GET', '/api/updates')).data;
   assert.deepEqual([u.commit, u.enabled, u.checked_at], [RUNNING, true, undefined], 'nothing checked yet');

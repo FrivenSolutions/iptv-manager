@@ -215,6 +215,18 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 .editor-side .card { margin-bottom: 16px; }
 .rules { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .rule-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: var(--panel-2); padding: 8px; border-radius: 8px; }
+.rule-groups { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
+.rule-group { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--border); border-left: 4px solid var(--ok); border-radius: 8px; }
+.rule-group.exclude { border-left-color: var(--error); }
+.rule-group > .btn { align-self: flex-start; }
+.rule-group.drop-target { background: var(--accent-soft); }
+.rule-group-head b { font-size: 13.5px; }
+.rule-empty { margin: 0; }
+.rule-buttons { display: inline-flex; gap: 0; margin-left: auto; }
+.drag-handle { cursor: grab; color: var(--muted); padding: 0 2px; user-select: none; font-size: 16px; line-height: 1; }
+.drag-handle.disabled { cursor: default; opacity: .4; }
+.rule-row.dragging { opacity: .45; }
+.rule-row.drop-before { box-shadow: 0 -3px 0 var(--accent); }
 .rule-row select { width: auto; }
 .rule-row input { flex: 1; min-width: 140px; }
 .source-list { display: flex; flex-direction: column; gap: 4px; }

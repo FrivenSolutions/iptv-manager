@@ -225,6 +225,137 @@ function testRule(rule, name) {
   }
 }
 
+/**
+ * Include and Exclude boxes for a rule list, with drag-and-drop (by the ⠿ handle) plus
+ * ↑/↓/⇄ buttons for touch and keyboard. `rules` is edited in place and kept includes-first.
+ * Order is only for organizing: a match in any include counts, and any exclude match wins.
+ *   fields(rule)      the controls between the handle and the buttons
+ *   commit()          after a move, reorder or removal
+ *   onAdd(rule)       after "+ Add" (the new rule has no value yet)
+ *   newRule(action)   the rule "+ Add" creates
+ */
+function ruleGroups({ rules, subject, fields, commit, onAdd, newRule, off = false }) {
+  const regroup = () => {
+    const inc = rules.filter((r) => r.action === 'include');
+    const exc = rules.filter((r) => r.action !== 'include');
+    rules.splice(0, rules.length, ...inc, ...exc);
+  };
+  regroup();
+  let dragging = null;
+
+  const moveTo = (rule, action, before) => {
+    rules.splice(rules.indexOf(rule), 1);
+    rule.action = action;
+    const end = action === 'include' ? rules.filter((r) => r.action === 'include').length : rules.length;
+    rules.splice(before ? rules.indexOf(before) : end, 0, rule);
+    regroup();
+    commit();
+  };
+  const neighbor = (rule, step) => {
+    for (let i = rules.indexOf(rule) + step; i >= 0 && i < rules.length; i += step) {
+      if (rules[i].action === rule.action) return i;
+    }
+    return -1;
+  };
+  const swap = (rule, step) => {
+    const i = rules.indexOf(rule);
+    const j = neighbor(rule, step);
+    if (j < 0) return;
+    [rules[i], rules[j]] = [rules[j], rules[i]];
+    commit();
+  };
+  const clearMarks = () => document.querySelectorAll('.drop-before, .drop-target').forEach((el) => el.classList.remove('drop-before', 'drop-target'));
+
+  const row = (r) => {
+    const other = r.action === 'include' ? 'exclude' : 'include';
+    const el = h('div', {
+      class: 'rule-row',
+      ondragstart: (e) => {
+        dragging = r;
+        el.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', '');
+      },
+      ondragend: () => {
+        dragging = null;
+        el.draggable = false;
+        el.classList.remove('dragging');
+        clearMarks();
+      },
+      ondragover: (e) => {
+        if (!dragging || dragging === r) return;
+        e.preventDefault();
+        e.stopPropagation();
+        clearMarks();
+        el.classList.add('drop-before');
+      },
+      ondrop: (e) => {
+        if (!dragging || dragging === r) return;
+        e.preventDefault();
+        e.stopPropagation();
+        moveTo(dragging, r.action, r);
+      },
+    },
+    h('span', {
+      class: `drag-handle ${off ? 'disabled' : ''}`,
+      title: off ? '' : 'Drag to reorder, or into the other box to switch',
+      // Only the handle starts a drag, so text in the inputs can still be selected.
+      onmousedown: () => { if (!off) el.draggable = true; },
+      onmouseup: () => { el.draggable = false; },
+    }, '⠿'),
+    fields(r),
+    h('span', { class: 'rule-buttons' },
+      h('button', { class: 'icon-btn', disabled: off || neighbor(r, -1) < 0, title: 'Move up', onclick: () => swap(r, -1) }, '↑'),
+      h('button', { class: 'icon-btn', disabled: off || neighbor(r, 1) < 0, title: 'Move down', onclick: () => swap(r, 1) }, '↓'),
+      h('button', { class: 'icon-btn', disabled: off, title: `Move to ${other === 'include' ? 'Include' : 'Exclude'}`, onclick: () => moveTo(r, other, null) }, '⇄'),
+      h('button', { class: 'icon-btn', disabled: off, title: 'Remove rule', onclick: () => { rules.splice(rules.indexOf(r), 1); commit(); } }, '✕')));
+    if (r === ruleGroups.focus) {
+      ruleGroups.focus = null;
+      setTimeout(() => el.querySelector('input')?.focus());
+    }
+    return el;
+  };
+
+  const group = (action) => {
+    const list = rules.filter((r) => r.action === action);
+    const box = h('div', {
+      class: `rule-group ${action}`,
+      ondragover: (e) => {
+        if (!dragging) return;
+        e.preventDefault();
+        clearMarks();
+        box.classList.add('drop-target');
+      },
+      ondrop: (e) => {
+        if (!dragging) return;
+        e.preventDefault();
+        moveTo(dragging, action, null);
+      },
+    },
+    h('div', { class: 'rule-group-head' },
+      h('b', null, action === 'include' ? 'Include' : 'Exclude'),
+      h('span', { class: 'meta' }, action === 'include'
+        ? ` ${subject} matching any of these`
+        : ` ${subject} matching any of these. Exclusions always win.`)),
+    list.map(row),
+    list.length ? null : h('p', { class: 'meta rule-empty' }, `No ${action} rules${off ? '' : '. Add one, or drag a rule here.'}`),
+    h('button', {
+      class: 'btn small',
+      disabled: off,
+      onclick: () => {
+        const r = newRule(action);
+        rules.push(r);
+        regroup();
+        ruleGroups.focus = r;
+        onAdd(r);
+      },
+    }, `+ Add ${action} rule`));
+    return box;
+  };
+
+  return h('div', { class: 'rule-groups' }, group('include'), group('exclude'));
+}
+
 function categoryState(cat, rules, override, includeAll) {
   if (override) return { included: override === 'include', reason: 'manual' };
   const applicable = rules.filter((r) => r.value !== '' && (r.source_id == null || r.source_id === cat.source_id));
@@ -819,12 +950,14 @@ async function outputEditor(main, id) {
   // --- rules
   const rulesBox = h('div', { class: 'rules' });
   const drawRules = () => {
-    fill(rulesBox, 
-      ...draft.rules.map((r, i) => h('div', { class: 'rule-row' },
-        h('select', { onchange: (e) => { r.action = e.target.value; markDirty(); } },
-          h('option', { value: 'include', selected: r.action === 'include' }, 'Include'),
-          h('option', { value: 'exclude', selected: r.action === 'exclude' }, 'Exclude')),
-        h('span', { class: 'meta' }, 'categories from'),
+    fill(rulesBox, ruleGroups({
+      rules: draft.rules,
+      subject: 'categories',
+      newRule: (action) => ({ action, op: action === 'include' ? 'starts_with' : 'contains', value: '', source_id: null }),
+      commit: () => { drawRules(); markDirty(); },
+      onAdd: () => drawRules(),
+      fields: (r) => [
+        h('span', { class: 'meta' }, 'from'),
         h('select', { onchange: (e) => { r.source_id = e.target.value ? Number(e.target.value) : null; markDirty(); } },
           h('option', { value: '' }, 'any source'),
           draft.sources.filter((s) => s.attached || s.id === r.source_id).map((s) => h('option', { value: s.id, selected: r.source_id === s.id }, s.name))),
@@ -832,19 +965,17 @@ async function outputEditor(main, id) {
         h('select', { onchange: (e) => { r.op = e.target.value; markDirty(); } },
           Object.entries(OP_LABELS).map(([k, l]) => h('option', { value: k, selected: r.op === k }, l))),
         h('input', { value: r.value, placeholder: 'e.g. US|', oninput: (e) => { r.value = e.target.value; markDirty(); } }),
-        h('button', { class: 'icon-btn', title: 'Remove rule', onclick: () => { draft.rules.splice(i, 1); drawRules(); markDirty(); } }, '✕'))),
-      draft.rules.length ? '' : h('p', { class: 'meta' }, 'No rules. Categories are included only if you pick them by hand, unless "include everything" is on.'));
+      ],
+    }));
   };
   drawRules();
   const includeAll = h('input', { type: 'checkbox', checked: draft.include_all, onchange: (e) => { draft.include_all = e.target.checked; markDirty(); } });
   const rulesCard = h('section', { class: 'card' },
     h('h2', null, 'Filter rules'),
     h('p', { class: 'hint' }, 'Rules run against the provider\'s category names on every refresh, so new categories that match are added automatically. ',
-      'A category is kept when it matches any Include rule and no Exclude rule. Picking a category by hand below always wins.'),
+      'A category is kept when it matches any Include rule and no Exclude rule. Picking a category by hand below always wins. ',
+      'Drag rules (⠿) to arrange them; the order is only for your own organization.'),
     rulesBox,
-    h('div', { class: 'row' },
-      h('button', { class: 'btn', onclick: () => { draft.rules.push({ action: 'include', op: 'starts_with', value: '', source_id: null }); drawRules(); rulesBox.querySelector('.rule-row:last-child input')?.focus(); } }, '+ Include rule'),
-      h('button', { class: 'btn', onclick: () => { draft.rules.push({ action: 'exclude', op: 'contains', value: '', source_id: null }); drawRules(); rulesBox.querySelector('.rule-row:last-child input')?.focus(); } }, '+ Exclude rule')),
     h('label', { class: 'check' }, includeAll, ' When a source has no Include rules, include all of its categories'));
 
   // --- categories
@@ -949,12 +1080,6 @@ async function outputEditor(main, id) {
       await loadPanel(c, p);
       refreshCounts();
     };
-    const addRule = (action) => {
-      p.rules.push({ action, op: 'contains', value: '' });
-      renderPanel(c, p, data);
-      [...p.el.querySelectorAll('.rule-row input')].pop()?.focus();
-    };
-
     const chans = data.channels;
     // Channel rules and picks only mean something once the category is in the output;
     // until then everything is shown but locked.
@@ -962,25 +1087,31 @@ async function outputEditor(main, id) {
 
     // Live feedback: how many channels a rule's text matches, even before it is saved.
     const matchText = (r) => (r.value ? `matches ${chans.filter((ch) => testRule(r, ch.name)).length} of ${chans.length}` : '');
-    const ruleRows = p.rules.map((r, i) => {
-      const count = h('span', { class: 'meta match-count' }, matchText(r));
-      return h('div', { class: 'rule-row' },
-        h('select', { disabled: off, onchange: (e) => { r.action = e.target.value; saveRules(); } },
-          h('option', { value: 'include', selected: r.action === 'include' }, 'Include'),
-          h('option', { value: 'exclude', selected: r.action === 'exclude' }, 'Exclude')),
-        h('span', { class: 'meta' }, 'channels whose name'),
-        h('select', { disabled: off, onchange: (e) => { r.op = e.target.value; count.textContent = matchText(r); if (r.value) saveRules(); } },
-          Object.entries(OP_LABELS).map(([k, l]) => h('option', { value: k, selected: r.op === k }, l))),
-        h('input', {
-          value: r.value,
-          disabled: off,
-          placeholder: 'e.g. backup',
-          oninput: (e) => { count.textContent = matchText({ ...r, value: e.target.value }); },
-          onchange: (e) => { r.value = e.target.value; saveRules(); },
-          onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
-        }),
-        count,
-        h('button', { class: 'icon-btn', disabled: off, title: 'Remove rule', onclick: () => { p.rules.splice(i, 1); saveRules(); } }, '✕'));
+    const ruleBox = ruleGroups({
+      rules: p.rules,
+      subject: 'channels',
+      off,
+      newRule: (action) => ({ action, op: 'contains', value: '' }),
+      commit: saveRules,
+      // A new rule has no value yet, so it is shown but only saved once text is entered.
+      onAdd: () => renderPanel(c, p, data),
+      fields: (r) => {
+        const count = h('span', { class: 'meta match-count' }, matchText(r));
+        return [
+          h('span', { class: 'meta' }, 'name'),
+          h('select', { disabled: off, onchange: (e) => { r.op = e.target.value; count.textContent = matchText(r); if (r.value) saveRules(); } },
+            Object.entries(OP_LABELS).map(([k, l]) => h('option', { value: k, selected: r.op === k }, l))),
+          h('input', {
+            value: r.value,
+            disabled: off,
+            placeholder: 'e.g. backup',
+            oninput: (e) => { count.textContent = matchText({ ...r, value: e.target.value }); },
+            onchange: (e) => { r.value = e.target.value; saveRules(); },
+            onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); },
+          }),
+          count,
+        ];
+      },
     });
 
     const included = chans.filter((ch) => ch.included).length;
@@ -1015,10 +1146,7 @@ async function outputEditor(main, id) {
         h('div', { class: 'ch-rules-head' },
           h('b', null, 'Channel rules'),
           h('span', { class: 'hint' }, 'Filter channels inside this category by name. Channels the provider adds later are sorted by these rules too.')),
-        ruleRows,
-        h('div', { class: 'row' },
-          h('button', { class: 'btn small', disabled: off, onclick: () => addRule('include') }, '+ Include rule'),
-          h('button', { class: 'btn small', disabled: off, onclick: () => addRule('exclude') }, '+ Exclude rule'))),
+        ruleBox),
       h('div', { class: 'ch-toolbar' },
         h('span', { class: 'meta' }, `${included} of ${chans.length} channels included`),
         h('span', { class: 'row' },

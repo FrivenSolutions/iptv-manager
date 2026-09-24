@@ -211,6 +211,11 @@ For each category in an output:
 4. If no Include rules apply, the output's *include all* setting decides. It is off by
    default, so the category stays out.
 
+Rules are shown in an **Include** box and an **Exclude** box. You can arrange them by dragging
+the ⠿ handle, or with the ↑/↓ buttons. To turn an include rule into an exclude rule or back, drag
+it into the other box or press ⇄. Channel rules work the same way. The order within a box is only
+for your own organization: any matching include counts, and an exclude match always wins.
+
 Rules match the provider's original category name and are case-insensitive. Rules are
 re-applied on every refresh. A category the provider adds later that matches your rules
 appears in the output automatically, and it is flagged **new** in the UI for a week.
