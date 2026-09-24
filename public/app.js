@@ -1179,13 +1179,22 @@ async function outputEditor(main, id) {
           h('button', { class: 'btn small', disabled: off, title: 'Exclude every channel in this category by hand', onclick: () => setChannels(chans.map((ch) => ch.id), 'exclude') }, 'Deselect all'),
           h('button', { class: 'btn small', disabled: off || !overridden.length, title: 'Clear hand picks so the category and channel rules decide', onclick: () => setChannels(overridden, null) }, 'Reset to rules'))),
       h('div', { class: 'ch-box' },
-        chans.map((ch) => h('label', { class: `ch-row ${ch.override && !off ? 'overridden' : ''}`, title: off ? 'Include the category first' : reason(ch) },
-          h('input', { type: 'checkbox', disabled: off, checked: ch.included, onchange: (e) => setChannels([ch.id], e.target.checked ? 'include' : 'exclude') }),
-          h('span', null, ch.custom_name || ch.name),
-          !off && ch.reason !== 'category' ? h('span', { class: 'meta' }, reason(ch)) : null,
-          ch.now_title ? h('span', { class: `now-title ${ch.is_guide_placeholder ? 'placeholder' : ''}`, title: `On now: ${ch.now_title}` }, `▸ ${ch.now_title}`)
-            : ch.is_unlisted ? h('span', { class: 'now-title placeholder', title: 'Nothing airing now in the guide' }, '▸ nothing listed') : null,
-          ch.override && !off ? h('button', { class: 'link', onclick: (e) => { e.preventDefault(); setChannels([ch.id], null); } }, 'reset') : null)),
+        // Two lines per channel: the name gets the full width; details go underneath.
+        chans.map((ch) => {
+          const name = ch.custom_name || ch.name;
+          const why = !off && ch.reason !== 'category' ? reason(ch) : '';
+          const now = ch.now_title ? h('span', { class: `now-title ${ch.is_guide_placeholder ? 'placeholder' : ''}`, title: `On now: ${ch.now_title}` }, `▸ ${ch.now_title}`)
+            : ch.is_unlisted ? h('span', { class: 'now-title placeholder', title: 'Nothing airing now in the guide' }, '▸ nothing listed') : null;
+          return h('label', { class: `ch-row ${ch.override && !off ? 'overridden' : ''} ${ch.included ? '' : 'out'}`, title: off ? 'Include the category first' : [name, why].filter(Boolean).join('\n') },
+            h('input', { type: 'checkbox', disabled: off, checked: ch.included, onchange: (e) => setChannels([ch.id], e.target.checked ? 'include' : 'exclude') }),
+            h('span', { class: 'ch-name' }, name),
+            now || why || (ch.override && !off)
+              ? h('span', { class: 'ch-details' },
+                why ? h('span', { class: 'ch-why' }, why) : null,
+                now,
+                ch.override && !off ? h('button', { class: 'link', onclick: (e) => { e.preventDefault(); setChannels([ch.id], null); } }, 'reset') : null)
+              : null);
+        }),
         chans.length ? null : h('p', { class: 'meta' }, 'No channels.')));
   };
 
@@ -1368,22 +1377,27 @@ function updatesCard(initial) {
     }
     const recent = st && st.finished_at && Date.now() / 1000 - st.finished_at < 86400;
     const [kind, label] = UPDATE_RESULTS[st?.state] || [];
-    return h('div', null,
-      recent && label ? h('p', null, badge(label, kind), ' ', h('span', { class: 'meta' }, `${st.message} (${ago(st.finished_at)})`)) : null,
-      u.behind > 0 ? h('button', {
-        class: 'btn primary',
-        onclick: async (e) => {
-          if (!(await confirmBox('Install the update now? The app restarts, which takes up to about a minute; streams playing through it drop briefly. If the new version fails to start, the current one is restored automatically.', 'Update now'))) return;
-          e.target.disabled = true;
-          const since = Math.floor(Date.now() / 1000);
-          try {
-            draw(await attempt(() => api('POST', '/api/updates/apply')));
-            follow(since);
-          } catch {
-            e.target.disabled = false;
-          }
-        },
-      }, 'Update now') : null);
+    return recent && label ? h('p', null, badge(label, kind), ' ', h('span', { class: 'meta' }, `${st.message} (${ago(st.finished_at)})`)) : null;
+  };
+
+  // Sits in the action row next to "Check now".
+  const updateButton = (u) => {
+    const wu = u.web_update || {};
+    if (!wu.available || wu.busy || !(u.behind > 0)) return null;
+    return h('button', {
+      class: 'btn primary',
+      onclick: async (e) => {
+        if (!(await confirmBox('Install the update now? The app restarts, which takes up to about a minute; streams playing through it drop briefly. If the new version fails to start, the current one is restored automatically.', 'Update now'))) return;
+        e.target.disabled = true;
+        const since = Math.floor(Date.now() / 1000);
+        try {
+          draw(await attempt(() => api('POST', '/api/updates/apply')));
+          follow(since);
+        } catch {
+          e.target.disabled = false;
+        }
+      },
+    }, 'Update now');
   };
 
   const draw = (u) => {
@@ -1421,9 +1435,10 @@ function updatesCard(initial) {
       status,
       webUpdate(u),
       u.error ? h('p', { class: 'form-error' }, `Last check failed: ${u.error}`) : null,
-      h('div', { class: 'row' },
+      h('div', { class: 'row update-actions' },
+        updateButton(u),
         h('button', {
-          class: 'btn small',
+          class: 'btn',
           onclick: async (e) => {
             e.target.disabled = true;
             try {
