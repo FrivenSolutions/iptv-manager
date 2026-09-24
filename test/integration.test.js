@@ -604,3 +604,62 @@ test('HDHomeRun: an unreachable box is a clear error and keeps the last lineup',
   assert.match(s.last_error, /No HDHomeRun answered at http:\/\/127\.0\.0\.1:9/);
   assert.equal(s.counts.channels, 3);
 });
+
+test('hide empty event channels: per-category toggle, editable patterns, backup round trip', async () => {
+  xcCats.push({ category_id: '20', category_name: 'US| ESPN+ EVENTS' });
+  const events = ['ESPN+ 01:', 'ESPN+ 02: Lakers vs Celtics', 'ESPN+ 03 -', 'ESPN+ 04', 'ESPN+ 05 NO EVENT', 'ESPN+ 06: Bills - Jets'];
+  events.forEach((name, i) => xcStreams.push({ num: 50 + i, name, stream_id: 500 + i, epg_channel_id: '', category_id: '20' }));
+  await api('POST', `/api/sources/${xcId}/refresh`);
+  await app.ctx.jobs.idle();
+
+  const o = (await api('POST', '/api/outputs', { name: 'Events' })).data;
+  await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [{ action: 'include', op: 'contains', value: 'espn+' }] });
+  const cat = (await api('GET', `/api/outputs/${o.id}/categories`)).data.find((c) => c.name === 'US| ESPN+ EVENTS');
+  const names = async () => [...(await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
+  assert.equal((await names()).length, 6, 'off by default');
+
+  await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_empty: true });
+  assert.deepEqual(await names(), ['ESPN+ 02: Lakers vs Celtics', 'ESPN+ 06: Bills - Jets']);
+  const view = (await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data;
+  assert.equal(view.hide_empty, true);
+  assert.deepEqual(view.channels.filter((c) => c.reason === 'empty').map((c) => c.name), ['ESPN+ 01:', 'ESPN+ 03 -', 'ESPN+ 04', 'ESPN+ 05 NO EVENT']);
+
+  // A hand pick still wins over the toggle.
+  const idle = view.channels.find((c) => c.name === 'ESPN+ 04');
+  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [idle.id], state: 'include' });
+  assert.ok((await names()).includes('ESPN+ 04'));
+  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [idle.id], state: null });
+
+  // Edit the patterns: drop "ends with a number", keep the rest.
+  assert.equal((await api('PUT', '/api/settings', { empty_event_patterns: ['('] })).status, 400);
+  const s = await api('PUT', '/api/settings', { empty_event_patterns: [':\\s*$', '-\\s*$', 'no event\\s*$'] });
+  assert.equal(s.status, 200);
+  assert.deepEqual(await names(), ['ESPN+ 02: Lakers vs Celtics', 'ESPN+ 04', 'ESPN+ 06: Bills - Jets']);
+  const settings = (await api('GET', '/api/settings')).data;
+  assert.equal(settings.empty_event_patterns.length, 3);
+  assert.equal(settings.base_url, '', 'saving patterns leaves other settings alone');
+
+  // Export keeps both the custom patterns and the toggle; a fresh instance reproduces the output.
+  const exported = (await api('GET', '/api/export')).data;
+  assert.deepEqual(exported.settings.empty_event_patterns, [':\\s*$', '-\\s*$', 'no event\\s*$']);
+  assert.deepEqual(exported.outputs.find((x) => x.token === o.token).category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true }]);
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-import2-'));
+  const app2 = createApp({ dataDir: dir2, adminPassword: PASSWORD, log: () => {} });
+  const base2 = `http://127.0.0.1:${(await app2.start(0, '127.0.0.1')).port}`;
+  try {
+    const login = await fetch(`${base2}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'fetch' }, body: JSON.stringify({ password: PASSWORD }) });
+    const cookie2 = login.headers.get('set-cookie').split(';')[0];
+    const r = await fetch(`${base2}/api/import`, { method: 'POST', headers: { cookie: cookie2, 'content-type': 'application/json', 'x-requested-with': 'fetch' }, body: JSON.stringify(exported) });
+    assert.equal(r.status, 200, await r.clone().text());
+    await app2.ctx.jobs.idle();
+    const after = [...(await (await fetch(`${base2}/o/${o.token}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
+    assert.deepEqual(after, await names());
+  } finally {
+    await app2.close();
+    fs.rmSync(dir2, { recursive: true, force: true });
+  }
+
+  // null restores the defaults.
+  await api('PUT', '/api/settings', { empty_event_patterns: null });
+  assert.deepEqual(await names(), ['ESPN+ 02: Lakers vs Celtics', 'ESPN+ 06: Bills - Jets']);
+});

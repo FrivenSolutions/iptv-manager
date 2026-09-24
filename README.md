@@ -34,6 +34,8 @@ around 25 seconds.
     *ends with*, *does not end with*, *equals*, *does not equal* and *regex*.
   - Channel rules inside a category, with a live "matches N of M" count as you type.
   - Manual picks for categories and channels, including Select all and Deselect all.
+  - A per-category toggle that hides empty sports/event placeholder channels, using patterns you
+    can edit.
   - A live preview of what the rules do before you save.
 - **Multiple outputs:** each output is its own lineup with its own URLs and optional Xtream Codes
   login. One output can merge categories from several sources.
@@ -220,6 +222,25 @@ Channel rules and picks only apply once the category itself is in the output. If
 the channel list still opens but is locked, with an **Include category** button. An excluded
 category excludes all of its channels. Earlier hand picks are kept and apply again when you
 include it.
+
+### Hiding empty event channels
+
+Event providers keep placeholder channels that only carry something when an event is scheduled.
+They have names like `ESPN+ 03:`, `NFL 07 -`, `PPV 12` or `NBA 04 NO EVENT`, and gain a title such
+as `ESPN+ 03: Lakers vs Celtics` once an event is on. In an output, expand an event category and
+tick **Hide empty event channels** to drop the placeholders. The panel shows how many channels
+currently look empty. The toggle is per category, because the same patterns would also hide
+ordinary channels like "ESPN 2" elsewhere. A channel you pick by hand is always kept.
+
+A channel counts as empty when its provider name matches any pattern in **Settings → Empty event
+channels**. The patterns are case-insensitive regular expressions. The defaults cover names that
+end with `:`, `-`, a number or `NO EVENT`. You can add patterns, remove them, or restore the
+defaults, and a test box shows what a given name counts as. "Ends with a number" also hides a live
+event whose title ends in a number (`PPV 01: UFC 300`). If that matters, replace it with
+`^[^:]*\d\s*$`, which only counts names without a `:` as empty.
+
+Names only change when the source refreshes, so give event sources a short refresh interval (for
+example 1 hour) in the source's **Advanced** settings.
 
 ### HDHomeRun tuners
 

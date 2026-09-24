@@ -4,7 +4,7 @@ import { Readable } from 'node:stream';
 import { parseM3U, isVod } from '../src/m3u.js';
 import { parseXmltv, parseXmltvTime } from '../src/xmltv.js';
 import { normalizeName, matchChannels } from '../src/epgmatch.js';
-import { categoryState, testRule } from '../src/filters.js';
+import { categoryState, testRule, DEFAULT_EMPTY_EVENT_PATTERNS, compilePatterns, isEmptyEvent } from '../src/filters.js';
 import { rewriteHls } from '../src/stream.js';
 import { splitUrls, xcBase } from '../src/ingest.js';
 import { firstText } from '../src/outputs/xc.js';
@@ -90,6 +90,19 @@ test('matchChannels matches a tvg-id against exact display names (HDHomeRun tune
   const m = matchChannels([{ id: 1, name: 'WCBS-HD', tvg_id: '2.1' }, { id: 2, name: 'X', tvg_id: '12' }], epg);
   assert.deepEqual(m.get(1), { epgId: 'US101.hdhomerun.com', how: 'tvg-id' });
   assert.equal(m.get(2).how, null, 'no partial display-name matches');
+});
+
+test('default empty-event patterns', () => {
+  const re = compilePatterns(DEFAULT_EMPTY_EVENT_PATTERNS);
+  for (const idle of ['ESPN+ 03:', 'NFL Game Pass 07 -', 'PPV 12', 'NBA 04 NO EVENT', 'MLB 09 no event ', 'Event 1 : ']) {
+    assert.ok(isEmptyEvent(idle, re), `${idle} should count as empty`);
+  }
+  for (const live of ['ESPN+ 03: Lakers vs Celtics', 'NFL Game Pass 07 - Bills at Jets', 'PPV 12: Title Fight', 'NO EVENT TONIGHT? no']) {
+    assert.ok(!isEmptyEvent(live, re), `${live} should not count as empty`);
+  }
+  // Known trade-off of "ends with a number": a live event whose title ends in a number.
+  assert.ok(isEmptyEvent('PPV 01: UFC 300', re));
+  assert.deepEqual(compilePatterns(['(', 'ok$']).map(String), ['/ok$/i'], 'invalid patterns are skipped');
 });
 
 test('rule operators', () => {

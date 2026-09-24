@@ -201,6 +201,15 @@ const MIGRATIONS = [
   ALTER TABLE sources_new RENAME TO sources;
   `,
   },
+  `
+  -- Per-output, per-category switches (currently: hide empty event/placeholder channels).
+  CREATE TABLE output_category_settings (
+    output_id INTEGER NOT NULL REFERENCES outputs(id) ON DELETE CASCADE,
+    category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    hide_empty INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (output_id, category_id)
+  );
+  `,
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.

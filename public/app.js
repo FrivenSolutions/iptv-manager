@@ -900,6 +900,7 @@ async function outputEditor(main, id) {
           h('span', { class: 'dot' }),
           h('span', { class: 'cat-name' }, c.custom_name || c.name, c.is_new ? badge('new', 'info') : null, jellyfinBadges(c),
             c.channel_rules?.length ? badge(`${c.channel_rules.length} channel rule${c.channel_rules.length === 1 ? '' : 's'}`, 'info') : null,
+            c.hide_empty ? badge('hides empty events', 'info') : null,
             h('span', { class: 'meta' }, ` ${sourceName(c.source_id)} · ${c.channel_count} ch · ${reasonText(st)}`)),
           h('button', { class: 'icon-btn', title: 'Edit group (display name, Jellyfin category)', onclick: () => editCategory(c, drawCats) }, '✎'),
           h('span', { class: 'segmented small' }, seg('Auto', null, ''), seg('Include', 'include', 'inc'), seg('Exclude', 'exclude', 'exc')));
@@ -982,7 +983,15 @@ async function outputEditor(main, id) {
 
     const included = chans.filter((ch) => ch.included).length;
     const overridden = chans.filter((ch) => ch.override).map((ch) => ch.id);
-    const reason = (ch) => ({ manual: 'picked by hand', rule: 'by rule', nomatch: 'no include rule matched' })[ch.reason] || '';
+    const reason = (ch) => ({ manual: 'picked by hand', rule: 'by rule', nomatch: 'no include rule matched', empty: 'empty event' })[ch.reason] || '';
+    const emptyCount = chans.filter((ch) => ch.is_empty_event).length;
+    const setHideEmpty = async (on) => {
+      await attempt(() => api('PUT', `/api/outputs/${id}/categories/${c.id}/options`, { hide_empty: on }));
+      c.hide_empty = on;
+      await loadPanel(c, p);
+      refreshCounts();
+      drawCats();
+    };
 
     p.el.classList.toggle('locked', off);
     fill(p.el,
@@ -991,6 +1000,15 @@ async function outputEditor(main, id) {
           'Include it to pick channels or use channel rules.',
           overridden.length ? ` Your ${overridden.length} earlier hand pick${overridden.length === 1 ? ' comes' : 's come'} back when you do.` : ''),
         h('button', { class: 'btn small primary', onclick: () => setOverride([c.id], 'include') }, 'Include category')) : null,
+      h('div', { class: 'ch-option' },
+        h('label', { class: 'check' },
+          h('input', { type: 'checkbox', disabled: off, checked: data.hide_empty, onchange: (e) => setHideEmpty(e.target.checked) }),
+          h('b', null, ' Hide empty event channels'),
+          h('span', { class: 'meta' }, ` · ${emptyCount} of ${chans.length} look empty right now`)),
+        h('span', { class: 'hint' },
+          'For event categories: hides placeholders such as "ESPN+ 03:" or "PPV 12 NO EVENT" until the provider names the event. ',
+          h('a', { href: '#/settings' }, 'Edit the patterns'),
+          '. Names update when the source refreshes, so give event sources a short refresh interval.')),
       h('div', { class: 'ch-rules' },
         h('div', { class: 'ch-rules-head' },
           h('b', null, 'Channel rules'),
@@ -1123,8 +1141,69 @@ async function settingsView(main) {
           cur.value = next.value = '';
         },
       }, field('Current password', cur), field('New password', next, 'At least 8 characters.'), h('button', { class: 'btn primary' }, 'Change password'))),
+    emptyEventCard(s),
     backupCard(),
     h('p', { class: 'meta' }, `IPTV Manager ${s.version}`));
+}
+
+const PATTERN_LABELS = {
+  ':\\s*$': 'ends with ":"',
+  '-\\s*$': 'ends with "-"',
+  '\\d\\s*$': 'ends with a number',
+  'no event\\s*$': 'ends with "NO EVENT"',
+};
+
+/** Settings card for the regular expressions that mark a channel as an empty event placeholder. */
+function emptyEventCard(s) {
+  let patterns = [...s.empty_event_patterns];
+  const list = h('div', { class: 'form' });
+  const testInput = h('input', { placeholder: 'Try a channel name, e.g. ESPN+ 03:' });
+  const testResult = h('span', { class: 'meta' });
+  const runTest = () => {
+    const name = testInput.value;
+    if (!name) return (testResult.textContent = '');
+    const hit = patterns.find((p) => {
+      try {
+        return new RegExp(p, 'i').test(name);
+      } catch {
+        return false;
+      }
+    });
+    testResult.textContent = hit ? `empty: matches ${PATTERN_LABELS[hit] || hit}` : 'not empty: kept';
+  };
+  const draw = () => {
+    fill(list,
+      patterns.map((p, i) => h('div', { class: 'pattern-row' },
+        h('input', { value: p, oninput: (e) => { patterns[i] = e.target.value; runTest(); } }),
+        h('span', { class: 'meta' }, PATTERN_LABELS[p] || ''),
+        h('button', { class: 'icon-btn', title: 'Remove pattern', onclick: () => { patterns.splice(i, 1); draw(); runTest(); } }, '✕'))),
+      patterns.length ? null : h('p', { class: 'meta' }, 'No patterns: the toggle hides nothing until you add one.'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn small', onclick: () => { patterns.push(''); draw(); [...list.querySelectorAll('input')].pop()?.focus(); } }, '+ Add pattern'),
+        h('button', { class: 'btn small', onclick: () => { patterns = [...s.empty_event_defaults]; draw(); runTest(); } }, 'Restore defaults'),
+        h('button', {
+          class: 'btn small primary',
+          onclick: async () => {
+            const isDefault = JSON.stringify(patterns) === JSON.stringify(s.empty_event_defaults);
+            const r = await attempt(() => api('PUT', '/api/settings', { empty_event_patterns: isDefault ? null : patterns.filter((p) => p.trim()) }), 'Patterns saved');
+            patterns = [...r.empty_event_patterns];
+            draw();
+          },
+        }, 'Save patterns')));
+  };
+  testInput.addEventListener('input', runTest);
+  draw();
+  return h('section', { class: 'card narrow' },
+    h('h2', null, 'Empty event channels'),
+    h('p', { class: 'hint' },
+      'Event providers keep placeholder channels, such as "ESPN+ 03:" or "PPV 12 NO EVENT", that only carry something when an event is scheduled. ',
+      'Turn on "Hide empty event channels" in an expanded category of an output to hide the placeholders. ',
+      'A channel counts as empty when its name matches any pattern below (regular expressions, case-insensitive).'),
+    list,
+    h('div', { class: 'pattern-test' }, testInput, testResult),
+    h('p', { class: 'hint' },
+      'Note: "ends with a number" also hides a live event whose title ends in a number, e.g. "PPV 01: UFC 300". ',
+      'Replacing it with ^[^:]*\\d\\s*$ only counts names without a ":" as empty.'));
 }
 
 function backupCard() {

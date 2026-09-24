@@ -56,9 +56,11 @@ export function categoryState(cat, rules, override, includeAll) {
  * Channel rules match the provider's channel name, so channels the provider adds
  * later are sorted automatically too.
  */
-export function channelState(name, catIncluded, rules, override) {
+export function channelState(name, catIncluded, rules, override, emptyEvent = false) {
   if (!catIncluded) return { included: false, reason: 'category' };
   if (override) return { included: override === 'include', reason: 'manual' };
+  // Placeholder channels for events that aren't on ("ESPN+ 03:", "PPV 12 NO EVENT").
+  if (emptyEvent) return { included: false, reason: 'empty' };
   const exclude = rules.find((r) => r.action === 'exclude' && testRule(r, name));
   if (exclude) return { included: false, reason: 'rule', rule_id: exclude.id };
   const includes = rules.filter((r) => r.action === 'include');
@@ -66,6 +68,34 @@ export function channelState(name, catIncluded, rules, override) {
   const hit = includes.find((r) => testRule(r, name));
   return hit ? { included: true, reason: 'rule', rule_id: hit.id } : { included: false, reason: 'nomatch' };
 }
+
+// Event providers list idle placeholders whose names end in ":", "-", a number or "NO EVENT";
+// once an event is scheduled the name gains a title ("ESPN+ 03: Team A vs Team B").
+export const DEFAULT_EMPTY_EVENT_PATTERNS = [':\\s*$', '-\\s*$', '\\d\\s*$', 'no event\\s*$'];
+
+/** The configured empty-event patterns (the defaults unless changed in Settings). */
+export function emptyEventPatterns(db) {
+  const raw = db.getSetting('empty_event_patterns');
+  if (raw) {
+    try {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) return list;
+    } catch {}
+  }
+  return DEFAULT_EMPTY_EVENT_PATTERNS;
+}
+
+export function compilePatterns(list) {
+  return list.flatMap((p) => {
+    try {
+      return [new RegExp(p, 'i')];
+    } catch {
+      return [];
+    }
+  });
+}
+
+export const isEmptyEvent = (name, regexes) => regexes.some((r) => r.test(String(name || '')));
 
 /** Channel rules of an output, grouped by category id. */
 export function loadChannelRules(db, outputId) {
@@ -115,10 +145,15 @@ export function evaluateCategories(db, output) {
   );
   cats.sort((a, b) => order.get(a.source_id) - order.get(b.source_id) || a.sort - b.sort);
   const chRules = loadChannelRules(db, output.id);
+  const hideEmpty = new Set(
+    db.all('SELECT category_id FROM output_category_settings WHERE output_id = ? AND hide_empty = 1', [output.id])
+      .map((r) => r.category_id),
+  );
   for (const c of cats) {
     const override = overrides.get(c.id) || null;
     Object.assign(c, categoryState(c, output.rules, override, output.include_all), { override });
     c.channel_rules = chRules.get(c.id) || [];
+    c.hide_empty = hideEmpty.has(c.id);
     c.is_new = isNewCategory(c);
     c.jellyfin = parseJellyfin(c.jellyfin);
   }
@@ -138,6 +173,7 @@ export function selectChannels(db, output) {
       .map((r) => [r.channel_id, r.state]),
   );
   const srcById = new Map(output.sources.map((s) => [s.id, s]));
+  const emptyRegexes = compilePatterns(emptyEventPatterns(db));
   const ids = output.sources.map((s) => s.id);
   const rows = db.all(
     `SELECT * FROM channels WHERE active = 1 AND source_id IN (${ids.map(() => '?').join(',')})`,
@@ -148,7 +184,8 @@ export function selectChannels(db, output) {
   for (const ch of rows) {
     const cat = catById.get(ch.category_id);
     if (!cat) continue;
-    if (!channelState(ch.name, cat.included, cat.channel_rules, chOverrides.get(ch.id)).included) continue;
+    const empty = cat.hide_empty && isEmptyEvent(ch.name, emptyRegexes);
+    if (!channelState(ch.name, cat.included, cat.channel_rules, chOverrides.get(ch.id), empty).included) continue;
     channels.push({ ch, cat });
   }
   const order = new Map(output.sources.map((s, i) => [s.id, i]));

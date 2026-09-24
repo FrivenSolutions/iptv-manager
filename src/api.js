@@ -4,7 +4,10 @@ import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { HttpError, sendJson, readJson, baseUrl } from './http.js';
 import { hashPassword, verifyPassword, makeSession, sessionCookie, randomToken, COOKIE } from './auth.js';
-import { OPS, loadOutput, evaluateCategories, isNewCategory, channelState } from './filters.js';
+import {
+  OPS, loadOutput, evaluateCategories, isNewCategory, channelState,
+  DEFAULT_EMPTY_EVENT_PATTERNS, emptyEventPatterns, compilePatterns, isEmptyEvent,
+} from './filters.js';
 import { rematchSource } from './ingest.js';
 import { JELLYFIN_CATEGORIES, parseJellyfin } from './outputs/epg.js';
 import { exportSettings, importSettings } from './backup.js';
@@ -109,6 +112,22 @@ export function validateRules(list) {
     .filter((r) => r.value !== '');
 }
 
+export function validatePatterns(list) {
+  if (!Array.isArray(list)) throw new HttpError(400, 'Patterns must be a list');
+  if (list.length > 50) throw new HttpError(400, 'At most 50 patterns');
+  return list.map((p) => {
+    const s = String(p ?? '').trim();
+    if (!s) throw new HttpError(400, 'Patterns cannot be empty');
+    if (s.length > 200) throw new HttpError(400, 'Patterns are limited to 200 characters');
+    try {
+      new RegExp(s, 'i');
+    } catch {
+      throw new HttpError(400, `Invalid regular expression: ${s}`);
+    }
+    return s;
+  });
+}
+
 function outputUrls(req, ctx, o) {
   const base = baseUrl(req, ctx.db.getSetting('base_url'));
   return {
@@ -207,16 +226,25 @@ export function registerApi(router, ctx) {
       base_url: db.getSetting('base_url') || '',
       detected_base_url: baseUrl(req, ''),
       version: ctx.appVersion,
+      empty_event_patterns: emptyEventPatterns(db),
+      empty_event_defaults: DEFAULT_EMPTY_EVENT_PATTERNS,
     });
   });
 
+  // Partial update: only the settings present in the body change.
   router.put('/api/settings', async (req, res) => {
     const body = await readJson(req);
-    const b = str(body.base_url, 500).replace(/\/+$/, '');
-    if (b && !/^https?:\/\/[^/]+(\/.*)?$/i.test(b)) throw new HttpError(400, 'Base URL must start with http:// or https://');
-    db.setSetting('base_url', b);
+    if (body.base_url !== undefined) {
+      const b = str(body.base_url, 500).replace(/\/+$/, '');
+      if (b && !/^https?:\/\/[^/]+(\/.*)?$/i.test(b)) throw new HttpError(400, 'Base URL must start with http:// or https://');
+      db.setSetting('base_url', b);
+    }
+    if (body.empty_event_patterns !== undefined) {
+      // null restores the defaults; a list (possibly empty) replaces them.
+      db.setSetting('empty_event_patterns', body.empty_event_patterns === null ? null : JSON.stringify(validatePatterns(body.empty_event_patterns)));
+    }
     touch();
-    sendJson(res, 200, { ok: true });
+    sendJson(res, 200, { ok: true, empty_event_patterns: emptyEventPatterns(db) });
   });
 
   // --- backup ----------------------------------------------------------------
@@ -566,14 +594,31 @@ export function registerApi(router, ctx) {
          FROM channels WHERE category_id = ? AND active = 1 ORDER BY sort`,
       [catId],
     );
+    const emptyRegexes = compilePatterns(emptyEventPatterns(db));
     sendJson(res, 200, {
       category_included: cat.included,
+      hide_empty: cat.hide_empty,
       rules: cat.channel_rules.map(({ id, action, op, value }) => ({ id, action, op, value })),
       channels: rows.map((r) => {
         const override = overrides.get(r.id) || null;
-        return { ...r, override, ...channelState(r.name, cat.included, cat.channel_rules, override) };
+        const empty = isEmptyEvent(r.name, emptyRegexes);
+        return { ...r, override, is_empty_event: empty, ...channelState(r.name, cat.included, cat.channel_rules, override, cat.hide_empty && empty) };
       }),
     });
+  });
+
+  // Per-category switches for one output.
+  router.put('/api/outputs/:id/categories/:catId/options', async (req, res, { params }) => {
+    const o = mustGet(db, 'outputs', params.id);
+    const cat = mustGet(db, 'categories', params.catId);
+    const body = await readJson(req);
+    db.run(
+      `INSERT INTO output_category_settings (output_id, category_id, hide_empty) VALUES (?, ?, ?)
+       ON CONFLICT (output_id, category_id) DO UPDATE SET hide_empty = excluded.hide_empty`,
+      [o.id, cat.id, bool(body.hide_empty)],
+    );
+    touch();
+    sendJson(res, 200, { ok: true });
   });
 
   // Replace the channel rules of one category in this output.

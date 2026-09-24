@@ -1,7 +1,7 @@
 // Settings export/import. Categories and channels are referenced by source-relative
 // names/keys rather than database ids, so an export restores onto a fresh install.
 import { HttpError } from './http.js';
-import { OPS } from './filters.js';
+import { OPS, compilePatterns } from './filters.js';
 import { parseJellyfin } from './outputs/epg.js';
 import { now } from './db.js';
 
@@ -25,7 +25,9 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
   const catOverrides = db.all('SELECT * FROM output_category_overrides');
   const chOverrides = db.all('SELECT * FROM output_channel_overrides');
   const chRules = db.all('SELECT * FROM output_channel_rules ORDER BY sort, id');
-  const neededCats = new Set([...catOverrides.map((r) => r.category_id), ...chRules.map((r) => r.category_id)]);
+  const catSettings = db.all('SELECT * FROM output_category_settings WHERE hide_empty = 1');
+  const neededCats = new Set([...catOverrides, ...chRules, ...catSettings].map((r) => r.category_id));
+  const customPatterns = db.getSetting('empty_event_patterns');
   const neededChans = new Set(chOverrides.map((r) => r.channel_id));
 
   return {
@@ -34,7 +36,11 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
     exported_at: new Date().toISOString(),
     app_version: appVersion,
     includes_secrets: !!secrets,
-    settings: { base_url: db.getSetting('base_url') || '' },
+    settings: {
+      base_url: db.getSetting('base_url') || '',
+      // null means "the built-in defaults", so a restore follows future default changes.
+      empty_event_patterns: customPatterns ? JSON.parse(customPatterns) : null,
+    },
     sources: sources.map((s) => {
       const src = { ref: s.id, ...pick(s, SOURCE_FIELDS), live_only: !!s.live_only, enabled: !!s.enabled };
       if (!secrets) {
@@ -69,6 +75,10 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
         const c = catRef.get(r.category_id);
         return { source: c.source_id, category: c.name, action: r.action, op: r.op, value: r.value };
       }),
+      category_options: catSettings.filter((r) => r.output_id === o.id && catRef.has(r.category_id)).map((r) => {
+        const c = catRef.get(r.category_id);
+        return { source: c.source_id, category: c.name, hide_empty: true };
+      }),
       channel_overrides: chOverrides.filter((r) => r.output_id === o.id && chRef.has(r.channel_id)).map((r) => {
         const c = chRef.get(r.channel_id);
         return { source: c.source_id, key: c.key, state: r.state };
@@ -83,6 +93,11 @@ function check(cond, msg) {
 
 function validate(data) {
   check(data && data.format === FORMAT, 'not an IPTV Manager settings export');
+  const patterns = data.settings?.empty_event_patterns;
+  if (patterns != null) {
+    check(Array.isArray(patterns) && patterns.every((p) => typeof p === 'string' && p.trim())
+      && compilePatterns(patterns).length === patterns.length, 'invalid empty-event patterns');
+  }
   check(Number(data.version) <= FORMAT_VERSION, `made by a newer version (format ${data.version})`);
   check(Array.isArray(data.sources) && Array.isArray(data.outputs), 'missing sources or outputs');
   const refs = new Set();
@@ -103,7 +118,8 @@ function validate(data) {
     }
     check(['direct', 'redirect', 'proxy'].includes(o.stream_mode), `output "${o.name}" has an unknown stream mode`);
     check((o.rules || []).every(rule) && (o.channel_rules || []).every(rule), `output "${o.name}" has an invalid rule`);
-    const used = [...(o.sources || []), ...[...(o.category_overrides || []), ...(o.channel_rules || []), ...(o.channel_overrides || [])].map((x) => x.source)];
+    const used = [...(o.sources || []), ...[...(o.category_overrides || []), ...(o.channel_rules || []), ...(o.category_options || []),
+      ...(o.channel_overrides || [])].map((x) => x.source)];
     for (const r of used) {
       check(refs.has(r), `output "${o.name}" refers to a source that is not in the file`);
     }
@@ -123,6 +139,10 @@ export function importSettings(db, data) {
     db.run('DELETE FROM outputs');
     db.run('DELETE FROM sources');
     if (data.settings && typeof data.settings.base_url === 'string') db.setSetting('base_url', data.settings.base_url);
+    if (data.settings && 'empty_event_patterns' in data.settings) {
+      const p = data.settings.empty_event_patterns;
+      db.setSetting('empty_event_patterns', p == null ? null : JSON.stringify(p.map((s) => s.trim())));
+    }
 
     const ids = new Map();
     const catIds = new Map(); // "ref|name" -> id
@@ -188,6 +208,11 @@ export function importSettings(db, data) {
       for (const x of o.category_overrides || []) {
         db.run('INSERT OR REPLACE INTO output_category_overrides (output_id, category_id, state) VALUES (?, ?, ?)', [
           r.id, ensureCat(x.source, x.category), x.state === 'include' ? 'include' : 'exclude',
+        ]);
+      }
+      for (const x of o.category_options || []) {
+        db.run('INSERT OR REPLACE INTO output_category_settings (output_id, category_id, hide_empty) VALUES (?, ?, ?)', [
+          r.id, ensureCat(x.source, x.category), !!x.hide_empty,
         ]);
       }
       (o.channel_rules || []).forEach((x, i) => {

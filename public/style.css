@@ -224,6 +224,13 @@ details[open] > summary { margin-bottom: 8px; }
 .expander { background: none; border: 0; cursor: pointer; color: var(--muted); width: 18px; padding: 0; font: inherit; }
 .ch-panel { padding: 10px 12px 12px 48px; background: var(--panel-2); border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
 .ch-rules { display: flex; flex-direction: column; gap: 6px; }
+.ch-option { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.ch-option .hint { margin: 0 0 0 22px; }
+.ch-panel.locked .ch-option { opacity: .55; }
+.pattern-row { display: flex; gap: 8px; align-items: center; }
+.pattern-row input { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.pattern-test { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pattern-test input { max-width: 320px; }
 .ch-warning { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--warn); border-radius: 8px; background: var(--warn-soft); color: var(--warn); }
 .ch-warning b { color: inherit; }
 .ch-panel.locked .ch-rules, .ch-panel.locked .ch-toolbar, .ch-panel.locked .ch-box { opacity: .55; }
