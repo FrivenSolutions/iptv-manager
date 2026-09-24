@@ -1388,6 +1388,18 @@ function updatesCard(initial) {
     } else if (u.behind === 0) status = h('p', null, badge('Up to date', 'ok'), ' ', h('span', { class: 'meta' }, u.note || ''));
     else status = h('p', { class: 'meta' }, u.note || 'Could not compare versions.');
     if (u.web_update?.busy && !watching) follow(u.web_update.status?.started_at || Math.floor(Date.now() / 1000));
+    // Just updated: the server re-checks against the new version within seconds; pick that up.
+    if (u.checking && !watching && (card._recheck || 0) < 5) {
+      card._recheck = (card._recheck || 0) + 1;
+      setTimeout(async () => {
+        if (!card.isConnected) return;
+        try {
+          const r = await api('GET', '/api/updates');
+          draw(r);
+          updateBadge(r);
+        } catch {}
+      }, 4000);
+    }
     fill(card,
       h('h2', null, 'Version & updates'),
       h('p', null, `IPTV Manager ${u.version} · `,

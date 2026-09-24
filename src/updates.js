@@ -28,12 +28,34 @@ export class UpdateChecker {
     return this.db.getSetting('update_check', '1') !== '0';
   }
 
-  state() {
+  savedState() {
     try {
       return JSON.parse(this.db.getSetting('update_state') || 'null') || {};
     } catch {
       return {};
     }
+  }
+
+  /** The saved check describes a different version than the one running (e.g. just updated). */
+  isStale(st = this.savedState()) {
+    return !!st.checked_at && st.for_commit !== this.commit;
+  }
+
+  /**
+   * The last check's result, as it applies to the version running now. A result computed for
+   * another version (the app was updated since) is never shown as-is: if the running version is
+   * the newest one GitHub reported, it is up to date; otherwise it is re-checked shortly.
+   */
+  state() {
+    const st = this.savedState();
+    if (!this.isStale(st)) return st;
+    if (this.commit && st.latest?.sha === this.commit) {
+      return { ...st, behind: 0, commits: [], note: null, for_commit: this.commit };
+    }
+    return {
+      ...st, behind: null, commits: [], checking: this.enabled,
+      note: this.enabled ? 'Checking for updates to the version now running…' : 'Click Check now to compare the version now running.',
+    };
   }
 
   async getJson(p) {
@@ -66,6 +88,7 @@ export class UpdateChecker {
         commits: [],
         note: null,
         error: null,
+        for_commit: this.commit, // what "behind" was measured against
       };
       if (!this.commit) {
         st.behind = null;
@@ -91,10 +114,13 @@ export class UpdateChecker {
     return st;
   }
 
-  /** First check shortly after start, then whenever the last one is a day old (checked hourly). */
+  /**
+   * First check shortly after start, then whenever the last one is a day old (checked hourly).
+   * After an update the saved result describes the old version, so re-check within seconds.
+   */
   start() {
-    const due = () => this.enabled && now() - (this.state().checked_at || 0) >= CHECK_EVERY_S;
-    const first = setTimeout(() => due() && this.check(), this.delayMs);
+    const due = () => this.enabled && (this.isStale() || now() - (this.savedState().checked_at || 0) >= CHECK_EVERY_S);
+    const first = setTimeout(() => due() && this.check(), this.isStale() ? Math.min(this.delayMs, 5000) : this.delayMs);
     const tick = setInterval(() => due() && this.check(), TICK_MS);
     first.unref();
     tick.unref();

@@ -967,6 +967,24 @@ test('update check: version, up to date, behind, GitHub down, switched off', asy
   assert.equal((await api('POST', '/api/updates/check')).data.error, null);
   await api('PUT', '/api/settings', { update_check: true });
 
+  // After an update the saved result describes the old version. It must not keep saying
+  // "Update available" (the bug seen after Update now): the new process re-reads it.
+  const { UpdateChecker: UC } = await import('../src/updates.js');
+  const opts = { db: app.ctx.db, apiBase: up, repo: 'test/repo' };
+  const updatedToLatest = new UC({ ...opts, commit: gh.latest });
+  assert.equal(updatedToLatest.isStale(), true);
+  assert.deepEqual([updatedToLatest.state().behind, updatedToLatest.state().commits], [0, []], 'now running the latest: up to date, no network');
+  const updatedToOther = new UC({ ...opts, commit: 'd'.repeat(40) });
+  assert.deepEqual([updatedToOther.state().behind, updatedToOther.state().checking], [null, true]);
+  assert.match(updatedToOther.state().note, /Checking/);
+  // A result saved before for_commit existed counts as stale too.
+  const saved = JSON.parse(app.ctx.db.getSetting('update_state'));
+  delete saved.for_commit;
+  app.ctx.db.setSetting('update_state', JSON.stringify(saved));
+  assert.equal(new UC({ ...opts, commit: RUNNING }).isStale(), true);
+  await new UC({ ...opts, commit: RUNNING }).check();
+  assert.equal(new UC({ ...opts, commit: RUNNING }).isStale(), false, 'a fresh check records the version it measured');
+
   // A version that GitHub doesn't know (fork, local changes) is reported, not an error.
   const { UpdateChecker } = await import('../src/updates.js');
   const st = await new UpdateChecker({ db: app.ctx.db, commit: 'f'.repeat(40), apiBase: up, repo: 'test/repo' }).check();
