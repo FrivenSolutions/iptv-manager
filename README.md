@@ -94,41 +94,65 @@ To update manually, open the stack and click **Pull and redeploy**. Your data st
 
 ### Proxmox
 
-**Option A – dedicated LXC (recommended).** On the Proxmox host, as root. Proxmox doesn't include
-git, so install it first:
+**Option A – dedicated LXC (recommended).** Run this on the Proxmox host as root. Nothing needs to
+be installed on the host first, not even git:
 
 ```bash
-apt update && apt install -y git
-git clone https://github.com/frittsasaurus/iptv-manager.git
-cd iptv-manager
-bash proxmox/create-lxc.sh
-```
-
-Without git, download the code as an archive instead. Updating then means downloading it again.
-
-```bash
-wget -qO- https://github.com/frittsasaurus/iptv-manager/archive/refs/heads/main.tar.gz | tar xz
-cd iptv-manager-main
-bash proxmox/create-lxc.sh
+bash -c "$(wget -qO- https://raw.githubusercontent.com/frittsasaurus/iptv-manager/main/proxmox/create-lxc.sh)"
 ```
 
 The script creates an unprivileged Debian container (1 core, 512 MB RAM, 4 GB disk), installs
-Node.js 24 and runs the app as a systemd service. It prints the URL when done. You can override
-any setting with environment variables:
+Node.js 24 and git inside it, and runs the app as a systemd service. It prints the URL when done.
+You can put settings in front of the command, for example a fixed container ID and address, and
+nightly updates turned on:
 
 ```bash
-CTID=120 IP=192.168.1.50/24 GW=192.168.1.1 STORAGE=local-zfs bash proxmox/create-lxc.sh
+CTID=120 IP=192.168.1.50/24 GW=192.168.1.1 AUTO_UPDATE=1 bash -c "$(wget -qO- https://raw.githubusercontent.com/frittsasaurus/iptv-manager/main/proxmox/create-lxc.sh)"
 ```
 
-To upgrade later, run `git pull`, then `bash proxmox/create-lxc.sh upgrade <container id>`. You can
-leave out the ID if there is only one IPTV Manager container. An upgrade only replaces the app in
-the existing container. It does not download a Debian template or run apt again, and it stops with
-an error rather than create a container. Running the plain install command while an IPTV Manager
-container exists does nothing and prints the upgrade command. Use `bash proxmox/create-lxc.sh new`
-only if you really want a second container.
+The same script also works from a clone of the repository (`bash proxmox/create-lxc.sh`). Running it
+again while an IPTV Manager container exists does nothing; it prints the update command instead.
+Use `create-lxc.sh new` only if you really want a second container.
 
-**Option B – an existing Debian/Ubuntu LXC or VM.** Inside it, as root, install git
-(`apt install -y git`), clone the repository, and run `bash proxmox/install.sh`.
+**Option B – an existing Debian/Ubuntu LXC or VM.** Inside it, as root:
+
+```bash
+bash -c "$(wget -qO- https://raw.githubusercontent.com/frittsasaurus/iptv-manager/main/proxmox/install.sh)"
+```
+
+#### Updating a Proxmox install
+
+The app lives in `/opt/iptv-manager` as a git checkout, and it updates itself. From the Proxmox
+host:
+
+```bash
+pct exec <container id> -- iptv-manager-update
+```
+
+Or run `iptv-manager-update` in the container's own console. It fetches the latest version and
+stops if there is nothing new. It reinstalls dependencies only if they changed, then restarts the
+service; it never runs apt or touches the container itself. If the new version does not start
+within about 30 seconds, the previous one is restored automatically. That release is then skipped
+until you run `iptv-manager-update --force`.
+
+| Command (inside the container, or via `pct exec <id> --`) | What it does |
+|---|---|
+| `iptv-manager-update` | Update now |
+| `iptv-manager-update --check` | Only show whether an update is available |
+| `iptv-manager-update --status` | Installed version and nightly-update state |
+| `iptv-manager-update --enable-auto [HH:MM]` | Update every night (default 04:00, plus up to 30 min random delay) |
+| `iptv-manager-update --disable-auto` | Turn nightly updates off |
+| `iptv-manager-update --force` | Reinstall and restart, or retry a skipped release |
+
+Nightly updates are off unless you turn them on. They install whatever is on the `main` branch.
+Forks can point an install at their own repository with `IPTV_REPO=<url>` (and `IPTV_BRANCH`).
+
+Installs made before the updater existed need a one-time conversion. Run this on the host;
+settings and data are kept:
+
+```bash
+bash -c "$(wget -qO- https://raw.githubusercontent.com/frittsasaurus/iptv-manager/main/proxmox/create-lxc.sh)" _ upgrade <container id>
+```
 
 **Option C – Docker.** Use the Docker instructions inside any VM or LXC that runs Docker.
 
@@ -141,8 +165,7 @@ run `journalctl -u iptv-manager -f`.
 |---|---|
 | Docker Compose | `git pull && docker compose up -d --build` |
 | Portainer | **Pull and redeploy** on the stack, or GitOps updates |
-| Proxmox LXC (option A) | `git pull`, then `bash proxmox/create-lxc.sh upgrade <container id>` |
-| Existing LXC/VM (option B) | `git pull`, then `bash proxmox/install.sh` |
+| Proxmox LXC or VM (options A and B) | `iptv-manager-update` inside it, `pct exec <id> -- iptv-manager-update` from the host, or nightly (see above) |
 
 Database changes are applied automatically on start, and your settings are kept. Export a backup
 first (**Settings → Backup & restore**) if you want a restore point.

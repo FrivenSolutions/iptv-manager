@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
-# Installs (or upgrades) IPTV Manager as a systemd service on Debian/Ubuntu —
-# typically inside a Proxmox LXC. Run as root:
-#   bash install.sh [path/to/iptv-manager.tgz]
-# Without an argument it installs from the repository this script lives in.
-# Re-running it upgrades the app and keeps all data in $DATA_DIR.
+# Installs IPTV Manager as a systemd service on Debian/Ubuntu (typically inside a Proxmox LXC).
+# Run as root:  bash install.sh
+#
+# The app is kept as a git checkout of the GitHub repository in $APP_DIR, so later updates
+# are a single command inside the container:  iptv-manager-update
+# Re-running this script is safe: it converts an older copy-based install to a git checkout,
+# refreshes the service files, and keeps all data in $DATA_DIR.
+#
+# Optional environment variables:
+#   PORT=8080          HTTP port (kept from the previous install if not given)
+#   AUTO_UPDATE=1      turn nightly updates on (0 turns them off; unset leaves them as they are)
+#   IPTV_REPO=<url>    git repository to install and update from (for forks)
+#   IPTV_BRANCH=main   branch to follow
 set -euo pipefail
 
-SRC="${1:-}"
 APP_DIR="${APP_DIR:-/opt/iptv-manager}"
 DATA_DIR="${DATA_DIR:-/var/lib/iptv-manager}"
-PORT="${PORT:-8080}"
+CONF=/etc/default/iptv-manager
+REPO_URL="${IPTV_REPO:-https://github.com/frittsasaurus/iptv-manager.git}"
 SERVICE_USER=iptvm
 
 [ "$(id -u)" = 0 ] || { echo "Run this as root." >&2; exit 1; }
@@ -19,11 +27,21 @@ export DEBIAN_FRONTEND=noninteractive
 export LANG=C.UTF-8 LC_ALL=C.UTF-8
 unset LANGUAGE
 
-# Upgrades skip apt entirely; it only runs when something is actually missing.
-if ! command -v curl >/dev/null || ! command -v gpg >/dev/null; then
+# Keep the port and branch of an existing install unless new ones are given.
+PREV_PORT=""
+PREV_BRANCH=""
+if [ -f "$CONF" ]; then
+  PREV_PORT="$(sed -n 's/^PORT=//p' "$CONF")"
+  PREV_BRANCH="$(sed -n 's/^IPTV_BRANCH=//p' "$CONF")"
+fi
+PORT="${PORT:-${PREV_PORT:-8080}}"
+BRANCH="${IPTV_BRANCH:-${PREV_BRANCH:-main}}"
+
+# apt only runs when something is actually missing.
+if ! command -v curl >/dev/null || ! command -v gpg >/dev/null || ! command -v git >/dev/null; then
   echo "==> Installing base packages"
   apt-get update -qq
-  apt-get install -y -qq curl ca-certificates gnupg >/dev/null
+  apt-get install -y -qq curl ca-certificates gnupg git >/dev/null
 fi
 
 NODE_MAJOR="$(node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/' || true)"
@@ -39,20 +57,37 @@ else
   apt-get install -y -qq nodejs >/dev/null
 fi
 
-echo "==> Installing app into $APP_DIR"
 id "$SERVICE_USER" >/dev/null 2>&1 || useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
 mkdir -p "$APP_DIR" "$DATA_DIR"
-rm -rf "$APP_DIR/src" "$APP_DIR/public"
-if [ -n "$SRC" ]; then
-  tar -xzf "$SRC" -C "$APP_DIR"
-else
-  REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-  cp -r "$REPO_DIR/src" "$REPO_DIR/public" "$REPO_DIR/package.json" "$REPO_DIR/package-lock.json" "$APP_DIR/"
-fi
-(cd "$APP_DIR" && npm ci --omit=dev --no-audit --no-fund --loglevel=error)
 chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
 
-echo "==> Configuring systemd service"
+if [ -d "$APP_DIR/.git" ]; then
+  echo "==> $APP_DIR is already a git checkout; updating it"
+  git -C "$APP_DIR" remote set-url origin "$REPO_URL"
+else
+  # First install, or an older copy-based install: turn the directory into a checkout in place.
+  # Tracked files are overwritten; node_modules and anything else untracked is left alone.
+  echo "==> Setting up $APP_DIR as a git checkout of $REPO_URL"
+  git -C "$APP_DIR" init -q
+  git -C "$APP_DIR" remote add origin "$REPO_URL"
+fi
+git -C "$APP_DIR" fetch --quiet --depth 1 origin "$BRANCH"
+git -C "$APP_DIR" reset --quiet --hard FETCH_HEAD
+echo "==> Installing dependencies"
+(cd "$APP_DIR" && npm ci --omit=dev --no-audit --no-fund --loglevel=error)
+
+cat > "$CONF" <<EOF
+# IPTV Manager settings, read by the service and by iptv-manager-update.
+PORT=$PORT
+DATA_DIR=$DATA_DIR
+IPTV_BRANCH=$BRANCH
+EOF
+
+# The updater lives in the checkout, so it updates itself along with the app.
+chmod +x "$APP_DIR/proxmox/iptv-manager-update"
+ln -sfn "$APP_DIR/proxmox/iptv-manager-update" /usr/local/bin/iptv-manager-update
+
+echo "==> Configuring systemd"
 cat > /etc/systemd/system/iptv-manager.service <<EOF
 [Unit]
 Description=IPTV Manager
@@ -63,8 +98,7 @@ Wants=network-online.target
 Type=simple
 User=$SERVICE_USER
 Environment=NODE_ENV=production
-Environment=PORT=$PORT
-Environment=DATA_DIR=$DATA_DIR
+EnvironmentFile=$CONF
 WorkingDirectory=$APP_DIR
 ExecStart=/usr/bin/node src/server.js
 Restart=on-failure
@@ -78,11 +112,43 @@ PrivateTmp=true
 [Install]
 WantedBy=multi-user.target
 EOF
+
+cat > /etc/systemd/system/iptv-manager-update.service <<EOF
+[Unit]
+Description=Update IPTV Manager from its git repository
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /usr/local/bin/iptv-manager-update
+EOF
+
+# Installed but only enabled on request (AUTO_UPDATE=1 or iptv-manager-update --enable-auto).
+cat > /etc/systemd/system/iptv-manager-update.timer <<EOF
+[Unit]
+Description=Nightly IPTV Manager update
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
 systemctl daemon-reload
 systemctl enable iptv-manager >/dev/null 2>&1
 systemctl restart iptv-manager
+case "${AUTO_UPDATE:-}" in
+  1) /usr/local/bin/iptv-manager-update --enable-auto ;;
+  0) /usr/local/bin/iptv-manager-update --disable-auto ;;
+esac
 
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo
 echo "IPTV Manager is running: http://${IP:-<this-host>}:$PORT"
-echo "Logs: journalctl -u iptv-manager -f"
+echo "Version:  $(git -C "$APP_DIR" log -1 --format='%h %s')"
+echo "Update:   iptv-manager-update            (nightly: iptv-manager-update --enable-auto)"
+echo "Logs:     journalctl -u iptv-manager -f"

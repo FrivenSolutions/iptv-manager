@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# Update IPTV Manager in place from its git repository (installed by proxmox/install.sh).
+#
+#   iptv-manager-update                  fetch and apply the latest version, if there is one
+#   iptv-manager-update --check          only report whether an update is available
+#   iptv-manager-update --force          reinstall and restart even when already up to date
+#   iptv-manager-update --status         show the installed version and auto-update state
+#   iptv-manager-update --enable-auto [HH:MM]   update automatically every night (default 04:00)
+#   iptv-manager-update --disable-auto   turn nightly updates off
+#
+# From the Proxmox host:  pct exec <container id> -- iptv-manager-update
+#
+# If the new version does not answer its health check within ~30 seconds, the previous
+# version is restored and restarted, so a bad update never leaves the service down.
+set -euo pipefail
+
+APP_DIR="${APP_DIR:-/opt/iptv-manager}"
+CONF="${CONF:-/etc/default/iptv-manager}"
+SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
+LOCK_FILE="${LOCK_FILE:-/run/lock/iptv-manager-update.lock}"
+HEALTH_TRIES="${HEALTH_TRIES:-30}"
+SERVICE=iptv-manager
+TIMER=iptv-manager-update.timer
+
+export LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+log() { echo "[iptv-manager-update] $*"; }
+die() { echo "[iptv-manager-update] error: $*" >&2; exit 1; }
+
+load_conf() {
+  # shellcheck disable=SC1090
+  [ -f "$CONF" ] && . "$CONF"
+  PORT="${PORT:-8080}"
+  BRANCH="${IPTV_BRANCH:-main}"
+}
+
+describe() { git -C "$APP_DIR" log -1 --format='%h %s (%cd)' --date=short "${1:-HEAD}"; }
+
+healthy() {
+  local i
+  for ((i = 0; i < HEALTH_TRIES; i++)); do
+    curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/healthz" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+deps() {
+  # npm ci only when the lockfile changed (or dependencies are missing): updates stay fast.
+  if [ "$1" != "$2" ] || [ ! -d "$APP_DIR/node_modules" ]; then
+    log "Installing dependencies"
+    (cd "$APP_DIR" && npm ci --omit=dev --no-audit --no-fund --loglevel=error)
+  fi
+}
+
+fetch() {
+  [ -d "$APP_DIR/.git" ] || die "$APP_DIR is not a git checkout. Re-run proxmox/install.sh once to convert it."
+  git -C "$APP_DIR" fetch --quiet --depth 1 origin "$BRANCH" || die "could not reach $(git -C "$APP_DIR" remote get-url origin)"
+  OLD="$(git -C "$APP_DIR" rev-parse HEAD)"
+  NEW="$(git -C "$APP_DIR" rev-parse FETCH_HEAD)"
+}
+
+update() {
+  local force="$1"
+  if command -v flock >/dev/null; then
+    exec 9>"$LOCK_FILE"
+    flock -n 9 || die "another update is already running"
+  fi
+  fetch
+  if [ "$OLD" = "$NEW" ] && [ "$force" != 1 ]; then
+    log "Already up to date: $(describe)"
+    return 0
+  fi
+  # A release that already failed its health check is not retried every night.
+  local bad_file="$APP_DIR/.git/iptv-manager-failed-release"
+  if [ "$force" != 1 ] && [ -f "$bad_file" ] && [ "$(cat "$bad_file")" = "$NEW" ]; then
+    log "Skipping $(describe "$NEW"): it failed to start last time. Retry with --force."
+    return 0
+  fi
+  local old_lock new_lock
+  old_lock="$(git -C "$APP_DIR" rev-parse "$OLD:package-lock.json")"
+  new_lock="$(git -C "$APP_DIR" rev-parse "$NEW:package-lock.json")"
+  [ "$OLD" = "$NEW" ] || log "Updating $(describe "$OLD")"
+  log "        to $(describe "$NEW")"
+  git -C "$APP_DIR" reset --quiet --hard "$NEW"
+  if [ "$force" = 1 ]; then deps "" "$new_lock"; else deps "$old_lock" "$new_lock"; fi
+  systemctl restart "$SERVICE"
+  if healthy; then
+    rm -f "$bad_file"
+    log "Updated and running: $(describe)"
+    return 0
+  fi
+  echo "$NEW" > "$bad_file"
+  log "The new version did not start; restoring ${OLD:0:7}"
+  git -C "$APP_DIR" reset --quiet --hard "$OLD"
+  deps "$new_lock" "$old_lock"
+  systemctl restart "$SERVICE"
+  if healthy; then
+    die "the update was rolled back; still running $(describe). See: journalctl -u $SERVICE"
+  fi
+  die "the rollback did not start either. See: journalctl -u $SERVICE"
+}
+
+check() {
+  fetch
+  if [ "$OLD" = "$NEW" ]; then
+    log "Up to date: $(describe)"
+  else
+    log "Update available:"
+    log "  installed $(describe "$OLD")"
+    log "  latest    $(describe "$NEW")"
+  fi
+}
+
+enable_auto() {
+  local at="${1:-04:00}"
+  [[ "$at" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "time must be HH:MM (24-hour), e.g. 04:00"
+  mkdir -p "$SYSTEMD_DIR/$TIMER.d"
+  printf '[Timer]\nOnCalendar=\nOnCalendar=*-*-* %s:00\n' "$at" > "$SYSTEMD_DIR/$TIMER.d/schedule.conf"
+  systemctl daemon-reload
+  systemctl enable --now "$TIMER" >/dev/null 2>&1
+  log "Nightly updates enabled at $at (plus up to 30 minutes of random delay)"
+}
+
+disable_auto() {
+  systemctl disable --now "$TIMER" >/dev/null 2>&1 || true
+  log "Nightly updates disabled"
+}
+
+status() {
+  log "Installed: $(describe)"
+  log "Source:    $(git -C "$APP_DIR" remote get-url origin) ($BRANCH)"
+  if systemctl is-enabled "$TIMER" >/dev/null 2>&1; then
+    log "Nightly updates: on"
+    systemctl list-timers "$TIMER" --no-pager 2>/dev/null | sed -n '2p' | sed 's/^/[iptv-manager-update]   next: /'
+  else
+    log "Nightly updates: off (enable with: iptv-manager-update --enable-auto)"
+  fi
+}
+
+usage() { sed -n '2,15p' "$(readlink -f "$0")" | sed 's/^# \{0,1\}//'; }
+
+main() {
+  [ "$(id -u)" = 0 ] || [ -n "${IPTV_UPDATE_ALLOW_NONROOT:-}" ] || die "run as root"
+  load_conf
+  case "${1:-}" in
+    "") update 0 ;;
+    --force) update 1 ;;
+    --check) check ;;
+    --status) status ;;
+    --enable-auto) enable_auto "${2:-}" ;;
+    --disable-auto) disable_auto ;;
+    -h | --help) usage ;;
+    *) usage; die "unknown option '$1'" ;;
+  esac
+}
+
+# Everything above is only definitions, and the exit sits on the same line as the call, so bash
+# never reads further from this file once the work starts. An update replacing the script
+# mid-run cannot confuse it (git also writes new files instead of editing in place).
+main "$@"; exit
