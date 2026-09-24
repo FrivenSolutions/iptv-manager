@@ -267,8 +267,25 @@ async function loadEpg(ctx, src, epgUrls, tmps, localFiles = [], warnings = []) 
       }
     });
   };
+  // Pass 1 stops at the first programme, as XMLTV lists channels first. Guides merged from
+  // several sources often don't: a channel met here for the first time is recorded and matched
+  // to still-unmatched playlist channels on the spot, before its programmes stream past.
+  const lateChannel = (c) => {
+    if (!c.id || epgChans.has(c.id)) return;
+    epgChans.set(c.id, c);
+    db.run('INSERT OR IGNORE INTO epg_channels (source_id, gen, xml_id, names, icon) VALUES (?, ?, ?, ?, ?)', [
+      src.id, gen, c.id, JSON.stringify(c.names), c.icon || null,
+    ]);
+    const unmatched = chans.filter((ch) => !matches.get(ch.id)?.epgId);
+    for (const [id, m] of matchChannels(unmatched, [c])) {
+      if (!m.epgId) continue;
+      matches.set(id, m);
+      needed.add(m.epgId);
+    }
+  };
   for (let fi = 0; fi < files.length; fi++) {
     await parseXmltv(await openMaybeGzip(files[fi]), {
+      onChannel: lateChannel,
       onProgramme: (p) => {
         if (!needed.has(p.channel)) return;
         const owner = ownerFile.get(p.channel);

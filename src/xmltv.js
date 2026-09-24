@@ -8,6 +8,15 @@ export function escapeXml(s) {
     .replace(/"/g, '&quot;');
 }
 
+const unescapeXml = (s) =>
+  s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+
+// Programmes are stored as their inner XMLTV markup; pull the first element's text on demand.
+export function firstText(xml, tag) {
+  const m = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`).exec(xml || '');
+  return m ? unescapeXml(m[1].replace(/<[^>]+>/g, '')).trim() : '';
+}
+
 // XMLTV times look like "20240101120000 +0100"; the offset is optional (UTC then).
 export function parseXmltvTime(s) {
   const m = /^(\d{4})(\d{2})(\d{2})(\d{2})?(\d{2})?(\d{2})?\s*([+-]\d{2}:?\d{2})?/.exec(String(s || '').trim());

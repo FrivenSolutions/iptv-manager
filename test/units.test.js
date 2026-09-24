@@ -8,7 +8,7 @@ import { readGitCommit, currentVersion } from '../src/version.js';
 import { parseM3U, isVod } from '../src/m3u.js';
 import { parseXmltv, parseXmltvTime } from '../src/xmltv.js';
 import { normalizeName, matchChannels } from '../src/epgmatch.js';
-import { categoryState, testRule, DEFAULT_EMPTY_EVENT_PATTERNS, compilePatterns, isEmptyEvent } from '../src/filters.js';
+import { categoryState, testRule, DEFAULT_EMPTY_EVENT_PATTERNS, DEFAULT_GUIDE_PATTERNS, compilePatterns, isEmptyEvent } from '../src/filters.js';
 import { rewriteHls } from '../src/stream.js';
 import { splitUrls, xcBase } from '../src/ingest.js';
 import { firstText } from '../src/outputs/xc.js';
@@ -129,6 +129,16 @@ test('readGitCommit handles detached, loose and packed refs; version.json wins',
     assert.equal(readGitCommit(path.join(root, 'nope')), null);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('default guide-title patterns', () => {
+  const re = compilePatterns(DEFAULT_GUIDE_PATTERNS);
+  for (const t of ['No Game Today', 'NO GAME TODAY - check back', 'No Event', 'No Events Scheduled', 'No Live Event', 'Off Air']) {
+    assert.ok(isEmptyEvent(t, re), `${t} should count as a placeholder`);
+  }
+  for (const t of ['Bills at Jets', 'Game Day Live', 'Big Event Tonight', 'Offside: The Show', 'Is There No Event Horizon?']) {
+    assert.ok(!isEmptyEvent(t, re), `${t} should not count as a placeholder`);
   }
 });
 

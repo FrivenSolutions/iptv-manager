@@ -250,6 +250,9 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 .ch-rules { display: flex; flex-direction: column; gap: 6px; }
 .ch-option { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
 .ch-option .hint { margin: 0 0 0 22px; }
+.ch-option .check.second { margin-top: 8px; }
+.now-title { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.now-title.placeholder { color: var(--warn); }
 .ch-panel.locked .ch-option { opacity: .55; }
 /* Fixed columns so every pattern box lines up and every description starts at the same place. */
 .pattern-row { display: grid; grid-template-columns: 200px minmax(0, 1fr) auto; gap: 12px; align-items: center; }

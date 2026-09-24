@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import zlib from 'node:zlib';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { pipeline as pipelineRaw } from 'node:stream/promises';
 import { openDb } from './db.js';
@@ -70,15 +71,20 @@ export function createApp({
     sessionGen: () => Number(db.getSetting('session_gen', '1')),
     isAuthed: (req) => checkSession(req, ctx.secret, ctx.sessionGen()),
     secureCookies: (req) => req.socket.encrypted || String(req.headers['x-forwarded-proto'] || '').startsWith('https'),
-    /** Resolved channel list for an output, cached until the next data change. */
+    /**
+     * Resolved channel list for an output, cached until the next data change, and for at most
+     * a minute: hiding channels by what the guide says is on now changes the list over time.
+     */
     selection(outputId) {
+      const minute = Math.floor(Date.now() / 60_000);
       const hit = selections.get(outputId);
-      if (hit && hit.version === version) return hit.sel;
+      if (hit && hit.version === version && hit.minute === minute) return hit.sel;
       const output = loadOutput(db, outputId);
       if (!output) return null;
       const { channels } = selectChannels(db, output);
-      const sel = { output, channels, byId: new Map(channels.map((c) => [c.id, c])) };
-      selections.set(outputId, { version, sel });
+      const signature = crypto.createHash('sha1').update(channels.map((c) => c.id).join(',')).digest('hex').slice(0, 12);
+      const sel = { output, channels, signature, byId: new Map(channels.map((c) => [c.id, c])) };
+      selections.set(outputId, { version, minute, sel });
       return sel;
     },
     epgCache: new EpgCache(path.join(dataDir, 'cache')),
@@ -129,7 +135,8 @@ export function createApp({
   });
 
   const sendEpg = async (req, res, sel, gzipped) => {
-    const file = await ctx.epgCache.get(sel.output.id, version, (f) => writeEpg(db, sel.output, sel.channels, f));
+    // Keyed by the channel list too, so the guide follows channels hidden or shown by the clock.
+    const file = await ctx.epgCache.get(sel.output.id, `${version}-${sel.signature}`, (f) => writeEpg(db, sel.output, sel.channels, f));
     const acceptsGzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
     const headers = { 'cache-control': 'no-cache' };
     if (gzipped) {

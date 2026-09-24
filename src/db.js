@@ -210,6 +210,10 @@ const MIGRATIONS = [
     PRIMARY KEY (output_id, category_id)
   );
   `,
+  `
+  -- Hide channels whose programme on now has a placeholder title ("No Game Today").
+  ALTER TABLE output_category_settings ADD COLUMN hide_by_guide INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.

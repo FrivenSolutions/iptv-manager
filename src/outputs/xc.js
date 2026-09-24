@@ -1,6 +1,9 @@
 // Xtream Codes compatible API over an output profile (live TV only).
 import crypto from 'node:crypto';
 import { now } from '../db.js';
+import { firstText } from '../xmltv.js';
+
+export { firstText };
 
 const b64 = (s) => Buffer.from(String(s ?? ''), 'utf8').toString('base64');
 
@@ -75,15 +78,6 @@ function streamsOf(sel, categoryId) {
       direct_source: '',
       tv_archive_duration: 0,
     }));
-}
-
-const unescapeXml = (s) =>
-  s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
-
-// Programmes are stored as their inner XMLTV markup; pull the first element's text on demand.
-export function firstText(xml, tag) {
-  const m = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`).exec(xml || '');
-  return m ? unescapeXml(m[1].replace(/<[^>]+>/g, '')).trim() : '';
 }
 
 function listings(db, ch, limit) {

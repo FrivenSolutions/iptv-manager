@@ -25,9 +25,10 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
   const catOverrides = db.all('SELECT * FROM output_category_overrides');
   const chOverrides = db.all('SELECT * FROM output_channel_overrides');
   const chRules = db.all('SELECT * FROM output_channel_rules ORDER BY sort, id');
-  const catSettings = db.all('SELECT * FROM output_category_settings WHERE hide_empty = 1');
+  const catSettings = db.all('SELECT * FROM output_category_settings WHERE hide_empty = 1 OR hide_by_guide = 1');
   const neededCats = new Set([...catOverrides, ...chRules, ...catSettings].map((r) => r.category_id));
   const customPatterns = db.getSetting('empty_event_patterns');
+  const customGuide = db.getSetting('guide_patterns');
   const neededChans = new Set(chOverrides.map((r) => r.channel_id));
 
   return {
@@ -40,6 +41,7 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
       base_url: db.getSetting('base_url') || '',
       // null means "the built-in defaults", so a restore follows future default changes.
       empty_event_patterns: customPatterns ? JSON.parse(customPatterns) : null,
+      guide_patterns: customGuide ? JSON.parse(customGuide) : null,
     },
     sources: sources.map((s) => {
       const src = { ref: s.id, ...pick(s, SOURCE_FIELDS), live_only: !!s.live_only, enabled: !!s.enabled };
@@ -77,7 +79,7 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
       }),
       category_options: catSettings.filter((r) => r.output_id === o.id && catRef.has(r.category_id)).map((r) => {
         const c = catRef.get(r.category_id);
-        return { source: c.source_id, category: c.name, hide_empty: true };
+        return { source: c.source_id, category: c.name, hide_empty: !!r.hide_empty, hide_by_guide: !!r.hide_by_guide };
       }),
       channel_overrides: chOverrides.filter((r) => r.output_id === o.id && chRef.has(r.channel_id)).map((r) => {
         const c = chRef.get(r.channel_id);
@@ -93,10 +95,12 @@ function check(cond, msg) {
 
 function validate(data) {
   check(data && data.format === FORMAT, 'not an IPTV Manager settings export');
-  const patterns = data.settings?.empty_event_patterns;
-  if (patterns != null) {
-    check(Array.isArray(patterns) && patterns.every((p) => typeof p === 'string' && p.trim())
-      && compilePatterns(patterns).length === patterns.length, 'invalid empty-event patterns');
+  for (const [key, label] of [['empty_event_patterns', 'empty-event'], ['guide_patterns', 'guide']]) {
+    const patterns = data.settings?.[key];
+    if (patterns != null) {
+      check(Array.isArray(patterns) && patterns.every((p) => typeof p === 'string' && p.trim())
+        && compilePatterns(patterns).length === patterns.length, `invalid ${label} patterns`);
+    }
   }
   check(Number(data.version) <= FORMAT_VERSION, `made by a newer version (format ${data.version})`);
   check(Array.isArray(data.sources) && Array.isArray(data.outputs), 'missing sources or outputs');
@@ -140,8 +144,10 @@ export function importSettings(db, data) {
     db.run('DELETE FROM sources');
     if (data.settings && typeof data.settings.base_url === 'string') db.setSetting('base_url', data.settings.base_url);
     // An import replaces everything; files from before custom patterns existed mean "defaults".
-    const p = data.settings?.empty_event_patterns;
-    db.setSetting('empty_event_patterns', p == null ? null : JSON.stringify(p.map((s) => s.trim())));
+    for (const key of ['empty_event_patterns', 'guide_patterns']) {
+      const p = data.settings?.[key];
+      db.setSetting(key, p == null ? null : JSON.stringify(p.map((s) => s.trim())));
+    }
 
     const ids = new Map();
     const catIds = new Map(); // "ref|name" -> id
@@ -210,8 +216,8 @@ export function importSettings(db, data) {
         ]);
       }
       for (const x of o.category_options || []) {
-        db.run('INSERT OR REPLACE INTO output_category_settings (output_id, category_id, hide_empty) VALUES (?, ?, ?)', [
-          r.id, ensureCat(x.source, x.category), !!x.hide_empty,
+        db.run('INSERT OR REPLACE INTO output_category_settings (output_id, category_id, hide_empty, hide_by_guide) VALUES (?, ?, ?, ?)', [
+          r.id, ensureCat(x.source, x.category), !!x.hide_empty, !!x.hide_by_guide,
         ]);
       }
       (o.channel_rules || []).forEach((x, i) => {

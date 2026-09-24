@@ -1,5 +1,6 @@
 // Category filtering and channel selection for an output profile.
 import { parseJellyfin } from './outputs/epg.js';
+import { firstText } from './xmltv.js';
 
 export const OPS = ['contains', 'not_contains', 'starts_with', 'not_starts_with', 'ends_with', 'not_ends_with',
   'equals', 'not_equals', 'regex'];
@@ -56,11 +57,12 @@ export function categoryState(cat, rules, override, includeAll) {
  * Channel rules match the provider's channel name, so channels the provider adds
  * later are sorted automatically too.
  */
-export function channelState(name, catIncluded, rules, override, emptyEvent = false) {
+export function channelState(name, catIncluded, rules, override, hidden = null) {
   if (!catIncluded) return { included: false, reason: 'category' };
   if (override) return { included: override === 'include', reason: 'manual' };
-  // Placeholder channels for events that aren't on ("ESPN+ 03:", "PPV 12 NO EVENT").
-  if (emptyEvent) return { included: false, reason: 'empty' };
+  // Placeholders for events that aren't on: by name ("ESPN+ 03:") -> 'empty',
+  // or by what the guide says is on now ("No Game Today") -> 'guide'.
+  if (hidden) return { included: false, reason: hidden };
   const exclude = rules.find((r) => r.action === 'exclude' && testRule(r, name));
   if (exclude) return { included: false, reason: 'rule', rule_id: exclude.id };
   const includes = rules.filter((r) => r.action === 'include');
@@ -73,16 +75,39 @@ export function channelState(name, catIncluded, rules, override, emptyEvent = fa
 // once an event is scheduled the name gains a title ("ESPN+ 03: Team A vs Team B").
 export const DEFAULT_EMPTY_EVENT_PATTERNS = [':\\s*$', '-\\s*$', '\\d\\s*$', 'no event\\s*$'];
 
-/** The configured empty-event patterns (the defaults unless changed in Settings). */
-export function emptyEventPatterns(db) {
-  const raw = db.getSetting('empty_event_patterns');
+// Guide titles that mean nothing is on. Matched against the title of the programme airing now.
+export const DEFAULT_GUIDE_PATTERNS = ['no game today', '^no event', '^no live event', '^off air'];
+
+function patternSetting(db, key, defaults) {
+  const raw = db.getSetting(key);
   if (raw) {
     try {
       const list = JSON.parse(raw);
       if (Array.isArray(list)) return list;
     } catch {}
   }
-  return DEFAULT_EMPTY_EVENT_PATTERNS;
+  return defaults;
+}
+
+/** The configured empty-event name patterns (the defaults unless changed in Settings). */
+export const emptyEventPatterns = (db) => patternSetting(db, 'empty_event_patterns', DEFAULT_EMPTY_EVENT_PATTERNS);
+/** The configured guide-title patterns (the defaults unless changed in Settings). */
+export const guidePatterns = (db) => patternSetting(db, 'guide_patterns', DEFAULT_GUIDE_PATTERNS);
+
+/**
+ * Title of the programme airing at time t, per "sourceId|guide channel id", for the given
+ * sources. One indexed query per source; only called when a category hides by guide.
+ */
+export function nowTitles(db, sources, t = Math.floor(Date.now() / 1000)) {
+  const map = new Map();
+  for (const s of sources) {
+    const rows = db.all(
+      'SELECT channel, xml FROM programmes WHERE source_id = ? AND gen = ? AND start_ts <= ? AND stop_ts > ?',
+      [s.id, s.epg_gen, t, t],
+    );
+    for (const r of rows) map.set(`${s.id}|${r.channel}`, firstText(r.xml, 'title'));
+  }
+  return map;
 }
 
 export function compilePatterns(list) {
@@ -96,6 +121,22 @@ export function compilePatterns(list) {
 }
 
 export const isEmptyEvent = (name, regexes) => regexes.some((r) => r.test(String(name || '')));
+
+/**
+ * For categories that hide by guide: what is on each channel now, and whether that title is
+ * a placeholder. Looks programmes up only for the sources those categories belong to.
+ */
+export function guideHider(db, output, cats, t = Math.floor(Date.now() / 1000)) {
+  const wanted = new Set(cats.filter((c) => c.hide_by_guide).map((c) => c.source_id));
+  const titles = wanted.size ? nowTitles(db, output.sources.filter((s) => wanted.has(s.id)), t) : new Map();
+  const regexes = wanted.size ? compilePatterns(guidePatterns(db)) : [];
+  const titleOf = (ch) => {
+    const epgId = ch.custom_epg_id || ch.epg_id;
+    return epgId ? titles.get(`${ch.source_id}|${epgId}`) ?? null : null;
+  };
+  // No listing airing now means no information: the channel is not hidden.
+  return { titleOf, isPlaceholder: (ch) => { const tt = titleOf(ch); return !!tt && isEmptyEvent(tt, regexes); } };
+}
 
 /** Channel rules of an output, grouped by category id. */
 export function loadChannelRules(db, outputId) {
@@ -145,15 +186,16 @@ export function evaluateCategories(db, output) {
   );
   cats.sort((a, b) => order.get(a.source_id) - order.get(b.source_id) || a.sort - b.sort);
   const chRules = loadChannelRules(db, output.id);
-  const hideEmpty = new Set(
-    db.all('SELECT category_id FROM output_category_settings WHERE output_id = ? AND hide_empty = 1', [output.id])
-      .map((r) => r.category_id),
+  const catSettings = new Map(
+    db.all('SELECT category_id, hide_empty, hide_by_guide FROM output_category_settings WHERE output_id = ?', [output.id])
+      .map((r) => [r.category_id, r]),
   );
   for (const c of cats) {
     const override = overrides.get(c.id) || null;
     Object.assign(c, categoryState(c, output.rules, override, output.include_all), { override });
     c.channel_rules = chRules.get(c.id) || [];
-    c.hide_empty = hideEmpty.has(c.id);
+    c.hide_empty = !!catSettings.get(c.id)?.hide_empty;
+    c.hide_by_guide = !!catSettings.get(c.id)?.hide_by_guide;
     c.is_new = isNewCategory(c);
     c.jellyfin = parseJellyfin(c.jellyfin);
   }
@@ -174,6 +216,7 @@ export function selectChannels(db, output) {
   );
   const srcById = new Map(output.sources.map((s) => [s.id, s]));
   const emptyRegexes = compilePatterns(emptyEventPatterns(db));
+  const guide = guideHider(db, output, cats);
   const ids = output.sources.map((s) => s.id);
   const rows = db.all(
     `SELECT * FROM channels WHERE active = 1 AND source_id IN (${ids.map(() => '?').join(',')})`,
@@ -184,8 +227,9 @@ export function selectChannels(db, output) {
   for (const ch of rows) {
     const cat = catById.get(ch.category_id);
     if (!cat) continue;
-    const empty = cat.hide_empty && isEmptyEvent(ch.name, emptyRegexes);
-    if (!channelState(ch.name, cat.included, cat.channel_rules, chOverrides.get(ch.id), empty).included) continue;
+    const hidden = cat.hide_empty && isEmptyEvent(ch.name, emptyRegexes) ? 'empty'
+      : cat.hide_by_guide && guide.isPlaceholder(ch) ? 'guide' : null;
+    if (!channelState(ch.name, cat.included, cat.channel_rules, chOverrides.get(ch.id), hidden).included) continue;
     channels.push({ ch, cat });
   }
   const order = new Map(output.sources.map((s, i) => [s.id, i]));

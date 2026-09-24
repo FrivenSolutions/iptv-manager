@@ -35,6 +35,8 @@ const hdhr = { xmltvAllowed: false, guideRequests: 0 };
 // The "running" commit the app reports, and what the fake GitHub says is latest.
 const RUNNING = 'a'.repeat(40);
 const gh = { latest: RUNNING, newer: [], fail: false };
+// Extra guide channels served by the fake xmltv.php: [{ id, title-airing-now }].
+const eventGuide = [];
 
 const xmltvTime = (d) => d.toISOString().replace(/[-:T]/g, '').slice(0, 14) + ' +0000';
 function guide(ids) {
@@ -88,7 +90,14 @@ function startUpstream() {
     }
     if (u.pathname === '/xmltv.php') {
       res.writeHead(200, { 'content-type': 'application/xml' });
-      return res.end(guide([['cnn.us', 'CNN'], ['sky.uk', 'Sky Sports'], ['foxnews.us', 'Fox News']]));
+      // Event channels whose programme airing now has a chosen title (e.g. "No Game Today").
+      // Deliberately appended after the other programmes, like a merged guide: ingest must
+      // still match these late <channel> entries.
+      const now = Date.now();
+      const events = eventGuide.map(({ id, title }) =>
+        `<channel id="${id}"><display-name>${id}</display-name></channel>\n` +
+        `<programme start="${xmltvTime(new Date(now - 3600_000))}" stop="${xmltvTime(new Date(now + 3600_000))}" channel="${id}"><title>${title}</title></programme>\n`).join('');
+      return res.end(guide([['cnn.us', 'CNN'], ['sky.uk', 'Sky Sports'], ['foxnews.us', 'Fox News']]).replace('</tv>', `${events}</tv>`));
     }
     if (u.pathname.startsWith('/live/xu/xp/')) {
       if (req.headers['user-agent'] !== 'TestAgent/1') {
@@ -670,7 +679,7 @@ test('hide empty event channels: per-category toggle, editable patterns, backup 
   // Export keeps both the custom patterns and the toggle; a fresh instance reproduces the output.
   const exported = (await api('GET', '/api/export')).data;
   assert.deepEqual(exported.settings.empty_event_patterns, [':\\s*$', '-\\s*$', 'no event\\s*$']);
-  assert.deepEqual(exported.outputs.find((x) => x.token === o.token).category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true }]);
+  assert.deepEqual(exported.outputs.find((x) => x.token === o.token).category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true, hide_by_guide: false }]);
   const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-import2-'));
   const app2 = createApp({ dataDir: dir2, adminPassword: PASSWORD, log: () => {} });
   const base2 = `http://127.0.0.1:${(await app2.start(0, '127.0.0.1')).port}`;
@@ -713,7 +722,7 @@ test('export/import of empty-event settings: defaults, empty list, old files, ba
   let file = (await api('GET', '/api/export')).data;
   assert.equal(file.settings.empty_event_patterns, null);
   const events = file.outputs.find((o) => o.name === 'Events');
-  assert.deepEqual(events.category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true }]);
+  assert.deepEqual(events.category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true, hide_by_guide: false }]);
 
   // 2. The toggle's category does not exist on the new instance until its first refresh;
   //    the import creates it as a placeholder and the toggle applies once channels arrive.
@@ -774,6 +783,86 @@ test('export/import of empty-event settings: defaults, empty list, old files, ba
   } finally {
     await t.close();
   }
+});
+
+test('hide channels by guide: title airing now, separate from the name toggle, clock-driven, backed up', async () => {
+  xcCats.push({ category_id: '30', category_name: 'US| NFL SUNDAY' });
+  xcStreams.push(
+    { num: 70, name: 'NFL 01', stream_id: 700, epg_channel_id: 'nfl1', category_id: '30' },
+    { num: 71, name: 'NFL 02', stream_id: 701, epg_channel_id: 'nfl2', category_id: '30' },
+    { num: 72, name: 'NFL 03', stream_id: 702, epg_channel_id: '', category_id: '30' }, // no guide at all
+    { num: 73, name: 'NFL 04', stream_id: 703, epg_channel_id: 'nfl4', category_id: '30' },
+  );
+  eventGuide.push({ id: 'nfl1', title: 'No Game Today' }, { id: 'nfl2', title: 'Bills at Jets' }, { id: 'nfl4', title: 'Off Air' });
+  await api('POST', `/api/sources/${xcId}/refresh`);
+  await app.ctx.jobs.idle();
+
+  const o = (await api('POST', '/api/outputs', { name: 'NFL' })).data;
+  await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [{ action: 'include', op: 'contains', value: 'nfl' }] });
+  const cat = (await api('GET', `/api/outputs/${o.id}/categories`)).data.find((c) => c.name === 'US| NFL SUNDAY');
+  const names = async () => [...(await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
+  assert.deepEqual(await names(), ['NFL 01', 'NFL 02', 'NFL 03', 'NFL 04'], 'off by default');
+
+  // The panel shows what is on now even before the toggle is on.
+  let view = (await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data;
+  assert.deepEqual(view.channels.map((c) => [c.name, c.now_title, c.is_guide_placeholder]),
+    [['NFL 01', 'No Game Today', true], ['NFL 02', 'Bills at Jets', false], ['NFL 03', null, false], ['NFL 04', 'Off Air', true]]);
+
+  // Separate toggle: guide on, names off (these names end in numbers, which the name toggle would hide).
+  await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_by_guide: true });
+  assert.deepEqual(await names(), ['NFL 02', 'NFL 03'], 'placeholders hidden; no listing means not hidden');
+  view = (await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data;
+  assert.deepEqual([view.hide_by_guide, view.hide_empty], [true, false]);
+  assert.equal(view.channels.find((c) => c.name === 'NFL 01').reason, 'guide');
+  const xml = await (await fetch(`${base}/o/${o.token}/epg.xml`, { headers: { 'accept-encoding': 'identity' } })).text();
+  assert.ok(!xml.includes('channel="nfl1"') && xml.includes('channel="nfl2"'), 'the guide output follows the playlist');
+
+  // Turning on the name toggle too does not undo the guide one (partial update of options).
+  await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_empty: true });
+  assert.deepEqual(await names(), []);
+  await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_empty: false });
+
+  // The clock: once the placeholder's slot has ended, the channel returns without any refresh.
+  const src = app.ctx.db.get('SELECT epg_gen FROM sources WHERE id = ?', [xcId]);
+  const t = Math.floor(Date.now() / 1000);
+  app.ctx.db.run('UPDATE programmes SET stop_ts = ? WHERE source_id = ? AND gen = ? AND channel = ?', [t - 1, xcId, src.epg_gen, 'nfl1']);
+  app.ctx.bump(); // stands in for the one-minute cache expiring
+  assert.deepEqual(await names(), ['NFL 01', 'NFL 02', 'NFL 03']);
+
+  // Hand picks win; custom patterns apply; settings are partial.
+  const nfl4 = view.channels.find((c) => c.name === 'NFL 04');
+  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [nfl4.id], state: 'include' });
+  assert.ok((await names()).includes('NFL 04'));
+  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [nfl4.id], state: null });
+  assert.equal((await api('PUT', '/api/settings', { guide_patterns: ['['] })).status, 400);
+  await api('PUT', '/api/settings', { guide_patterns: ['^bills'] });
+  assert.deepEqual(await names(), ['NFL 01', 'NFL 03', 'NFL 04']);
+  const s = (await api('GET', '/api/settings')).data;
+  assert.deepEqual([s.guide_patterns, s.empty_event_patterns.length], [['^bills'], 4]);
+
+  // Backup: guide patterns and the toggle travel with the export.
+  const file = (await api('GET', '/api/export')).data;
+  assert.deepEqual(file.settings.guide_patterns, ['^bills']);
+  assert.deepEqual(file.outputs.find((x) => x.token === o.token).category_options,
+    [{ source: xcId, category: 'US| NFL SUNDAY', hide_empty: false, hide_by_guide: true }]);
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-guide-'));
+  const app2 = createApp({ dataDir: dir2, adminPassword: PASSWORD, log: () => {} });
+  const base2 = `http://127.0.0.1:${(await app2.start(0, '127.0.0.1')).port}`;
+  try {
+    const login = await fetch(`${base2}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'fetch' }, body: JSON.stringify({ password: PASSWORD }) });
+    const c2 = login.headers.get('set-cookie').split(';')[0];
+    const r = await fetch(`${base2}/api/import`, { method: 'POST', headers: { cookie: c2, 'content-type': 'application/json', 'x-requested-with': 'fetch' }, body: JSON.stringify(file) });
+    assert.equal(r.status, 200, await r.clone().text());
+    await app2.ctx.jobs.idle();
+    // Fresh guide data on the new instance: nfl2 ("Bills at Jets") matches ^bills and is hidden.
+    const after = [...(await (await fetch(`${base2}/o/${o.token}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
+    assert.deepEqual(after, ['NFL 01', 'NFL 03', 'NFL 04']);
+  } finally {
+    await app2.close();
+    fs.rmSync(dir2, { recursive: true, force: true });
+  }
+  await api('PUT', '/api/settings', { guide_patterns: null });
+  await api('DELETE', `/api/outputs/${o.id}`);
 });
 
 test('rule order is saved and returned as given, for category and channel rules', async () => {

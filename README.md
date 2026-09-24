@@ -266,6 +266,20 @@ event whose title ends in a number (`PPV 01: UFC 300`). If that matters, replace
 Names only change when the source refreshes, so give event sources a short refresh interval (for
 example 1 hour) in the source's **Advanced** settings.
 
+**By guide.** Some event channels keep a normal name, and their guide says "No Game Today" or "Off
+Air" while nothing is on. The second toggle in the same place, **Hide channels by guide**, hides a
+channel while the title of the programme airing now matches a pattern in **Settings → Guide
+placeholders**. The defaults are *contains "no game today"* and *starts with "no event"*, *"no live
+event"* or *"off air"*. The channel reappears by itself when a real listing starts; no refresh is
+needed, because the output is re-evaluated at least once a minute. A few things to know:
+- Players only see the change when they reload the playlist (TiviMate on start or its update
+  interval, Jellyfin on its guide/tuner refresh).
+- A channel with no listing airing now is never hidden.
+- The expanded category shows what is on now for every channel, even with the toggle off, so you
+  can judge the effect first.
+
+The two toggles are independent, and hand picks win over both.
+
 ### HDHomeRun tuners
 
 Choose **HDHomeRun** when adding a source and enter the box's IP address. Give the box a DHCP
