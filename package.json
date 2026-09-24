@@ -1,6 +1,6 @@
 {
   "name": "iptv-manager",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Lightweight IPTV playlist manager: ingest M3U/XMLTV/Xtream Codes sources, filter categories, and re-serve trimmed M3U, XMLTV and Xtream Codes outputs.",
   "type": "module",
   "private": true,
