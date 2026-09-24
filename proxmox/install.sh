@@ -83,9 +83,11 @@ DATA_DIR=$DATA_DIR
 IPTV_BRANCH=$BRANCH
 EOF
 
-# The updater lives in the checkout, so it updates itself along with the app.
+# The updater lives in the checkout, so it updates itself along with the app. It is linked
+# into /usr/bin too: `pct exec` runs commands with a minimal PATH that omits /usr/local/bin.
 chmod +x "$APP_DIR/proxmox/iptv-manager-update"
 ln -sfn "$APP_DIR/proxmox/iptv-manager-update" /usr/local/bin/iptv-manager-update
+ln -sfn "$APP_DIR/proxmox/iptv-manager-update" /usr/bin/iptv-manager-update
 
 echo "==> Configuring systemd"
 cat > /etc/systemd/system/iptv-manager.service <<EOF

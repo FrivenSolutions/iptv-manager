@@ -142,6 +142,10 @@ usage() { sed -n '2,15p' "$(readlink -f "$0")" | sed 's/^# \{0,1\}//'; }
 
 main() {
   [ "$(id -u)" = 0 ] || [ -n "${IPTV_UPDATE_ALLOW_NONROOT:-}" ] || die "run as root"
+  # `pct exec` searches only /bin and /usr/bin, so keep a link there as well as in
+  # /usr/local/bin (installs converted before this line existed get it on their next run).
+  local bin_link="${BIN_LINK:-/usr/bin/iptv-manager-update}"
+  [ -e "$bin_link" ] || ln -sfn "$APP_DIR/proxmox/iptv-manager-update" "$bin_link" 2>/dev/null || true
   load_conf
   case "${1:-}" in
     "") update 0 ;;

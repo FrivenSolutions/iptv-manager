@@ -129,7 +129,10 @@ host:
 pct exec <container id> -- iptv-manager-update
 ```
 
-Or run `iptv-manager-update` in the container's own console. It fetches the latest version and
+Or run `iptv-manager-update` in the container's own console. If `pct exec` answers
+`Failed to exec "iptv-manager-update"`, use the full path once:
+`pct exec <container id> -- /usr/local/bin/iptv-manager-update`. This affects installs converted
+before the command was also linked into `/usr/bin`, and that first run adds the link. It fetches the latest version and
 stops if there is nothing new. It reinstalls dependencies only if they changed, then restarts the
 service; it never runs apt or touches the container itself. If the new version does not start
 within about 30 seconds, the previous one is restored automatically. That release is then skipped

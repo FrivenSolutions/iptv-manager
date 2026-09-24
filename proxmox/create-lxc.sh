@@ -103,10 +103,10 @@ if [ "$MODE" = upgrade ]; then
     || die "container $CTID has no IPTV Manager install (/opt/iptv-manager). Nothing was changed."
   echo "==> Upgrading IPTV Manager in container $CTID ($(pct config "$CTID" | awk '/^hostname:/ { print $2 }'))"
   if pct exec "$CTID" -- test -x /usr/local/bin/iptv-manager-update; then
-    pct exec "$CTID" -- iptv-manager-update
+    pct exec "$CTID" -- /usr/local/bin/iptv-manager-update
     case "${AUTO_UPDATE:-}" in
-      1) pct exec "$CTID" -- iptv-manager-update --enable-auto ;;
-      0) pct exec "$CTID" -- iptv-manager-update --disable-auto ;;
+      1) pct exec "$CTID" -- /usr/local/bin/iptv-manager-update --enable-auto ;;
+      0) pct exec "$CTID" -- /usr/local/bin/iptv-manager-update --disable-auto ;;
     esac
   else
     echo "==> Converting this install to self-updating (one time)"
