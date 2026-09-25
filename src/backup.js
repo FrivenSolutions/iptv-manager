@@ -44,6 +44,9 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
       guide_patterns: customGuide ? JSON.parse(customGuide) : null,
       advanced: db.getSetting('ui_advanced') === '1',
       guide_logo_fallback: db.getSetting('guide_logo_fallback') === '1',
+      // An ntfy topic URL works like a password, so it only travels with secrets.
+      notify_type: db.getSetting('notify_type') || '',
+      notify_url: secrets ? db.getSetting('notify_url') || '' : '',
     },
     sources: sources.map((s) => {
       const src = { ref: s.id, ...pick(s, SOURCE_FIELDS), live_only: !!s.live_only, enabled: !!s.enabled };
@@ -156,6 +159,11 @@ export function importSettings(db, data) {
     // Missing in older files: off, as it was then.
     db.setSetting('ui_advanced', data.settings?.advanced ? 1 : 0);
     db.setSetting('guide_logo_fallback', data.settings?.guide_logo_fallback ? 1 : 0);
+    const nt = ['ntfy', 'webhook'].includes(data.settings?.notify_type) ? data.settings.notify_type : '';
+    const nu = typeof data.settings?.notify_url === 'string' && /^https?:\/\//i.test(data.settings.notify_url) ? data.settings.notify_url : '';
+    db.setSetting('notify_type', nt && nu ? nt : '');
+    db.setSetting('notify_url', nt && nu ? nu : '');
+    db.setSetting('alerts_sent', '{}');
 
     const ids = new Map();
     const catIds = new Map(); // "ref|name" -> id

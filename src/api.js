@@ -12,6 +12,7 @@ import {
 import { rematchSource } from './ingest.js';
 import { JELLYFIN_CATEGORIES, parseJellyfin } from './outputs/epg.js';
 import { exportSettings, importSettings } from './backup.js';
+import { computeAlerts } from './alerts.js';
 import { now } from './db.js';
 
 const UPLOAD_LIMIT = 1024 * 1024 * 1024;
@@ -234,6 +235,8 @@ export function registerApi(router, ctx) {
       // "Show advanced options" (UI only) and the advanced features it reveals.
       advanced: db.getSetting('ui_advanced') === '1',
       guide_logo_fallback: db.getSetting('guide_logo_fallback') === '1',
+      notify_type: db.getSetting('notify_type') || '',
+      notify_url: db.getSetting('notify_url') || '',
     });
   });
 
@@ -247,6 +250,14 @@ export function registerApi(router, ctx) {
     }
     if (body.update_check !== undefined) db.setSetting('update_check', bool(body.update_check));
     if (body.advanced !== undefined) db.setSetting('ui_advanced', bool(body.advanced));
+    if (body.notify_type !== undefined || body.notify_url !== undefined) {
+      const type = body.notify_type === undefined ? db.getSetting('notify_type') || '' : String(body.notify_type || '');
+      const url = body.notify_url === undefined ? db.getSetting('notify_url') || '' : str(body.notify_url, 1000);
+      if (!['', 'ntfy', 'webhook'].includes(type)) throw new HttpError(400, 'Unknown notification type');
+      if (type && !/^https?:\/\/\S+$/i.test(url)) throw new HttpError(400, 'Enter the full http(s):// address to send alerts to');
+      db.setSetting('notify_type', type);
+      db.setSetting('notify_url', url);
+    }
     if (body.guide_logo_fallback !== undefined) db.setSetting('guide_logo_fallback', bool(body.guide_logo_fallback));
     if (body.empty_event_patterns !== undefined) {
       // null restores the defaults; a list (possibly empty) replaces them.
@@ -257,6 +268,21 @@ export function registerApi(router, ctx) {
       db.setSetting('guide_patterns', body.guide_patterns === null ? null : JSON.stringify(validatePatterns(body.guide_patterns)));
     }
     sendJson(res, 200, { ok: true, empty_event_patterns: emptyEventPatterns(db), guide_patterns: guidePatterns(db) });
+  });
+
+  // --- alerts ------------------------------------------------------------------
+  router.get('/api/alerts', (req, res) => sendJson(res, 200, computeAlerts(db)));
+  router.post('/api/alerts/test', async (req, res) => {
+    const { type, url } = ctx.alerts.target;
+    if (!type || !url) throw new HttpError(400, 'Save a notification address first');
+    try {
+      await ctx.alerts.send('alert', {
+        kind: 'test', level: 'warn', title: 'IPTV Manager test alert', message: 'Alerts from IPTV Manager will arrive here.',
+      });
+    } catch (e) {
+      throw new HttpError(502, `Sending failed: ${e.message}`);
+    }
+    sendJson(res, 200, { ok: true });
   });
 
   // --- version & updates -----------------------------------------------------

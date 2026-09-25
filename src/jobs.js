@@ -41,6 +41,8 @@ export class Jobs {
         } finally {
           this.state.delete(id);
         }
+        // A refresh can start or clear a problem (failing source, empty guide).
+        await this.ctx.alerts?.evaluate();
       }
     } finally {
       this.running = false;

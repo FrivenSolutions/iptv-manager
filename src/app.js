@@ -19,6 +19,7 @@ import { HDHR_API } from './hdhomerun.js';
 import { currentVersion } from './version.js';
 import { UpdateChecker, installType, DEFAULT_UPDATE_REPO } from './updates.js';
 import { WebUpdater } from './webupdate.js';
+import { Alerts } from './alerts.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = path.join(ROOT, 'public');
@@ -99,6 +100,7 @@ export function createApp({
     repo: updateRepo,
   };
   ctx.webUpdate = new WebUpdater({ dataDir, pathUnit: webUpdatePathUnit });
+  ctx.alerts = new Alerts(ctx);
   ctx.updates = new UpdateChecker({
     db, commit: ctx.build.commit, apiBase: updateApiBase, repo: updateRepo, delayMs: updateCheckDelayMs, log,
   });
@@ -256,11 +258,13 @@ export function createApp({
     start(port, host) {
       ctx.jobs.start();
       ctx.updates.start();
+      ctx.alerts.start();
       return new Promise((resolve) => server.listen(port, host, () => resolve(server.address())));
     },
     async close() {
       ctx.jobs.stop();
       ctx.updates.stop();
+      ctx.alerts.stop();
       await new Promise((r) => {
         server.close(() => r());
         server.closeAllConnections();

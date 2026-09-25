@@ -37,6 +37,9 @@ const RUNNING = 'a'.repeat(40);
 const gh = { latest: RUNNING, newer: [], fail: false };
 // Extra guide channels served by the fake xmltv.php: [{ id, title-airing-now }].
 const eventGuide = [];
+// The fake XC account's expiry, and what the fake ntfy/webhook receiver got.
+const xcAccount = { exp: 1900000000 };
+const notified = [];
 
 const xmltvTime = (d) => d.toISOString().replace(/[-:T]/g, '').slice(0, 14) + ' +0000';
 function guide(ids) {
@@ -83,7 +86,7 @@ function startUpstream() {
     if (u.pathname === '/player_api.php') {
       if (u.searchParams.get('username') !== 'xu' || u.searchParams.get('password') !== 'xp') return json({ user_info: { auth: 0 } });
       const action = u.searchParams.get('action');
-      if (!action) return json({ user_info: { auth: 1, status: 'Active', exp_date: '1900000000', max_connections: '2' }, server_info: {} });
+      if (!action) return json({ user_info: { auth: 1, status: 'Active', exp_date: String(xcAccount.exp), max_connections: '2' }, server_info: {} });
       if (action === 'get_live_categories') return json(xcCats);
       if (action === 'get_live_streams') return json(xcStreams);
       return json([]);
@@ -108,6 +111,17 @@ function startUpstream() {
       }
       res.writeHead(200, { 'content-type': 'video/mp2t' });
       return res.end(`TS-${u.pathname.split('/').pop()}`);
+    }
+    // A fake ntfy / webhook receiver for alerts.
+    if (u.pathname === '/notify') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => {
+        notified.push({ title: req.headers.title || null, priority: req.headers.priority || null, type: req.headers['content-type'] || '', body });
+        res.writeHead(200);
+        res.end('ok');
+      });
+      return;
     }
     // A fake GitHub API for the update check.
     if (u.pathname.startsWith('/repos/test/repo/')) {
@@ -1105,4 +1119,61 @@ test('update check: version, up to date, behind, GitHub down, switched off', asy
   const st = await new UpdateChecker({ db: app.ctx.db, commit: 'f'.repeat(40), apiBase: up, repo: 'test/repo' }).check();
   assert.deepEqual([st.behind, st.error], [null, null]);
   assert.match(st.note, /not on GitHub/);
+});
+
+test('alerts: expiring account, failing source, empty guide; sent once, resolved once; ntfy and webhook', async () => {
+  const sent = () => notified.splice(0);
+  notified.length = 0;
+  assert.equal((await api('POST', '/api/alerts/test')).status, 400, 'nothing configured yet');
+  assert.equal((await api('PUT', '/api/settings', { notify_type: 'ntfy', notify_url: 'not a url' })).status, 400);
+  await api('PUT', '/api/settings', { notify_type: 'ntfy', notify_url: `${up}/notify` });
+  assert.equal((await api('POST', '/api/alerts/test')).status, 200);
+  assert.deepEqual(sent().map((n) => n.title), ['IPTV Manager test alert']);
+
+  // Account expiring in 5 days: one reminder, not repeated on the next refresh.
+  xcAccount.exp = Math.floor(Date.now() / 1000) + 5 * 86400 - 60;
+  await api('POST', `/api/sources/${xcId}/refresh`);
+  await app.ctx.jobs.idle();
+  let alerts = (await api('GET', '/api/alerts')).data;
+  assert.ok(alerts.some((a) => a.kind === 'expiring' && /expires in 5 days/.test(a.title)));
+  assert.deepEqual(sent().map((n) => n.title), ['XC account expires in 5 days']);
+  await api('POST', `/api/sources/${xcId}/refresh`);
+  await app.ctx.jobs.idle();
+  assert.deepEqual(sent(), [], 'no repeat');
+
+  // A source failing three refreshes in a row: alert at the third, "resolved" once it is gone.
+  const bad = (await api('POST', '/api/sources', { name: 'Flaky', type: 'xc', xc_host: up, xc_username: 'no', xc_password: 'no' })).data;
+  await app.ctx.jobs.idle();
+  for (let i = 0; i < 2; i++) {
+    await api('POST', `/api/sources/${bad.id}/refresh`);
+    await app.ctx.jobs.idle();
+  }
+  const failing = sent().filter((n) => /Flaky/.test(n.title));
+  assert.deepEqual(failing.map((n) => [n.title, n.priority]), [['Flaky keeps failing', 'high']]);
+  assert.match(failing[0].body, /last 3 refreshes failed: Xtream Codes login was rejected/);
+  await api('DELETE', `/api/sources/${bad.id}`);
+  await app.ctx.alerts.evaluate();
+  assert.deepEqual(sent().map((n) => n.title), ['Resolved: Flaky keeps failing']);
+
+  // Webhook: JSON body. A guide with nothing airing now raises its own alert.
+  await api('PUT', '/api/settings', { notify_type: 'webhook' });
+  const gen = app.ctx.db.get('SELECT epg_gen FROM sources WHERE id = ?', [xcId]).epg_gen;
+  const t = Math.floor(Date.now() / 1000);
+  app.ctx.db.run('UPDATE programmes SET stop_ts = ? WHERE source_id = ? AND gen = ? AND start_ts <= ?', [t - 1, xcId, gen, t]);
+  await app.ctx.alerts.evaluate();
+  const hook = sent().map((n) => JSON.parse(n.body));
+  assert.deepEqual(hook.map((h) => [h.event, h.kind, h.level, h.source_id]), [['alert', 'guide', 'warn', xcId]]);
+  assert.match(hook[0].title, /guide has nothing on now/);
+
+  // Refresh brings the guide back and the account far from expiry: guide resolved, expiring just ends.
+  xcAccount.exp = 1900000000;
+  await api('POST', `/api/sources/${xcId}/refresh`);
+  await app.ctx.jobs.idle();
+  assert.deepEqual(sent().map((n) => JSON.parse(n.body)).map((h) => [h.event, h.kind]), [['resolved', 'guide']]);
+  assert.equal((await api('GET', '/api/alerts')).data.length, 0);
+
+  // Exports carry the target; the URL only with secrets.
+  assert.equal((await api('GET', '/api/export')).data.settings.notify_url, `${up}/notify`);
+  assert.equal((await api('GET', '/api/export?secrets=0')).data.settings.notify_url, '');
+  await api('PUT', '/api/settings', { notify_type: '', notify_url: '' });
 });

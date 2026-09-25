@@ -218,6 +218,10 @@ const MIGRATIONS = [
   -- With hide_by_guide: also hide channels that have a guide id but nothing airing now.
   ALTER TABLE output_category_settings ADD COLUMN hide_unlisted INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- Consecutive failed refreshes, for the "source keeps failing" alert.
+  ALTER TABLE sources ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.

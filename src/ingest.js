@@ -369,7 +369,7 @@ export async function refreshSource(ctx, id) {
     };
     db.run(
       `UPDATE sources SET last_refresh_at = ?, first_refresh_at = COALESCE(first_refresh_at, ?),
-         last_status = ?, last_error = ?, stats = ?, account_info = COALESCE(?, account_info) WHERE id = ?`,
+         last_status = ?, last_error = ?, stats = ?, account_info = COALESCE(?, account_info), fail_count = 0 WHERE id = ?`,
       [now(), now(), epg.error ? 'warning' : 'ok', epg.error ? redact(epg.error) : null, JSON.stringify(stats),
         data.account ? JSON.stringify(data.account) : null, src.id],
     );
@@ -378,7 +378,7 @@ export async function refreshSource(ctx, id) {
       (epg.channels ? `, EPG ${epg.matched}/${stats.channels} matched, ${epg.programmes} programmes` : '') +
       ` in ${stats.seconds}s` + (epg.error ? ` (warning: ${redact(epg.error)})` : ''));
   } catch (e) {
-    db.run('UPDATE sources SET last_refresh_at = ?, last_status = ?, last_error = ? WHERE id = ?', [
+    db.run('UPDATE sources SET last_refresh_at = ?, last_status = ?, last_error = ?, fail_count = fail_count + 1 WHERE id = ?', [
       now(), 'error', redact(e.message), src.id,
     ]);
     log(`Source "${src.name}" failed: ${redact(e.message)}`);

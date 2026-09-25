@@ -472,8 +472,18 @@ async function dashboard(main) {
   const srcSection = h('section', null, h('h2', null, 'Sources'), srcGrid);
   const outSection = h('section', null, h('h2', null, 'Outputs'), outGrid, noOutputs);
 
+  const alertBox = h('div', { class: 'alerts' });
+  let alertSig = '';
   const update = async () => {
-    const [sources, outputs] = await Promise.all([api('GET', '/api/sources'), api('GET', '/api/outputs')]);
+    const [sources, outputs, alerts] = await Promise.all([api('GET', '/api/sources'), api('GET', '/api/outputs'), api('GET', '/api/alerts')]);
+    // Only redraw the alert strip when it changed, so polling never makes it flicker.
+    const sig = JSON.stringify(alerts);
+    if (sig !== alertSig) {
+      alertSig = sig;
+      fill(alertBox, alerts.map((a) => h('div', { class: `alert ${a.level}` },
+        h('b', null, a.title), ' ', h('span', null, a.message), ' ',
+        a.source_id ? h('a', { href: `#/sources/${a.source_id}` }, 'Open source') : null)));
+    }
     getStarted.hidden = sources.length > 0;
     srcSection.hidden = outSection.hidden = !sources.length;
     noOutputs.hidden = outputs.length > 0;
@@ -481,7 +491,7 @@ async function dashboard(main) {
     syncList(outGrid, outputs, (o) => o.id, outputCard);
   };
   await update();
-  fill(main, h('div', { class: 'page-head' }, h('h1', null, 'Dashboard')), getStarted, srcSection, outSection);
+  fill(main, h('div', { class: 'page-head' }, h('h1', null, 'Dashboard')), alertBox, getStarted, srcSection, outSection);
   poll(update, 3000);
 }
 
@@ -1308,10 +1318,46 @@ async function settingsView(main) {
         },
       }, field('Current password', cur), field('New password', next, 'At least 8 characters.'), h('button', { class: 'btn primary' }, 'Change password'))),
     updatesCard(await api('GET', '/api/updates')),
+    alertsCard(s),
     emptyEventCard(s),
     guidePatternsCard(s),
     backupCard(),
     advancedCard(s));
+}
+
+/** Where to push alerts (a source that keeps failing, an expiring account, a guide that ran out). */
+function alertsCard(s) {
+  const type = h('select', null,
+    [['', 'Off (dashboard only)'], ['ntfy', 'ntfy'], ['webhook', 'Webhook (JSON)']]
+      .map(([v, l]) => h('option', { value: v, selected: s.notify_type === v }, l)));
+  const url = h('input', { value: s.notify_url, placeholder: 'https://ntfy.sh/your-private-topic' });
+  const sync = () => {
+    url.parentElement.hidden = !type.value;
+    url.placeholder = type.value === 'webhook' ? 'https://example.com/hooks/iptv' : 'https://ntfy.sh/your-private-topic';
+  };
+  type.addEventListener('change', sync);
+  const save = () => attempt(() => api('PUT', '/api/settings', { notify_type: type.value, notify_url: url.value }), 'Saved');
+  const card = h('section', { class: 'card narrow' },
+    h('h2', null, 'Alerts'),
+    h('p', { class: 'hint' },
+      'Problems show on the dashboard: a source whose last 3 refreshes failed, an account expiring within 14 days, ',
+      'or a guide with nothing airing on any channel. They can also be pushed to your phone with ntfy, or to a webhook: ',
+      'once when a problem starts and once when it is resolved.'),
+    h('form', { class: 'form', onsubmit: (e) => { e.preventDefault(); save(); } },
+      field('Send alerts to', type),
+      field('Address', url, 'For ntfy, a topic URL such as https://ntfy.sh/a-long-random-name (anyone who knows it can read it), or your own ntfy server.'),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn primary' }, 'Save'),
+        h('button', {
+          type: 'button',
+          class: 'btn',
+          onclick: async () => {
+            await save();
+            await attempt(() => api('POST', '/api/alerts/test'), 'Test alert sent');
+          },
+        }, 'Send test'))));
+  sync();
+  return card;
 }
 
 /**
