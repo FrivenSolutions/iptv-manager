@@ -22,12 +22,14 @@ function providerApi(src) {
   };
 }
 
-const catName = (c) => c.custom_name || c.name;
+// Names as players see them: a name set by hand, else the provider's after the output's name cleanup.
+const catName = (vc, c) => c.custom_name || vc.clean.category(c.name);
+const title = (vc, name) => vc.clean.channel(name);
 
 /** Included categories of a kind that hold at least one title. */
 export function vodCategoryList(vc) {
   return vc.cats.filter((c) => c.included && c.channel_count > 0)
-    .map((c) => ({ category_id: String(c.id), category_name: catName(c), parent_id: 0 }));
+    .map((c) => ({ category_id: String(c.id), category_name: catName(vc, c), parent_id: 0 }));
 }
 
 function itemsOf(db, vc, categoryId) {
@@ -44,7 +46,7 @@ export function vodStreams(db, vc, categoryId) {
   return itemsOf(db, vc, categoryId).map((r, i) => ({
     ...parse(r.extra),
     num: i + 1,
-    name: r.name,
+    name: title(vc, r.name),
     stream_type: 'movie',
     stream_id: r.id,
     stream_icon: r.poster || '',
@@ -61,7 +63,7 @@ export function seriesList(db, vc, categoryId) {
   return itemsOf(db, vc, categoryId).map((r, i) => ({
     ...parse(r.extra),
     num: i + 1,
-    name: r.name,
+    name: title(vc, r.name),
     series_id: r.id,
     cover: r.poster || '',
     last_modified: String(r.added || ''),
@@ -81,12 +83,12 @@ export function vodItem(db, vc, id, kind) {
 export async function vodInfo(db, vc, id) {
   const it = vodItem(db, vc, id, 'movie');
   if (!it) return {};
-  const movieData = { stream_id: it.id, name: it.name, added: String(it.added || ''), category_id: String(it.category_id), container_extension: it.ext || 'mp4', custom_sid: '', direct_source: '' };
-  let info = { name: it.name, movie_image: it.poster || '', cover_big: it.poster || '' };
+  const movieData = { stream_id: it.id, name: title(vc, it.name), added: String(it.added || ''), category_id: String(it.category_id), container_extension: it.ext || 'mp4', custom_sid: '', direct_source: '' };
+  let info = { name: title(vc, it.name), movie_image: it.poster || '', cover_big: it.poster || '' };
   if (it.src.type === 'xc') {
     try {
       const r = await providerApi(it.src).call('get_vod_info', `&vod_id=${encodeURIComponent(it.key)}`);
-      if (r && typeof r.info === 'object' && !Array.isArray(r.info)) info = { ...info, ...r.info };
+      if (r && typeof r.info === 'object' && !Array.isArray(r.info)) info = { ...info, ...r.info, name: info.name };
     } catch {
       // The list's own details are enough to play it.
     }
@@ -102,7 +104,8 @@ export async function seriesInfo(db, vc, id) {
   const it = vodItem(db, vc, id, 'series');
   if (!it) return {};
   const extra = parse(it.extra);
-  let info = { ...extra, name: it.name, cover: it.poster || '', category_id: String(it.category_id) };
+  const name = title(vc, it.name);
+  let info = { ...extra, name, cover: it.poster || '', category_id: String(it.category_id) };
   let seasons = [];
   if (it.src.type === 'xc') {
     let r;
@@ -112,7 +115,7 @@ export async function seriesInfo(db, vc, id) {
       r = null;
     }
     if (r && typeof r === 'object') {
-      if (r.info && typeof r.info === 'object' && !Array.isArray(r.info)) info = { ...info, ...r.info, name: it.name, category_id: String(it.category_id) };
+      if (r.info && typeof r.info === 'object' && !Array.isArray(r.info)) info = { ...info, ...r.info, name, category_id: String(it.category_id) };
       if (Array.isArray(r.seasons)) seasons = r.seasons;
       // Panels return episodes as { "1": [...] } or as a flat list.
       const lists = Array.isArray(r.episodes) ? [r.episodes.flat()] : Object.values(r.episodes || {});
@@ -141,7 +144,7 @@ export async function seriesInfo(db, vc, id) {
       ...raw,
       id: String(e.id),
       episode_num: e.episode ?? raw.episode_num ?? 0,
-      title: e.title || raw.title || '',
+      title: title(vc, e.title || raw.title || ''),
       container_extension: e.ext || 'mp4',
       season: e.season ?? 1,
       info: raw.info && typeof raw.info === 'object' ? raw.info : {},

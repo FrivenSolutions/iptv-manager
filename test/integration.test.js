@@ -1091,7 +1091,7 @@ test('name cleanup: per-output find/replace on channel and category names, in ev
   assert.equal((await api('PUT', `/api/outputs/${o.id}`, { name_rules: [{ scope: 'nope', find: 'x' }] })).status, 400);
 
   r = await api('PUT', `/api/outputs/${o.id}`, { name_rules: rules });
-  assert.deepEqual(r.data.name_rules, rules);
+  assert.deepEqual(r.data.name_rules, rules.map((x) => ({ ...x, media: 'live' })), 'rules without a target are live TV');
   assert.deepEqual((await m3u()).sort(), [['CNN', 'News & Talk', 'CNN'], ['Fox News', 'News & Talk', 'Fox News']]);
   const xc = (action) => fetch(`${base}/player_api.php?username=tidy&password=pw&action=${action}`).then((x) => x.json());
   assert.deepEqual((await xc('get_live_categories')).map((c) => c.category_name), ['News & Talk']);
@@ -1110,7 +1110,7 @@ test('name cleanup: per-output find/replace on channel and category names, in ev
   // Backed up with the output, and checked on import.
   const file = (await api('GET', '/api/export')).data;
   const saved = file.outputs.find((x) => x.token === o.token);
-  assert.deepEqual(saved.name_rules, rules);
+  assert.deepEqual(saved.name_rules, rules.map((x) => ({ ...x, media: 'live' })));
   saved.name_rules = [{ scope: 'channel', find: '[', replace: '' }];
   r = await api('POST', '/api/import', file);
   assert.equal(r.status, 400);
@@ -1269,6 +1269,22 @@ test('movies and series: loaded when a source includes them, filtered per output
   assert.deepEqual([renamed.name, renamed.kind], ['EN| ACTION', 'movie'], 'backed up with its kind');
   await api('PUT', `/api/categories/${vodCats[0].category_id}`, { custom_name: '' });
   assert.deepEqual((await xc('get_vod_categories')).map((c) => c.category_name), ['EN| ACTION', 'EN| KIDS']);
+
+  // Name cleanup for movies and series: only rules aimed at them (or everywhere) apply.
+  const nameRules = [
+    { scope: 'both', media: 'live', find: 'Die', replace: 'LIVE-ONLY' },
+    { scope: 'category', media: 'vod', find: '^[A-Z]{2}\\|\\s*', replace: '' },
+    { scope: 'channel', media: 'all', find: '^Die ', replace: 'The ' },
+  ];
+  const preview = (await api('POST', `/api/outputs/${o.id}/name-preview`, { rules: nameRules })).data;
+  assert.deepEqual([preview.vod.categories.changed, preview.vod.titles.changed], [3, 1]);
+  assert.deepEqual(preview.vod.titles.samples, [['Die Hard', 'The Hard']]);
+  await api('PUT', `/api/outputs/${o.id}`, { name_rules: nameRules });
+  assert.deepEqual((await xc('get_vod_categories')).map((c) => c.category_name), ['ACTION', 'KIDS']);
+  assert.equal((await xc('get_vod_streams'))[0].name, 'The Hard');
+  assert.equal((await xc('get_vod_info', `&vod_id=${dieHard.stream_id}`)).movie_data.name, 'The Hard');
+  assert.deepEqual((await xc('get_series_categories')).map((c) => c.category_name), ['DRAMA']);
+  await api('PUT', `/api/outputs/${o.id}`, { name_rules: [] });
 
   assert.deepEqual((await xc('get_series_categories')).map((c) => c.category_name), ['EN| DRAMA']);
   const shows = await xc('get_series');

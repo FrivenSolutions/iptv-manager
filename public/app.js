@@ -972,6 +972,24 @@ async function outputEditor(main, id) {
 
   const sourceName = (sid) => o.sources.find((s) => s.id === sid)?.name || `#${sid}`;
   const attachedIds = () => draft.sources.filter((s) => s.attached).map((s) => s.id);
+  // Category rows, under a heading per provider when the list holds more than one (rows come in
+  // source order, so each provider's categories are together).
+  const withGroups = (rows, render) => {
+    const counts = new Map();
+    for (const c of rows) counts.set(c.source_id, (counts.get(c.source_id) || 0) + 1);
+    if (counts.size < 2) return rows.map(render);
+    const out = [];
+    let last = null;
+    for (const c of rows) {
+      if (c.source_id !== last) {
+        last = c.source_id;
+        const n = counts.get(c.source_id);
+        out.push(h('div', { class: 'cat-group' }, h('b', null, sourceName(c.source_id)), h('span', { class: 'meta' }, ` · ${n} categor${n === 1 ? 'y' : 'ies'}`)));
+      }
+      out.push(render(c));
+    }
+    return out;
+  };
 
   // --- settings
   const inp = (key, props = {}) => h('input', { ...props, value: draft[key], oninput: (e) => { draft[key] = props.type === 'checkbox' ? e.target.checked : e.target.value; markDirty(); } });
@@ -1081,10 +1099,13 @@ async function outputEditor(main, id) {
       if (seq !== previewSeq) return;
       const part = (label, t) => (t.total ? `${t.changed} of ${t.total} ${label}` : null);
       const counts = [part('channel names', r.channels), part('category names', r.categories)].filter(Boolean).join(' and ');
+      const vodCounts = r.vod ? [part('movie & series titles', r.vod.titles), part('movie & series categories', r.vod.categories)].filter(Boolean).join(' and ') : '';
+      const all = [counts, vodCounts].filter(Boolean).join('; ');
+      const sample = ([a, b]) => h('div', { class: 'name-sample' }, h('span', { class: 'before' }, a), h('span', { class: 'meta' }, '→'), h('b', null, b));
       fill(namePreview,
-        h('span', { class: 'meta' }, counts ? `Changes ${counts} in this output${dirty ? ' (after saving)' : ''}.` : 'No categories are in this output yet.'),
-        [...r.categories.samples.slice(0, 3), ...r.channels.samples].slice(0, 8).map(([a, b]) =>
-          h('div', { class: 'name-sample' }, h('span', { class: 'before' }, a), h('span', { class: 'meta' }, '→'), h('b', null, b))));
+        h('span', { class: 'meta' }, all ? `Changes ${all} in this output${dirty ? ' (after saving)' : ''}.` : 'No categories are in this output yet.'),
+        [...r.categories.samples.slice(0, 3), ...r.channels.samples].slice(0, r.vod ? 5 : 8).map(sample),
+        r.vod ? [...r.vod.categories.samples.slice(0, 2), ...r.vod.titles.samples].slice(0, 4).map(sample) : null);
     }, 300);
   };
   const changedNames = () => {
@@ -1105,8 +1126,14 @@ async function outputEditor(main, id) {
     };
     fill(namesBox,
       draft.name_rules.map((r, i) => h('div', { class: 'name-rule' },
-        h('select', { onchange: (e) => { r.scope = e.target.value; changedNames(); } },
-          [['channel', 'Channel names'], ['category', 'Category names'], ['both', 'Both']].map(([v, l]) => h('option', { value: v, selected: r.scope === v }, l))),
+        h('span', { class: 'name-targets' },
+          draft.vod_enabled || (r.media || 'live') !== 'live'
+            ? h('select', { title: 'Where this rule applies', onchange: (e) => { r.media = e.target.value; changedNames(); } },
+              [['live', 'Live TV'], ['vod', 'Movies & series'], ['all', 'Everywhere']].map(([v, l]) => h('option', { value: v, selected: (r.media || 'live') === v }, l)))
+            : null,
+          h('select', { onchange: (e) => { r.scope = e.target.value; changedNames(); } },
+            [['channel', draft.vod_enabled ? 'Names & titles' : 'Channel names'], ['category', 'Category names'], ['both', 'Both']]
+              .map(([v, l]) => h('option', { value: v, selected: r.scope === v }, l)))),
         h('input', { class: 'mono', value: r.find, placeholder: 'Find (pattern)', spellcheck: 'false', oninput: (e) => { r.find = e.target.value; changedNames(); } }),
         h('span', { class: 'meta' }, '→'),
         h('input', { value: r.replace, placeholder: 'Replace with (empty removes)', oninput: (e) => { r.replace = e.target.value; changedNames(); } }),
@@ -1116,9 +1143,9 @@ async function outputEditor(main, id) {
           h('button', { class: 'icon-btn', title: 'Remove', onclick: () => { draft.name_rules.splice(i, 1); drawNames(); changedNames(); } }, '✕')))),
       h('div', { class: 'row' },
         NAME_PRESETS.map(([label, title, rule]) => h('button', {
-          class: 'btn small', title, disabled: draft.name_rules.some((r) => r.find === rule.find), onclick: () => add(rule),
+          class: 'btn small', title, disabled: draft.name_rules.some((r) => r.find === rule.find), onclick: () => add({ ...rule, media: draft.vod_enabled ? 'all' : 'live' }),
         }, `+ ${label}`)),
-        h('button', { class: 'btn small', onclick: () => add({ scope: 'channel', find: '', replace: '' }) }, '+ Custom rule')));
+        h('button', { class: 'btn small', onclick: () => add({ scope: 'channel', media: draft.vod_enabled ? 'all' : 'live', find: '', replace: '' }) }, '+ Custom rule')));
   };
   const nameCount = o.name_rules.length;
   const namesCard = settings.advanced
@@ -1126,7 +1153,8 @@ async function outputEditor(main, id) {
       h('h2', null, 'Name cleanup'),
       h('p', { class: 'hint' },
         'Tidy the names players show, like "US: CNN ᴴᴰ" into "CNN". Each rule\'s pattern is a regular expression (case-sensitive) ',
-        'and every match is replaced; rules run top to bottom, then leftover spaces are tidied. Names you set by hand are never changed.'),
+        'and every match is replaced; rules run top to bottom, then leftover spaces are tidied. Names you set by hand are never changed. ',
+        'With movies & series on, each rule also says where it applies: live TV, movies & series, or everywhere.'),
       namesBox, namePreview)
     : nameCount
       ? h('p', { class: 'hint quiet-line' },
@@ -1185,7 +1213,7 @@ async function outputEditor(main, id) {
     summary.textContent = `${inc} of ${cats.length} categories · about ${chans} channels${dirty ? ' (preview)' : ''}`;
     const LIMIT = 500;
     fill(catBox, 
-      ...rows.slice(0, LIMIT).map((c) => {
+      ...withGroups(rows.slice(0, LIMIT), (c) => {
         const st = evalCat(c);
         const seg = (label, val, cls) => h('button', { class: `${c.override === val ? 'on' : ''} ${cls}`, title: val ? `Always ${val}` : 'Follow the rules', onclick: () => setOverride([c.id], val) }, label);
         const row = h('div', { class: `cat-row ${st.included ? 'in' : 'out'}` },
@@ -1195,7 +1223,7 @@ async function outputEditor(main, id) {
             c.channel_rules?.length ? badge(`${c.channel_rules.length} channel rule${c.channel_rules.length === 1 ? '' : 's'}`, 'info') : null,
             c.hide_empty ? badge('hides empty events', 'info') : null,
             c.hide_by_guide ? badge(c.hide_unlisted ? 'hides by guide + unlisted' : 'hides by guide', 'info') : null,
-            h('span', { class: 'meta' }, ` ${sourceName(c.source_id)} · ${c.channel_count} ch · ${reasonText(st)}`),
+            h('span', { class: 'meta' }, ` · ${c.channel_count} ch · ${reasonText(st)}`),
             hitLine(c)),
           h('button', { class: 'icon-btn', title: 'Edit group (display name, Jellyfin category)', onclick: () => editCategory(c, drawCats) }, '✎'),
           h('span', { class: 'segmented small' }, seg('Auto', null, ''), seg('Include', 'include', 'inc'), seg('Exclude', 'exclude', 'exc')));
@@ -1581,14 +1609,14 @@ async function outputEditor(main, id) {
       const rows = visible();
       const LIMIT = 500;
       fill(list,
-        ...rows.slice(0, LIMIT).map((c) => {
+        ...withGroups(rows.slice(0, LIMIT), (c) => {
           const st = evalVod(c);
           const seg = (label, val, cls) => h('button', { class: `${c.override === val ? 'on' : ''} ${cls}`, title: val ? `Always ${val}` : 'Follow the rules', onclick: () => setOverride([c.id], val) }, label);
           const row = h('div', { class: `cat-row ${st.included ? 'in' : 'out'}` },
             h('button', { class: 'expander', title: `Show the ${L.plural}`, onclick: () => { state.open.has(c.id) ? state.open.delete(c.id) : state.open.add(c.id); draw(); } }, state.open.has(c.id) ? '▾' : '▸'),
             h('span', { class: 'dot' }),
             h('span', { class: 'cat-name' }, c.custom_name || c.name, c.is_new ? badge('new', 'info') : null,
-              h('span', { class: 'meta' }, ` ${c.custom_name ? `(${c.name}) ` : ''}${sourceName(c.source_id)} · ${c.channel_count.toLocaleString()} ${L.plural} · ${reasonText(st)}`)),
+              h('span', { class: 'meta' }, `${c.custom_name ? ` (${c.name})` : ''} · ${c.channel_count.toLocaleString()} ${L.plural} · ${reasonText(st)}`)),
             h('button', { class: 'icon-btn', title: 'Rename (the name players see)', onclick: () => editCategory(c, draw, { vod: true }) }, '✎'),
             h('span', { class: 'segmented small' }, seg('Auto', null, ''), seg('Include', 'include', 'inc'), seg('Exclude', 'exclude', 'exc')));
           return state.open.has(c.id) ? h('div', null, row, titlesPanel(c)) : row;
@@ -1636,8 +1664,20 @@ async function outputEditor(main, id) {
       p.el.hidden = tab !== k;
       if (tab === k && !p.loaded) p.load();
     }
+    // Moving it would take the focus from a rule being typed in, so only when it isn't in place.
+    if (namesCard) {
+      const [pane, before] = tab === 'live' ? [livePane, catsCard] : [vodPanes[tab].el, vodPanes[tab].el.lastElementChild];
+      if (namesCard.parentElement !== pane || namesCard.nextElementSibling !== before) pane.insertBefore(namesCard, before);
+    }
   };
+  let namesFor = draft.vod_enabled;
   redrawVod = () => {
+    // Switching movies & series on or off changes the rule rows (redrawn only then: typing
+    // in a rule also lands here, and a redraw would take its focus away).
+    if (settings.advanced && namesFor !== draft.vod_enabled) {
+      namesFor = draft.vod_enabled;
+      drawNames();
+    }
     drawTabs();
     for (const p of Object.values(vodPanes)) if (p.loaded) p.draw();
   };

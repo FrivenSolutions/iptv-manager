@@ -8,6 +8,7 @@ import { readGitCommit, currentVersion } from '../src/version.js';
 import { parseM3U, isVod } from '../src/m3u.js';
 import { parseXmltv, parseXmltvTime } from '../src/xmltv.js';
 import { normalizeName, matchChannels } from '../src/epgmatch.js';
+import { nameCleaner } from '../src/filters.js';
 import { categoryState, testRule, DEFAULT_EMPTY_EVENT_PATTERNS, DEFAULT_GUIDE_PATTERNS, compilePatterns, isEmptyEvent } from '../src/filters.js';
 import { rewriteHls } from '../src/stream.js';
 import { splitUrls, xcBase } from '../src/ingest.js';
@@ -238,6 +239,14 @@ test('jsonObjects reads big JSON lists one object at a time, across chunks and t
   } finally {
     fs.rmSync(f, { force: true });
   }
+});
+
+test('nameCleaner tidies only runs of spaces (a double "s" in a name is left alone)', () => {
+  const clean = nameCleaner([{ scope: 'channel', find: 'HD', replace: '' }]);
+  assert.equal(clean.channel('Boss  Glass HD'), 'Boss Glass');
+  assert.equal(clean.channel('Mississippi'), 'Mississippi');
+  assert.equal(nameCleaner([{ scope: 'channel', media: 'vod', find: 'x', replace: '' }]).channel('xx y'), 'xx y', 'VOD rules skip live TV');
+  assert.equal(nameCleaner([{ scope: 'channel', media: 'all', find: 'x', replace: '' }], 'vod').channel('xx y'), 'y');
 });
 
 test('parseEpisodeName finds the show, season and episode in playlist names', () => {

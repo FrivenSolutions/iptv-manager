@@ -10,7 +10,7 @@ import { Router, HttpError, sendJson, sendText, baseUrl } from './http.js';
 import { checkSession, hashPassword, randomToken } from './auth.js';
 import { Jobs } from './jobs.js';
 import { registerApi } from './api.js';
-import { loadOutput, selectChannels, evaluateCategories } from './filters.js';
+import { loadOutput, selectChannels, evaluateCategories, nameCleaner, checkNameRules, parseNameRules } from './filters.js';
 import { buildM3U, streamUrl, streamExt } from './outputs/m3u.js';
 import { writeEpg, EpgCache } from './outputs/epg.js';
 import { findXcOutput, playerApi } from './outputs/xc.js';
@@ -103,10 +103,12 @@ export function createApp({
       let vod = null;
       if (output?.vod_enabled) {
         vod = {};
+        const clean = nameCleaner(checkNameRules(parseNameRules(output.name_rules)).rules || [], 'vod');
         for (const kind of ['movie', 'series']) {
           const cats = evaluateCategories(db, output, kind);
           vod[kind] = {
             cats,
+            clean,
             included: new Set(cats.filter((c) => c.included).map((c) => c.id)),
             order: new Map(cats.map((c, i) => [c.id, i])),
           };

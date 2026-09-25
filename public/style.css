@@ -350,8 +350,10 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 
 /* --- name cleanup (advanced) */
 .name-rules { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
-.name-rule { display: grid; grid-template-columns: 140px minmax(0, 1.4fr) auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; background: var(--panel-2); }
+.name-rule { display: grid; grid-template-columns: 160px minmax(0, 1.4fr) auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; background: var(--panel-2); }
 .name-rule select { width: auto; }
+.name-targets { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.name-targets select { width: 100%; }
 @media (max-width: 640px) {
   .name-rule { grid-template-columns: minmax(0, 1fr) auto; }
   .name-rule > .meta { display: none; }
@@ -370,3 +372,5 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 .editor-main > .ch-warning, .editor-main > div > .ch-warning { margin-bottom: 16px; }
 .title-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 16px; font-size: 13px; }
 .title-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Provider heading inside a category list with more than one provider. */
+.cat-group { padding: 8px 10px 6px; background: var(--panel-2); border-bottom: 1px solid var(--border); font-size: 13px; }

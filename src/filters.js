@@ -151,6 +151,8 @@ export function guideHider(db, output, cats, t = Math.floor(Date.now() / 1000)) 
 // --- name cleanup (advanced): per-output find/replace on the names players see
 
 export const NAME_SCOPES = ['channel', 'category', 'both'];
+// Where a rule applies: live TV, movies & series, or both. Rules from before VOD are live TV.
+export const NAME_MEDIA = ['live', 'vod', 'all'];
 const MAX_NAME_RULES = 50;
 
 export function parseNameRules(raw) {
@@ -169,9 +171,11 @@ export function checkNameRules(list) {
   const rules = [];
   for (const r of list) {
     const scope = r?.scope ?? 'channel';
+    const media = r?.media ?? 'live';
     const find = typeof r?.find === 'string' ? r.find : '';
     const replace = typeof r?.replace === 'string' ? r.replace : '';
     if (!NAME_SCOPES.includes(scope)) return { error: `Unknown name rule scope: ${scope}` };
+    if (!NAME_MEDIA.includes(media)) return { error: `Unknown name rule target: ${media}` };
     if (!find) return { error: 'Every name cleanup rule needs something to find' };
     if (find.length > 300 || replace.length > 300) return { error: 'Name cleanup rules are limited to 300 characters' };
     try {
@@ -179,26 +183,28 @@ export function checkNameRules(list) {
     } catch (e) {
       return { error: `Not a valid pattern: ${find} (${e.message.split(': ').pop()})` };
     }
-    rules.push({ scope, find, replace });
+    rules.push({ scope, media, find, replace });
   }
   return { rules };
 }
 
 /**
- * Name cleaners for channel and category names. Each rule's pattern is a case-sensitive regular
+ * Name cleaners for item names (channels, or movie and series titles) and category names, for
+ * live TV (media 'live') or movies & series ('vod'). Each rule's pattern is a case-sensitive regular
  * expression and every match is replaced ($1 works). Once any rule applies to a kind of name,
  * leftover runs of spaces are collapsed and the ends trimmed; a name that would end up empty
  * stays as it was.
  */
-export function nameCleaner(rules) {
-  const compiled = rules.map((r) => ({ ...r, re: new RegExp(r.find, 'g') }));
+export function nameCleaner(rules, media = 'live') {
+  const compiled = rules.filter((r) => (r.media || 'live') === media || r.media === 'all')
+    .map((r) => ({ ...r, re: new RegExp(r.find, 'g') }));
   const make = (scope) => {
     const list = compiled.filter((r) => r.scope === scope || r.scope === 'both');
     if (!list.length) return (name) => name;
     return (name) => {
       let out = name;
       for (const r of list) out = out.replace(r.re, r.replace);
-      return out.replace(/s{2,}/g, ' ').trim() || name;
+      return out.replace(/\s{2,}/g, ' ').trim() || name;
     };
   };
   return { channel: make('channel'), category: make('category') };

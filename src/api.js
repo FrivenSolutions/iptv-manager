@@ -768,6 +768,7 @@ export function registerApi(router, ctx) {
     const checked = checkNameRules((await readJson(req)).rules);
     if (checked.error) throw new HttpError(400, checked.error);
     const clean = nameCleaner(checked.rules);
+    const vodClean = nameCleaner(checked.rules, 'vod');
     const cats = evaluateCategories(db, o).filter((c) => c.included);
     const SAMPLES = 8;
     const tally = (names, fn) => {
@@ -787,9 +788,25 @@ export function registerApi(router, ctx) {
         cats.map((c) => c.id),
       ).map((r) => r.name)
       : [];
+    // Movies and series, when the output includes them: titles and categories currently in it.
+    let vod = null;
+    if (o.vod_enabled) {
+      const vodCats = [...evaluateCategories(db, o, 'movie'), ...evaluateCategories(db, o, 'series')].filter((c) => c.included);
+      const titles = vodCats.length
+        ? db.all(
+          `SELECT name FROM vod_items WHERE active = 1 AND category_id IN (${vodCats.map(() => '?').join(',')}) ORDER BY category_id, sort`,
+          vodCats.map((c) => c.id),
+        ).map((r) => r.name)
+        : [];
+      vod = {
+        titles: tally(titles, vodClean.channel),
+        categories: tally(vodCats.filter((c) => !c.custom_name).map((c) => c.name), vodClean.category),
+      };
+    }
     sendJson(res, 200, {
       channels: tally(chNames, clean.channel),
       categories: tally(cats.filter((c) => !c.custom_name).map((c) => c.name), clean.category),
+      vod,
     });
   });
 
