@@ -15,6 +15,7 @@ import { buildM3U, streamUrl, streamExt } from './outputs/m3u.js';
 import { writeEpg, EpgCache } from './outputs/epg.js';
 import { findXcOutput, playerApi } from './outputs/xc.js';
 import { serveChannel, serveSegment } from './stream.js';
+import { Streams } from './streams.js';
 import { HDHR_API } from './hdhomerun.js';
 import { currentVersion } from './version.js';
 import { UpdateChecker, installType, DEFAULT_UPDATE_REPO } from './updates.js';
@@ -103,6 +104,7 @@ export function createApp({
   ctx.webUpdate = new WebUpdater({ dataDir, pathUnit: webUpdatePathUnit });
   ctx.alerts = new Alerts(ctx);
   ctx.autoBackup = new AutoBackup(ctx, { firstDelayMs: autoBackupDelayMs });
+  ctx.streams = new Streams(ctx);
   ctx.updates = new UpdateChecker({
     db, commit: ctx.build.commit, apiBase: updateApiBase, repo: updateRepo, delayMs: updateCheckDelayMs, log,
   });
@@ -269,6 +271,7 @@ export function createApp({
       ctx.updates.stop();
       ctx.alerts.stop();
       ctx.autoBackup.stop();
+      ctx.streams.stop();
       await new Promise((r) => {
         server.close(() => r());
         server.closeAllConnections();

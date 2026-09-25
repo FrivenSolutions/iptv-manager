@@ -9,7 +9,7 @@ export const FORMAT = 'iptv-manager-settings';
 export const FORMAT_VERSION = 1;
 
 const SOURCE_FIELDS = ['name', 'type', 'url', 'epg_urls', 'xc_host', 'xc_username', 'xc_password', 'xc_stream_ext',
-  'hdhr_host', 'user_agent', 'live_only', 'refresh_minutes', 'enabled', 'sort'];
+  'hdhr_host', 'user_agent', 'live_only', 'refresh_minutes', 'enabled', 'max_streams', 'sort'];
 const OUTPUT_FIELDS = ['name', 'token', 'stream_mode', 'include_all', 'number_start', 'epg_days', 'xc_enabled',
   'xc_username', 'xc_password'];
 
@@ -187,11 +187,12 @@ export function importSettings(db, data) {
     data.sources.forEach((s, i) => {
       const r = db.get(
         `INSERT INTO sources (name, type, url, epg_urls, xc_host, xc_username, xc_password, xc_stream_ext, hdhr_host, user_agent,
-                              live_only, refresh_minutes, enabled, sort, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+                              live_only, refresh_minutes, enabled, max_streams, sort, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         [String(s.name || 'Source'), s.type, s.url ?? null, String(s.epg_urls || ''), s.xc_host ?? null, s.xc_username ?? null,
           s.xc_password ?? null, s.xc_stream_ext === 'm3u8' ? 'm3u8' : 'ts', s.hdhr_host ?? null, String(s.user_agent || ''), s.live_only !== false,
-          Number.isFinite(Number(s.refresh_minutes)) ? Number(s.refresh_minutes) : 720, s.enabled !== false, s.sort ?? i, t],
+          Number.isFinite(Number(s.refresh_minutes)) ? Number(s.refresh_minutes) : 720, s.enabled !== false,
+          Number.isInteger(s.max_streams) && s.max_streams >= 0 ? s.max_streams : null, s.sort ?? i, t],
       );
       ids.set(s.ref, r.id);
       summary.sources++;

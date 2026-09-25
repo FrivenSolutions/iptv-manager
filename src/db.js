@@ -226,6 +226,11 @@ const MIGRATIONS = [
   -- Per-output name cleanup (find/replace on channel and category names), as a JSON list.
   ALTER TABLE outputs ADD COLUMN name_rules TEXT NOT NULL DEFAULT '[]';
   `,
+  `
+  -- Channels a source may have open at once through proxy outputs. NULL = automatic (the XC
+  -- account's connection limit or the HDHomeRun's tuner count), 0 = no limit.
+  ALTER TABLE sources ADD COLUMN max_streams INTEGER;
+  `,
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.

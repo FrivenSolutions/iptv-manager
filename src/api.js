@@ -15,6 +15,7 @@ import { JELLYFIN_CATEGORIES, parseJellyfin } from './outputs/epg.js';
 import { exportSettings, importSettings } from './backup.js';
 import { computeAlerts } from './alerts.js';
 import { KEEP as AUTO_BACKUP_KEEP } from './autobackup.js';
+import { autoLimit } from './streams.js';
 import { now } from './db.js';
 
 const UPLOAD_LIMIT = 1024 * 1024 * 1024;
@@ -65,6 +66,7 @@ function sourceView(ctx, s) {
     job: ctx.jobs.status(s.id),
     next_refresh_at: ctx.jobs.nextDue(s),
     counts,
+    streams: { open: ctx.streams.open(s.id).size, limit: ctx.streams.limitFor(s.id), auto: autoLimit(s) },
   };
 }
 
@@ -85,6 +87,9 @@ function sourceFields(body, existing) {
     live_only: body.live_only === undefined ? 1 : bool(body.live_only),
     refresh_minutes: int(body.refresh_minutes, 720, 0, 60 * 24 * 30),
     enabled: body.enabled === undefined ? 1 : bool(body.enabled),
+    // Blank = automatic, 0 = no limit.
+    max_streams: body.max_streams === undefined ? existing?.max_streams ?? null
+      : body.max_streams === '' || body.max_streams == null ? null : int(body.max_streams, null, 0, 1000),
   };
   if (type === 'xc') {
     if (!f.xc_host || !f.xc_username || !f.xc_password) throw new HttpError(400, 'Xtream Codes sources need a host, username and password');
@@ -398,9 +403,9 @@ export function registerApi(router, ctx) {
     const f = sourceFields(await readJson(req));
     const r = db.get(
       `INSERT INTO sources (name, type, url, epg_urls, xc_host, xc_username, xc_password, xc_stream_ext, hdhr_host, user_agent,
-                            live_only, refresh_minutes, enabled, sort, created_at)
+                            live_only, refresh_minutes, enabled, max_streams, sort, created_at)
        VALUES ($name, $type, $url, $epg_urls, $xc_host, $xc_username, $xc_password, $xc_stream_ext, $hdhr_host, $user_agent,
-               $live_only, $refresh_minutes, $enabled, (SELECT COALESCE(MAX(sort), 0) + 1 FROM sources), $created_at)
+               $live_only, $refresh_minutes, $enabled, $max_streams, (SELECT COALESCE(MAX(sort), 0) + 1 FROM sources), $created_at)
        RETURNING id`,
       { ...f, created_at: now() },
     );
@@ -415,7 +420,7 @@ export function registerApi(router, ctx) {
     db.run(
       `UPDATE sources SET name = $name, url = $url, epg_urls = $epg_urls, xc_host = $xc_host, xc_username = $xc_username,
          xc_password = $xc_password, xc_stream_ext = $xc_stream_ext, hdhr_host = $hdhr_host, user_agent = $user_agent, live_only = $live_only,
-         refresh_minutes = $refresh_minutes, enabled = $enabled WHERE id = $id`,
+         refresh_minutes = $refresh_minutes, enabled = $enabled, max_streams = $max_streams WHERE id = $id`,
       { ...f, id: existing.id },
     );
     const refetch = ['url', 'epg_urls', 'xc_host', 'xc_username', 'xc_password', 'xc_stream_ext', 'hdhr_host', 'user_agent', 'live_only']

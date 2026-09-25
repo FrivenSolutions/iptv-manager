@@ -523,6 +523,13 @@ function outputCard(o) {
 
 const TYPE_LABELS = { m3u: 'M3U', xc: 'Xtream Codes', hdhr: 'HDHomeRun' };
 
+// "1 of 2 streams in use" (proxy outputs only), or null when nothing is playing and there's no limit.
+function streamsText(s) {
+  const { open = 0, limit = 0 } = s.streams || {};
+  if (!open) return null;
+  return `${open}${limit ? ` of ${limit}` : ''} stream${(limit || open) === 1 ? '' : 's'} in use`;
+}
+
 function stat(v, label) {
   return h('div', { class: 'stat' }, h('b', null, v ?? 0), h('span', null, label));
 }
@@ -551,7 +558,8 @@ async function sourcesView(main) {
 function sourceRow(s, update) {
   return h('tr', null,
     h('td', null, h('a', { href: `#/sources/${s.id}`, class: 'strong' }, s.name), h('div', { class: 'meta' }, TYPE_LABELS[s.type])),
-    h('td', null, statusBadge(s), s.last_error ? h('div', { class: 'meta clip', title: s.last_error }, s.last_error) : null),
+    h('td', null, statusBadge(s), s.last_error ? h('div', { class: 'meta clip', title: s.last_error }, s.last_error) : null,
+      streamsText(s) ? h('div', { class: 'meta' }, `▶ ${streamsText(s)}`) : null),
     h('td', { class: 'num' }, s.counts.channels),
     h('td', { class: 'num' }, s.counts.categories),
     h('td', { class: 'num' }, s.counts.epg_matched),
@@ -589,6 +597,10 @@ function sourceForm(src, onSaved = route) {
     hours: h('input', { type: 'number', min: 0, step: 0.5, value: src ? src.refresh_minutes / 60 : 12 }),
     live_only: h('input', { type: 'checkbox', checked: src ? src.live_only : true }),
     enabled: h('input', { type: 'checkbox', checked: src ? src.enabled : true }),
+    max_streams: h('input', {
+      type: 'number', min: 0, value: src?.max_streams ?? '',
+      placeholder: src?.streams?.auto ? `Automatic: ${src.streams.auto}` : 'Automatic',
+    }),
   };
   f.epg_urls.value = v(src?.epg_urls);
 
@@ -641,6 +653,10 @@ function sourceForm(src, onSaved = route) {
       h('summary', null, 'Advanced'),
       field('Refresh every (hours)', f.hours, '0 = only when you click Refresh.'),
       field('User agent', f.user_agent, 'Sent to the provider for playlists, guides and proxied streams.'),
+      field('Streams at once', f.max_streams,
+        'For outputs set to Proxy: how many channels from this source can play at the same time. People watching the same channel share one ' +
+        'stream. Blank uses the Xtream Codes account\'s connection limit or the HDHomeRun\'s tuner count; 0 means no limit. ' +
+        'Direct and Redirect outputs can\'t be limited: players connect to the provider themselves.'),
       h('label', { class: 'check' }, f.enabled, ' Enabled')),
     h('button', { type: 'submit', hidden: true }));
 
@@ -650,6 +666,7 @@ function sourceForm(src, onSaved = route) {
       epg_urls: f.epg_urls.value, xc_host: f.xc_host.value, xc_username: f.xc_username.value, xc_password: f.xc_password.value,
       xc_stream_ext: f.xc_stream_ext.value, hdhr_host: f.hdhr_host.value, user_agent: f.user_agent.value,
       refresh_minutes: Math.round(Number(f.hours.value || 0) * 60), live_only: f.live_only.checked, enabled: f.enabled.checked,
+      max_streams: f.max_streams.value,
     };
     if (type === 'm3u' && !payload.url && !f.file.files[0]) return toast('Enter a playlist URL or choose a file', 'error');
     const saved = await attempt(() => (isNew ? api('POST', '/api/sources', payload) : api('PUT', `/api/sources/${src.id}`, payload)));
@@ -746,6 +763,8 @@ async function sourceDetail(main, id) {
         src.account_info?.max_connections ? stat(src.account_info.max_connections, 'max connections') : null,
         src.account_info?.model ? stat(src.account_info.model, 'model') : null,
         src.account_info?.tuners ? stat(src.account_info.tuners, 'tuners') : null,
+        src.streams?.limit || src.streams?.open
+          ? stat(`${src.streams.open}${src.streams.limit ? ` of ${src.streams.limit}` : ''}`, 'streams in use') : null,
         st.epg?.hdhr ? h('div', { class: 'stat' }, h('span', null, `Guide: ${st.epg.hdhr}`)) : null),
       src.last_error ? h('div', { class: `card ${src.last_status === 'error' ? 'error-card' : 'warn-card'}` }, src.last_error) : null);
   };

@@ -33,12 +33,20 @@ export function rewriteHls(text, baseUrl, map) {
     .join('\n');
 }
 
-async function proxy(ctx, res, url, ua, output, channelId) {
+function busy(res, limit) {
+  res.writeHead(503, { 'content-type': 'text/plain; charset=utf-8', 'retry-after': '10', 'cache-control': 'no-cache' })
+    .end(`All ${limit} stream${limit === 1 ? '' : 's'} for this source are in use. Stop watching another channel from it and try again.`);
+}
+
+const hlsHeaders = { 'content-type': 'application/vnd.apple.mpegurl', 'cache-control': 'no-cache' };
+
+/** Relay one request of an HLS channel (a segment, or a variant playlist that is rewritten too). */
+async function relay(ctx, res, url, output, ch) {
   const ac = new AbortController();
   res.on('close', () => ac.abort());
   let up;
   try {
-    up = await fetch(url, { headers: { 'user-agent': ua || DEFAULT_UA }, signal: ac.signal, redirect: 'follow' });
+    up = await fetch(url, { headers: { 'user-agent': ch.user_agent || DEFAULT_UA }, signal: ac.signal, redirect: 'follow' });
   } catch {
     if (!res.headersSent) res.writeHead(502).end();
     return;
@@ -50,8 +58,8 @@ async function proxy(ctx, res, url, ua, output, channelId) {
   }
   const ct = up.headers.get('content-type') || '';
   if (/mpegurl/i.test(ct) || /\.m3u8$/i.test(new URL(up.url).pathname)) {
-    const body = rewriteHls(await up.text(), up.url, (abs) => segmentUrl(ctx.secret, output, channelId, abs));
-    res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl', 'cache-control': 'no-cache' }).end(body);
+    const body = rewriteHls(await up.text(), up.url, (abs) => segmentUrl(ctx.secret, output, ch.id, abs));
+    res.writeHead(200, hlsHeaders).end(body);
     return;
   }
   const headers = { 'content-type': ct || 'video/mp2t', 'cache-control': 'no-cache' };
@@ -65,10 +73,32 @@ async function proxy(ctx, res, url, ua, output, channelId) {
   }
 }
 
+/** A channel through this server: HLS playlists are rewritten, TS streams shared between viewers. */
+async function proxy(ctx, res, url, output, ch) {
+  const admit = ctx.streams.admit(ch);
+  if (!admit.ok) return busy(res, admit.limit);
+  const hub = ctx.streams.hub(ch, url);
+  const r = await hub.result;
+  if (res.destroyed || res.writableEnded) {
+    // Gave up while it was opening. Unless someone else joined, don't hold a slot open.
+    setImmediate(() => { if (!hub.clients.size) hub.close(); });
+    return;
+  }
+  if (r.status) return res.writeHead(r.status).end();
+  if (r.hls) {
+    ctx.streams.touchHls(ch);
+    return res.writeHead(200, hlsHeaders).end(rewriteHls(r.hls, r.url, (abs) => segmentUrl(ctx.secret, output, ch.id, abs)));
+  }
+  // Live TS has no length; a late joiner starts wherever the shared stream is.
+  res.writeHead(200, { 'content-type': r.ts, 'cache-control': 'no-cache' });
+  if (hub.closed) res.end();
+  else hub.add(res);
+}
+
 /** Serve a channel according to the output's stream mode. */
 export async function serveChannel(ctx, res, output, ch, ext) {
   const url = upstreamUrl(ch, ext);
-  if (output.stream_mode === 'proxy') return proxy(ctx, res, url, ch.user_agent, output, ch.id);
+  if (output.stream_mode === 'proxy') return proxy(ctx, res, url, output, ch);
   res.writeHead(302, { location: url, 'cache-control': 'no-cache' }).end();
 }
 
@@ -84,5 +114,8 @@ export async function serveSegment(ctx, res, output, ch, u, sig) {
     res.writeHead(403).end();
     return;
   }
-  return proxy(ctx, res, abs, ch.user_agent, output, ch.id);
+  const admit = ctx.streams.admit(ch);
+  if (!admit.ok) return busy(res, admit.limit);
+  ctx.streams.touchHls(ch);
+  return relay(ctx, res, abs, output, ch);
 }

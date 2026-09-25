@@ -40,6 +40,8 @@ const eventGuide = [];
 // The fake XC account's expiry, and what the fake ntfy/webhook receiver got.
 const xcAccount = { exp: 1900000000 };
 const notified = [];
+// Continuous live streams (XC stream ids 950-959): upstream connections open per id, and made.
+const live = { open: new Map(), requests: 0 };
 
 const xmltvTime = (d) => d.toISOString().replace(/[-:T]/g, '').slice(0, 14) + ' +0000';
 function guide(ids) {
@@ -103,6 +105,18 @@ function startUpstream() {
         `<channel id="${id}"><display-name>${id}</display-name>${icon ? `<icon src="${icon}"/>` : ''}</channel>\n` +
         (channelOnly ? '' : `<programme start="${xmltvTime(new Date(now + fromH * 3600_000))}" stop="${xmltvTime(new Date(now + toH * 3600_000))}" channel="${id}"><title>${title}</title></programme>\n`)).join('');
       return res.end(guide([['cnn.us', 'CNN'], ['sky.uk', 'Sky Sports'], ['foxnews.us', 'Fox News']]).replace('</tv>', `${events}</tv>`));
+    }
+    const liveId = /^\/live\/xu\/xp\/(95\d)\.ts$/.exec(u.pathname)?.[1];
+    if (liveId) {
+      live.requests++;
+      live.open.set(liveId, (live.open.get(liveId) || 0) + 1);
+      res.writeHead(200, { 'content-type': 'video/mp2t' });
+      const timer = setInterval(() => res.write(`chunk-${liveId};`), 20);
+      res.on('close', () => {
+        clearInterval(timer);
+        live.open.set(liveId, live.open.get(liveId) - 1);
+      });
+      return;
     }
     if (u.pathname.startsWith('/live/xu/xp/')) {
       if (req.headers['user-agent'] !== 'TestAgent/1') {
@@ -1047,6 +1061,104 @@ test('name cleanup: per-output find/replace on channel and category names, in ev
 
   await api('PUT', `/api/outputs/${o.id}`, { name_rules: [] });
   assert.deepEqual((await m3u()).map((x) => x[2]).sort(), ['US: CNN HD', 'US: Fox News']);
+  await api('DELETE', `/api/outputs/${o.id}`);
+});
+
+test('proxy mode: viewers of a channel share one upstream stream; a source is capped at its connection limit', async () => {
+  xcCats.push({ category_id: '33', category_name: 'US| LIVE' });
+  xcStreams.push(...[950, 951, 952].map((id, i) => ({ num: 95 + i, name: `Live ${i + 1}`, stream_id: id, stream_icon: '', epg_channel_id: '', category_id: '33' })));
+  await api('POST', `/api/sources/${xcId}/refresh`);
+  await app.ctx.jobs.idle();
+  const o = (await api('POST', '/api/outputs', { name: 'Live' })).data;
+  await api('PUT', `/api/outputs/${o.id}`, { stream_mode: 'proxy', source_ids: [xcId], rules: [{ action: 'include', op: 'equals', value: 'us| live' }] });
+  const urls = (await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text()).split('\n').filter((l) => l.startsWith('http'));
+  assert.equal(urls.length, 3);
+  const until = async (cond, what) => {
+    for (let i = 0; i < 100 && !cond(); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(cond(), what);
+  };
+  // A viewer: the response, a reader that has received data, and a way to hang up.
+  const watch = async (url) => {
+    const ac = new AbortController();
+    const r = await fetch(url, { signal: ac.signal });
+    if (r.status !== 200) return { status: r.status, text: await r.text() };
+    const reader = r.body.getReader();
+    const first = new TextDecoder().decode((await reader.read()).value);
+    return { status: 200, first, stop: () => { ac.abort(); reader.cancel().catch(() => {}); } };
+  };
+  const streams = async () => (await api('GET', `/api/sources/${xcId}`)).data.streams;
+  // The source form sends every field; a blank password keeps the stored one.
+  const setMax = async (id, max) => {
+    const src = (await api('GET', `/api/sources/${id}`)).data;
+    assert.equal((await api('PUT', `/api/sources/${id}`, { ...src, max_streams: max })).status, 200);
+  };
+  const before = live.requests;
+
+  const a = await watch(urls[0]);
+  const b = await watch(urls[0]);
+  assert.deepEqual([a.status, b.status], [200, 200]);
+  assert.match(a.first + b.first, /chunk-950;/);
+  assert.equal(live.requests - before, 1, 'two viewers, one upstream connection');
+  assert.deepEqual(await streams(), { open: 1, limit: 2, auto: 2 }, 'the limit comes from the XC account (max_connections 2)');
+
+  const c = await watch(urls[1]);
+  assert.equal(c.status, 200);
+  const d = await watch(urls[2]);
+  assert.equal(d.status, 503, 'a third channel is over the limit');
+  assert.match(d.text, /All 2 streams for this source are in use/);
+  const b2 = await watch(urls[0]);
+  assert.equal(b2.status, 200, 'more viewers of a channel already open are always let in');
+  b2.stop();
+
+  // The upstream stays open while anyone watches, and closes with the last viewer.
+  a.stop();
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(live.open.get('950'), 1);
+  b.stop();
+  await until(() => live.open.get('950') === 0, 'upstream closed after the last viewer left');
+  const e = await watch(urls[2]);
+  assert.equal(e.status, 200, 'the freed slot can be used');
+  e.stop();
+  c.stop();
+  await until(() => live.open.get('951') === 0 && live.open.get('952') === 0, 'all upstreams closed');
+
+  // Set by hand: 0 = no limit, a number overrides the account, blank goes back to automatic.
+  await setMax(xcId, 0);
+  const all = await Promise.all(urls.map(watch));
+  assert.deepEqual(all.map((x) => x.status), [200, 200, 200]);
+  assert.deepEqual(await streams(), { open: 3, limit: 0, auto: 2 });
+  all.forEach((x) => x.stop());
+  await until(() => [...live.open.values()].every((n) => n === 0), 'all upstreams closed');
+  await setMax(xcId, 1);
+  const one = await watch(urls[0]);
+  assert.equal((await watch(urls[1])).status, 503);
+  one.stop();
+  const file = (await api('GET', '/api/export')).data;
+  assert.equal(file.sources.find((x) => x.ref === xcId).max_streams, 1);
+  await setMax(xcId, '');
+  assert.equal((await api('GET', `/api/sources/${xcId}`)).data.max_streams, null);
+
+  // HLS channels count while their playlist or segments are being fetched.
+  await setMax(m3uId, 1);
+  const o2 = (await api('POST', '/api/outputs', { name: 'HLS' })).data;
+  await api('PUT', `/api/outputs/${o2.id}`, { stream_mode: 'proxy', source_ids: [m3uId], rules: [{ action: 'include', op: 'equals', value: 'uk| general' }] });
+  const lines = (await (await fetch(`${base}/o/${o2.token}/playlist.m3u`)).text()).split('\n').filter((l) => l.startsWith('http'));
+  const bbc = lines.find((l) => l.endsWith('.m3u8'));
+  const other = lines.find((l) => l.endsWith('.ts'));
+  assert.ok(bbc && other, lines.join('\n'));
+  assert.equal((await fetch(bbc)).status, 200);
+  assert.equal((await fetch(other)).status, 503, 'the HLS channel holds the only slot');
+  assert.equal((await fetch(bbc)).status, 200);
+  await api('DELETE', `/api/outputs/${o2.id}`);
+  await setMax(m3uId, '');
+  app.ctx.streams.hls.clear();
+
+  // Redirect mode can't be counted: nothing is refused.
+  await setMax(xcId, 1);
+  await api('PUT', `/api/outputs/${o.id}`, { stream_mode: 'redirect' });
+  const r = await Promise.all(urls.map((u) => fetch(u, { redirect: 'manual' })));
+  assert.deepEqual(r.map((x) => x.status), [302, 302, 302]);
+  await setMax(xcId, '');
   await api('DELETE', `/api/outputs/${o.id}`);
 });
 
