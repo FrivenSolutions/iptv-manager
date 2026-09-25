@@ -229,6 +229,12 @@ when they are built, from the `.git` folder in the build context. An image built
    - **Xtream Codes:** the server is `http://<host>:8080`, with the username and password
      shown on the output. Enable this under the output's Settings.
 
+   **Sharing an output.** Under **Connect your apps → Other logins**, **+ Add login** gives
+   someone their own username and password for the same output. Each login has its own playlist
+   and guide URLs, and shows when it was last used. You can switch one off, or **Remove** it, and
+   every other login keeps working. The output's token URLs are shared by everyone who has them,
+   so give people a login rather than those.
+
 ### How filtering decides
 
 For each category in an output:
@@ -460,6 +466,8 @@ IPTV Manager is built for a home network.
   lineup. In Direct mode, the playlist also contains your provider's own stream URLs, which often
   embed your provider credentials. If a URL leaks, use **Regenerate URLs** on the output. That
   replaces the URL token only, so also change the output's Xtream Codes password if it has one.
+  To share an output, give each person their own login (**Other logins**), so you can remove one
+  without changing anything for anyone else.
 - **The admin UI** needs a password (at least 8 characters). Changing it signs out every other
   session. If you forget it, start the app once with `ADMIN_PASSWORD` set.
 - **Settings exports** can contain provider passwords, if you tick that option. Store them like

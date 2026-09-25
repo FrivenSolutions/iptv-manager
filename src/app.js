@@ -220,10 +220,10 @@ export function createApp({
     const id = findXcOutput(db, username, password);
     return id ? ctx.selection(id) : null;
   };
-  const xcUrl = (req, sel) => (ch) => {
+  // Stream links carry the credentials of the login that asked for the playlist, never another's.
+  const xcUrl = (req, sel, username, password) => (ch) => {
     if (sel.output.stream_mode === 'direct') return ch.url;
-    const o = sel.output;
-    return `${base(req)}/live/${encodeURIComponent(o.xc_username)}/${encodeURIComponent(o.xc_password)}/${ch.id}.${streamExt(ch.url)}`;
+    return `${base(req)}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${ch.id}.${streamExt(ch.url)}`;
   };
 
   const xcApi = async (req, res, { query }) => {
@@ -236,7 +236,7 @@ export function createApp({
   router.get('/get.php', (req, res, { query }) => {
     const sel = xcAuth(query.get('username'), query.get('password'));
     if (!sel) throw new HttpError(401, 'Invalid credentials');
-    sendPlaylist(req, res, sel, xcUrl(req, sel));
+    sendPlaylist(req, res, sel, xcUrl(req, sel, query.get('username'), query.get('password')));
   });
   router.get('/xmltv.php', (req, res, { query }) => {
     const sel = xcAuth(query.get('username'), query.get('password'));

@@ -1468,6 +1468,51 @@ test('duplicating an output copies everything but its URLs and Xtream Codes logi
   await api('DELETE', `/api/outputs/${copy.id}`);
 });
 
+test('extra Xtream Codes logins share an output, and come and go without touching the others', async () => {
+  const pa = (u, p, action = '') => fetch(`${base}/player_api.php?username=${u}&password=${p}${action ? `&action=${action}` : ''}`).then((r) => r.json());
+  let r = await api('POST', `/api/outputs/${outputId}/logins`, { name: 'Mom', username: 'mom', password: 'm0m' });
+  assert.equal(r.status, 201);
+  const mom = r.data;
+  // Works like the output's own login, and reports itself.
+  const info = await pa('mom', 'm0m');
+  assert.deepEqual([info.user_info.auth, info.user_info.username, info.user_info.password], [1, 'mom', 'm0m']);
+  const mine = await pa('family', 'pw123', 'get_live_streams');
+  assert.deepEqual((await pa('mom', 'm0m', 'get_live_streams')).map((x) => x.stream_id), mine.map((x) => x.stream_id));
+  // Playlists carry the credentials of whoever asked, never the output's own.
+  const playlist = await (await fetch(`${base}/get.php?username=mom&password=m0m&type=m3u_plus`)).text();
+  assert.match(playlist, /\/live\/mom\/m0m\/\d+\.ts/);
+  assert.ok(!playlist.includes('pw123'), 'the main password is not handed out');
+  const stream = playlist.split('\n').find((l) => l.includes('/live/mom/m0m/'));
+  assert.equal((await fetch(stream, { redirect: 'manual' })).status < 500, true);
+  assert.equal((await pa('mom', 'wrong')).user_info.auth, 0);
+  assert.ok(app.ctx.db.get('SELECT last_used_at FROM output_xc_logins WHERE id = ?', [mom.id]).last_used_at > 0, 'last used is recorded');
+  // Usernames are unique across all logins.
+  assert.equal((await api('POST', `/api/outputs/${outputId}/logins`, { username: 'family', password: 'x' })).status, 400);
+  assert.equal((await api('POST', `/api/outputs/${outputId}/logins`, { username: 'mom', password: 'x' })).status, 400);
+  assert.equal((await api('POST', `/api/outputs/${outputId}/logins`, { username: 'a b', password: 'x' })).status, 400);
+  const other = (await api('POST', '/api/outputs', { name: 'Other' })).data;
+  assert.equal((await api('PUT', `/api/outputs/${other.id}`, { xc_enabled: true, xc_username: 'mom', xc_password: 'x' })).status, 400);
+  await api('DELETE', `/api/outputs/${other.id}`);
+  // Listed with the output, in backups (password only with secrets), not copied by Duplicate.
+  assert.deepEqual((await api('GET', `/api/outputs/${outputId}`)).data.xc_logins.map((l) => [l.name, l.username, l.enabled]), [['Mom', 'mom', true]]);
+  const file = (await api('GET', '/api/export')).data;
+  assert.deepEqual(file.outputs.find((x) => x.token === token).xc_logins, [{ name: 'Mom', username: 'mom', password: 'm0m', enabled: true }]);
+  assert.equal((await api('GET', '/api/export?secrets=0')).data.outputs.find((x) => x.token === token).xc_logins[0].password, null);
+  const dupe = (await api('POST', `/api/outputs/${outputId}/clone`)).data;
+  assert.deepEqual(dupe.xc_logins, []);
+  await api('DELETE', `/api/outputs/${dupe.id}`);
+  // Paused, then removed: that login stops, the output's own keeps working.
+  await api('PUT', `/api/outputs/${outputId}/logins/${mom.id}`, { enabled: false });
+  assert.equal((await pa('mom', 'm0m')).user_info.auth, 0);
+  assert.equal((await pa('family', 'pw123')).user_info.auth, 1);
+  await api('PUT', `/api/outputs/${outputId}/logins/${mom.id}`, { enabled: true });
+  assert.equal((await pa('mom', 'm0m')).user_info.auth, 1);
+  assert.equal((await api('DELETE', `/api/outputs/${outputId}/logins/${mom.id}`)).status, 200);
+  assert.equal((await pa('mom', 'm0m')).user_info.auth, 0);
+  assert.equal((await pa('family', 'pw123')).user_info.auth, 1);
+  assert.equal((await api('DELETE', `/api/outputs/${outputId}/logins/${mom.id}`)).status, 404);
+});
+
 test('rule order is saved and returned as given, for category and channel rules', async () => {
   const o = (await api('POST', '/api/outputs', { name: 'Order' })).data;
   const rules = [

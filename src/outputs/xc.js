@@ -19,10 +19,24 @@ function safeEqual(a, b) {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
+/**
+ * The output an Xtream Codes login belongs to: the output's own login, or one of its extra logins
+ * (switched on). Only while the output publishes its Xtream Codes login at all.
+ */
 export function findXcOutput(db, username, password) {
   if (!username) return null;
   const row = db.get('SELECT id, xc_password FROM outputs WHERE xc_enabled = 1 AND xc_username = ?', [String(username)]);
-  return row && safeEqual(row.xc_password, password) ? row.id : null;
+  if (row) return safeEqual(row.xc_password, password) ? row.id : null;
+  const login = db.get(
+    `SELECT l.id, l.output_id, l.password, l.last_used_at FROM output_xc_logins l JOIN outputs o ON o.id = l.output_id
+      WHERE o.xc_enabled = 1 AND l.enabled = 1 AND l.username = ?`,
+    [String(username)],
+  );
+  if (!login || !safeEqual(login.password, password)) return null;
+  // "Last used", to see whether a shared login is still in use (written at most once a minute).
+  const t = now();
+  if (!login.last_used_at || login.last_used_at < t - 60) db.run('UPDATE output_xc_logins SET last_used_at = ? WHERE id = ?', [t, login.id]);
+  return login.output_id;
 }
 
 export function userInfo(output, base) {
@@ -115,7 +129,7 @@ export async function playerApi(db, output, sel, base, params, vod = null) {
   const action = params.get('action') || '';
   switch (action) {
     case '':
-      return userInfo(output, base);
+      return userInfo({ ...output, xc_username: params.get('username'), xc_password: params.get('password') }, base);
     case 'get_live_categories':
       return categoriesOf(sel);
     case 'get_live_streams':

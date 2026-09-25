@@ -108,6 +108,9 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
         const c = chRef.get(r.channel_id);
         return { source: c.source_id, key: c.key, state: r.state };
       }),
+      // Extra Xtream Codes logins; like the output's own, passwords only travel with secrets.
+      xc_logins: db.all('SELECT name, username, password, enabled FROM output_xc_logins WHERE output_id = ? ORDER BY id', [o.id])
+        .map((l) => ({ name: l.name, username: l.username, password: secrets ? l.password : null, enabled: !!l.enabled })),
       title_overrides: vodOverrides.filter((r) => r.output_id === o.id && vodRef.has(r.item_id)).map((r) => {
         const v = vodRef.get(r.item_id);
         return { source: v.source_id, kind: v.kind, key: v.key, state: r.state };
@@ -144,9 +147,9 @@ function validate(data) {
   for (const o of data.outputs) {
     check(typeof o.token === 'string' && o.token && !tokens.has(o.token), `output "${o.name}" has a missing or duplicate token`);
     tokens.add(o.token);
-    if (o.xc_username) {
-      check(!users.has(o.xc_username), `Xtream Codes username "${o.xc_username}" is used twice`);
-      users.add(o.xc_username);
+    for (const u of [o.xc_username, ...(o.xc_logins || []).map((l) => l?.username)].filter(Boolean)) {
+      check(typeof u === 'string' && !users.has(u), `Xtream Codes username "${u}" is used twice`);
+      users.add(u);
     }
     check(['direct', 'redirect', 'proxy'].includes(o.stream_mode), `output "${o.name}" has an unknown stream mode`);
     check((o.rules || []).every(rule) && (o.channel_rules || []).every(rule), `output "${o.name}" has an invalid rule`);
@@ -299,6 +302,13 @@ export function importSettings(db, data) {
         }
         db.run('INSERT OR REPLACE INTO output_channel_overrides (output_id, channel_id, state) VALUES (?, ?, ?)', [
           r.id, id, x.state === 'include' ? 'include' : 'exclude',
+        ]);
+      }
+      // Logins without a password (an export without secrets) can't be restored.
+      for (const l of o.xc_logins || []) {
+        if (!l.username || !l.password) continue;
+        db.run('INSERT INTO output_xc_logins (output_id, name, username, password, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?)', [
+          r.id, String(l.name || ''), String(l.username), String(l.password), l.enabled !== false, t,
         ]);
       }
       for (const x of o.title_overrides || []) {

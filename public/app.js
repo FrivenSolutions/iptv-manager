@@ -1489,6 +1489,7 @@ async function outputEditor(main, id) {
       o.xc_enabled ? h('div', { class: 'xc-box' },
         h('h3', null, 'Xtream Codes login'),
         copyField('Server', o.urls.xc_server), h('div', { class: 'two' }, copyField('Username', o.xc_username), copyField('Password', o.xc_password))) : null,
+      o.xc_enabled ? loginsBox() : null,
       h('div', { class: 'row' },
         h('a', { class: 'btn small', href: o.urls.m3u, target: '_blank', rel: 'noopener' }, 'Open playlist'),
         h('button', {
@@ -1519,6 +1520,67 @@ async function outputEditor(main, id) {
           },
         }, 'Delete output')));
   };
+  // Other people's logins to this output: each with its own username and password, paused or
+  // removed on its own. Saved right away (not with the output's Save).
+  const loginsBox = () => {
+    const logins = o.xc_logins || [];
+    const randomPassword = () => Math.random().toString(36).slice(2, 10);
+    const reload = async () => {
+      o = { ...o, ...(await api('GET', `/api/outputs/${id}`)) };
+      drawUrls();
+    };
+    const playlistUrl = (l) => `${o.urls.xc_server}/get.php?username=${encodeURIComponent(l.username)}&password=${encodeURIComponent(l.password)}&type=m3u_plus&output=ts`;
+    const guideUrl = (l) => `${o.urls.xc_server}/xmltv.php?username=${encodeURIComponent(l.username)}&password=${encodeURIComponent(l.password)}`;
+    const addForm = () => {
+      const name = h('input', { placeholder: 'Who is it for? e.g. Mom' });
+      const user = h('input', { placeholder: 'Username', autocomplete: 'off' });
+      const pass = h('input', { value: randomPassword(), autocomplete: 'off' });
+      name.addEventListener('input', () => {
+        if (!user.dataset.touched) user.value = name.value.toLowerCase().replace(/[^a-z0-9]+/g, '');
+      });
+      user.addEventListener('input', () => { user.dataset.touched = '1'; });
+      const close = modal('Add a login', h('div', { class: 'form' },
+        h('p', { class: 'hint' }, 'Someone else can then use this output in their own player, with their own username and password. Remove it any time without affecting anyone else.'),
+        field('Name', name), h('div', { class: 'two' }, field('Username', user), field('Password', pass))), [
+        h('button', { class: 'btn', onclick: () => close() }, 'Cancel'),
+        h('button', {
+          class: 'btn primary',
+          onclick: async () => {
+            await attempt(() => api('POST', `/api/outputs/${id}/logins`, { name: name.value, username: user.value, password: pass.value }), 'Login added');
+            close();
+            reload();
+          },
+        }, 'Add login'),
+      ]);
+      name.focus();
+    };
+    return h('div', { class: 'xc-box' },
+      h('div', { class: 'card-head' }, h('h3', null, 'Other logins'), h('button', { class: 'btn small', onclick: addForm }, '+ Add login')),
+      logins.length ? null : h('p', { class: 'hint' }, 'Share this output with someone by giving them a login of their own. Removing it later leaves every other login working.'),
+      logins.map((l) => h('div', { class: `login-row ${l.enabled ? '' : 'off'}` },
+        h('div', { class: 'login-head' },
+          h('b', null, l.name || l.username),
+          h('span', { class: 'meta' }, l.last_used_at ? ` · used ${ago(l.last_used_at)}` : ' · not used yet'),
+          h('span', { class: 'row' },
+            h('label', { class: 'check', title: 'Switch this login off without removing it' },
+              h('input', {
+                type: 'checkbox', checked: l.enabled,
+                onchange: (e) => attempt(() => api('PUT', `/api/outputs/${id}/logins/${l.id}`, { enabled: e.target.checked }),
+                  e.target.checked ? 'Login on' : 'Login paused').then(reload),
+              }), ' On'),
+            h('button', {
+              class: 'btn small danger-text',
+              onclick: async () => {
+                if (!(await confirmBox(`Remove the login "${l.name || l.username}"? Players using it stop working; other logins are not affected.`, 'Remove'))) return;
+                await attempt(() => api('DELETE', `/api/outputs/${id}/logins/${l.id}`), 'Login removed');
+                reload();
+              },
+            }, 'Remove'))),
+        h('div', { class: 'two' }, copyField('Username', l.username), copyField('Password', l.password)),
+        h('details', null, h('summary', null, 'Playlist and guide URLs for this login'),
+          copyField('M3U playlist', playlistUrl(l)), copyField('XMLTV guide', guideUrl(l))))));
+  };
+
   const refreshCounts = async () => {
     o = { ...o, ...(await api('GET', `/api/outputs/${id}`)) };
     drawUrls();

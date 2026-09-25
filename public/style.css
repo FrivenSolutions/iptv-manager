@@ -379,3 +379,10 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 .ch-row.title-row:hover .rename, .ch-row.title-row .rename:focus { opacity: 1; }
 .ch-panel.locked .ch-row.title-row .rename { display: none; }
 .title-filter { max-width: 220px; }
+/* Other Xtream Codes logins of an output. */
+.login-row { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-top: 1px dashed var(--border); }
+.login-row:first-of-type { border-top: 0; }
+.login-row.off { opacity: .6; }
+.login-head { display: flex; align-items: center; gap: 4px; }
+.login-head .row { margin-left: auto; align-items: center; }
+.xc-box .card-head h3 { margin: 0; }

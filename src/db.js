@@ -315,6 +315,20 @@ const MIGRATIONS = [
   );
   ALTER TABLE vod_items ADD COLUMN custom_name TEXT;
   `,
+  `
+  -- More Xtream Codes logins for one output (to share it), each removable on its own. A username
+  -- is unique across these and the outputs' own logins.
+  CREATE TABLE output_xc_logins (
+    id INTEGER PRIMARY KEY,
+    output_id INTEGER NOT NULL REFERENCES outputs(id) ON DELETE CASCADE,
+    name TEXT NOT NULL DEFAULT '',
+    username TEXT NOT NULL UNIQUE,
+    password TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER,
+    last_used_at INTEGER
+  );
+  `,
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.

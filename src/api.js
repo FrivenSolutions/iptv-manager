@@ -184,6 +184,8 @@ function outputView(req, ctx, o, withDetail = false) {
       .sort((a, b) => a.sort - b.sort || a.id - b.id);
     view.rules = ctx.db.all('SELECT id, source_id, kind, action, op, value FROM output_rules WHERE output_id = ? ORDER BY sort, id', [o.id]);
     view.name_rules = parseNameRules(o.name_rules);
+    view.xc_logins = ctx.db.all('SELECT id, name, username, password, enabled, created_at, last_used_at FROM output_xc_logins WHERE output_id = ? ORDER BY id', [o.id])
+      .map((l) => ({ ...l, enabled: !!l.enabled }));
   }
   return view;
 }
@@ -624,7 +626,8 @@ export function registerApi(router, ctx) {
     if (xcEnabled && (!xcUser || !xcPass)) throw new HttpError(400, 'The Xtream Codes output needs a username and password');
     if (xcUser && /[/?#\s]/.test(xcUser)) throw new HttpError(400, 'The Xtream Codes username cannot contain spaces, "/", "?" or "#"');
     if (xcPass && /[/?#\s]/.test(xcPass)) throw new HttpError(400, 'The Xtream Codes password cannot contain spaces, "/", "?" or "#"');
-    if (xcUser && db.get('SELECT 1 FROM outputs WHERE xc_username = ? AND id <> ?', [xcUser, o.id])) {
+    if (xcUser && (db.get('SELECT 1 FROM outputs WHERE xc_username = ? AND id <> ?', [xcUser, o.id])
+      || db.get('SELECT 1 FROM output_xc_logins WHERE username = ?', [xcUser]))) {
       throw new HttpError(400, 'Another output already uses that Xtream Codes username');
     }
     const mode = body.stream_mode === undefined ? o.stream_mode : body.stream_mode;
@@ -711,6 +714,51 @@ export function registerApi(router, ctx) {
     });
     touch();
     sendJson(res, 201, outputView(req, ctx, mustGet(db, 'outputs', id), true));
+  });
+
+  // --- extra Xtream Codes logins of an output (sharing it; each one removable on its own)
+  const checkLogin = (username, password, exceptLogin = 0) => {
+    if (!username || !password) throw new HttpError(400, 'A login needs a username and a password');
+    if (/[/?#\s]/.test(username) || /[/?#\s]/.test(password)) throw new HttpError(400, 'Usernames and passwords cannot contain spaces, "/", "?" or "#"');
+    if (db.get('SELECT 1 FROM outputs WHERE xc_username = ?', [username])
+      || db.get('SELECT 1 FROM output_xc_logins WHERE username = ? AND id <> ?', [username, exceptLogin])) {
+      throw new HttpError(400, `The username "${username}" is already in use`);
+    }
+  };
+  const loginOf = (outputId, loginId) => {
+    const l = db.get('SELECT * FROM output_xc_logins WHERE id = ? AND output_id = ?', [Number(loginId), Number(outputId)]);
+    if (!l) throw new HttpError(404, 'Not found');
+    return l;
+  };
+  router.post('/api/outputs/:id/logins', async (req, res, { params }) => {
+    const o = mustGet(db, 'outputs', params.id);
+    const body = await readJson(req);
+    const username = str(body.username, 100);
+    const password = str(body.password, 100);
+    checkLogin(username, password);
+    const l = db.get(
+      'INSERT INTO output_xc_logins (output_id, name, username, password, enabled, created_at) VALUES (?, ?, ?, ?, 1, ?) RETURNING *',
+      [o.id, str(body.name, 100), username, password, now()],
+    );
+    sendJson(res, 201, { ...l, enabled: true });
+  });
+  router.put('/api/outputs/:id/logins/:loginId', async (req, res, { params }) => {
+    const l = loginOf(params.id, params.loginId);
+    const body = await readJson(req);
+    const username = body.username === undefined ? l.username : str(body.username, 100);
+    const password = body.password === undefined ? l.password : str(body.password, 100);
+    checkLogin(username, password, l.id);
+    db.run('UPDATE output_xc_logins SET name = ?, username = ?, password = ?, enabled = ? WHERE id = ?', [
+      body.name === undefined ? l.name : str(body.name, 100), username, password,
+      body.enabled === undefined ? l.enabled : bool(body.enabled), l.id,
+    ]);
+    const r = db.get('SELECT * FROM output_xc_logins WHERE id = ?', [l.id]);
+    sendJson(res, 200, { ...r, enabled: !!r.enabled });
+  });
+  router.delete('/api/outputs/:id/logins/:loginId', (req, res, { params }) => {
+    const l = loginOf(params.id, params.loginId);
+    db.run('DELETE FROM output_xc_logins WHERE id = ?', [l.id]);
+    sendJson(res, 200, { ok: true });
   });
 
   router.post('/api/outputs/:id/token', (req, res, { params }) => {
