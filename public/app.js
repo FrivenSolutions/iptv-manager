@@ -1522,6 +1522,8 @@ async function outputEditor(main, id) {
   };
   // Other people's logins to this output: each with its own username and password, paused or
   // removed on its own. Saved right away (not with the output's Save).
+  // Logins shown expanded (collapsed by default), kept across redraws.
+  const openLogins = new Set();
   const loginsBox = () => {
     const logins = o.xc_logins || [];
     const randomPassword = () => Math.random().toString(36).slice(2, 10);
@@ -1546,7 +1548,8 @@ async function outputEditor(main, id) {
         h('button', {
           class: 'btn primary',
           onclick: async () => {
-            await attempt(() => api('POST', `/api/outputs/${id}/logins`, { name: name.value, username: user.value, password: pass.value }), 'Login added');
+            const added = await attempt(() => api('POST', `/api/outputs/${id}/logins`, { name: name.value, username: user.value, password: pass.value }), 'Login added');
+            openLogins.add(added.id);
             close();
             reload();
           },
@@ -1559,7 +1562,10 @@ async function outputEditor(main, id) {
       logins.length ? null : h('p', { class: 'hint' }, 'Share this output with someone by giving them a login of their own. Removing it later leaves every other login working.'),
       logins.map((l) => h('div', { class: `login-row ${l.enabled ? '' : 'off'}` },
         h('div', { class: 'login-head' },
-          h('b', null, l.name || l.username),
+          h('button', {
+            class: 'expander login-toggle', title: openLogins.has(l.id) ? 'Hide details' : 'Show username, password and URLs',
+            onclick: () => { openLogins.has(l.id) ? openLogins.delete(l.id) : openLogins.add(l.id); drawUrls(); },
+          }, openLogins.has(l.id) ? '▾' : '▸', h('b', null, ` ${l.name || l.username}`)),
           h('span', { class: 'meta' }, l.last_used_at ? ` · used ${ago(l.last_used_at)}` : ' · not used yet'),
           h('span', { class: 'row' },
             h('label', { class: 'check', title: 'Switch this login off without removing it' },
@@ -1576,9 +1582,10 @@ async function outputEditor(main, id) {
                 reload();
               },
             }, 'Remove'))),
-        h('div', { class: 'two' }, copyField('Username', l.username), copyField('Password', l.password)),
-        h('details', null, h('summary', null, 'Playlist and guide URLs for this login'),
-          copyField('M3U playlist', playlistUrl(l)), copyField('XMLTV guide', guideUrl(l))))));
+        openLogins.has(l.id) ? h('div', { class: 'login-body' },
+          h('div', { class: 'two' }, copyField('Username', l.username), copyField('Password', l.password)),
+          copyField('M3U playlist', playlistUrl(l)),
+          copyField('XMLTV guide', guideUrl(l))) : null)));
   };
 
   const refreshCounts = async () => {
