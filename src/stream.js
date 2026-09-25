@@ -95,6 +95,54 @@ async function proxy(ctx, res, url, output, ch) {
   else hub.add(res);
 }
 
+// Headers passed back from the provider for a movie or episode, so players can seek.
+const VOD_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag'];
+
+/**
+ * A movie or series episode. Direct and Redirect send the player to the provider; Proxy relays
+ * it, passing Range requests through for seeking, and counts it against the source's limit.
+ */
+export async function serveVod(ctx, req, res, output, target) {
+  if (output.stream_mode !== 'proxy') {
+    res.writeHead(302, { location: target.url, 'cache-control': 'no-cache' }).end();
+    return;
+  }
+  const item = { id: target.key, source_id: target.src.id };
+  const admit = ctx.streams.admit(item);
+  if (!admit.ok) return busy(res, admit.limit);
+  const release = ctx.streams.hold(item);
+  const ac = new AbortController();
+  res.on('close', () => {
+    ac.abort();
+    release();
+  });
+  const headers = { 'user-agent': target.src.user_agent || DEFAULT_UA };
+  if (req.headers.range) headers.range = req.headers.range;
+  let up;
+  try {
+    up = await fetch(target.url, { headers, signal: ac.signal, redirect: 'follow' });
+  } catch {
+    if (!res.headersSent) res.writeHead(502).end();
+    return;
+  }
+  if (!up.ok || !up.body) {
+    up.body?.cancel().catch(() => {});
+    if (!res.headersSent) res.writeHead(up.status === 404 || up.status === 416 ? up.status : 502).end();
+    return;
+  }
+  const out = { 'cache-control': 'no-cache' };
+  for (const h of VOD_HEADERS) {
+    const v = up.headers.get(h);
+    if (v) out[h] = v;
+  }
+  res.writeHead(up.status, out);
+  try {
+    await pipeline(Readable.fromWeb(up.body), res);
+  } catch {
+    // Players close and reopen connections when seeking.
+  }
+}
+
 /** Serve a channel according to the output's stream mode. */
 export async function serveChannel(ctx, res, output, ch, ext) {
   const url = upstreamUrl(ch, ext);

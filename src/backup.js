@@ -9,16 +9,21 @@ export const FORMAT = 'iptv-manager-settings';
 export const FORMAT_VERSION = 1;
 
 const SOURCE_FIELDS = ['name', 'type', 'url', 'epg_urls', 'xc_host', 'xc_username', 'xc_password', 'xc_stream_ext',
-  'hdhr_host', 'user_agent', 'live_only', 'refresh_minutes', 'enabled', 'max_streams', 'sort'];
+  'hdhr_host', 'user_agent', 'live_only', 'refresh_minutes', 'enabled', 'max_streams', 'vod_refresh_minutes', 'sort'];
 const OUTPUT_FIELDS = ['name', 'token', 'stream_mode', 'include_all', 'number_start', 'epg_days', 'xc_enabled',
   'xc_username', 'xc_password'];
+
+// Categories are named by source and name; movie and series ones also carry their kind (live is
+// the default, so files from before VOD read the same).
+const kindOf = (c) => (c.kind && c.kind !== 'live' ? { kind: c.kind } : {});
+const KINDS = ['live', 'movie', 'series'];
 
 const pick = (row, keys) => Object.fromEntries(keys.map((k) => [k, row[k] ?? null]));
 
 export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
   const sources = db.all('SELECT * FROM sources ORDER BY sort, id');
   const outputs = db.all('SELECT * FROM outputs ORDER BY id');
-  const catRef = new Map(db.all('SELECT id, source_id, name FROM categories').map((c) => [c.id, c]));
+  const catRef = new Map(db.all('SELECT id, source_id, kind, name FROM categories').map((c) => [c.id, c]));
   const chRef = new Map(db.all('SELECT id, source_id, key FROM channels').map((c) => [c.id, c]));
 
   // Only rows that carry edits, or that output overrides/rules point at, need exporting.
@@ -55,9 +60,9 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
         src.url = s.url && /[?&](username|password)=/i.test(s.url) ? null : s.url;
         src.epg_urls = s.epg_urls.split(/\r?\n/).filter((u) => !/[?&](username|password)=/i.test(u)).join('\n');
       }
-      src.categories = db.all('SELECT id, name, custom_name, jellyfin FROM categories WHERE source_id = ?', [s.id])
+      src.categories = db.all('SELECT id, kind, name, custom_name, jellyfin FROM categories WHERE source_id = ?', [s.id])
         .filter((c) => c.custom_name || c.jellyfin || neededCats.has(c.id))
-        .map((c) => ({ name: c.name, custom_name: c.custom_name, jellyfin: parseJellyfin(c.jellyfin) }));
+        .map((c) => ({ name: c.name, ...kindOf(c), custom_name: c.custom_name, jellyfin: parseJellyfin(c.jellyfin) }));
       src.channels = db.all(
         `SELECT id, key, name, custom_name, custom_logo, custom_epg_id, custom_chno FROM channels WHERE source_id = ?`,
         [s.id],
@@ -70,14 +75,15 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
       ...pick(o, OUTPUT_FIELDS),
       include_all: !!o.include_all,
       xc_enabled: !!o.xc_enabled,
+      vod_enabled: !!o.vod_enabled,
       xc_password: secrets ? o.xc_password : null,
       sources: db.all('SELECT source_id FROM output_sources WHERE output_id = ? ORDER BY sort', [o.id]).map((r) => r.source_id),
-      rules: db.all('SELECT source_id, action, op, value FROM output_rules WHERE output_id = ? ORDER BY sort, id', [o.id])
-        .map((r) => ({ source: r.source_id, action: r.action, op: r.op, value: r.value })),
+      rules: db.all('SELECT source_id, kind, action, op, value FROM output_rules WHERE output_id = ? ORDER BY sort, id', [o.id])
+        .map((r) => ({ source: r.source_id, ...kindOf(r), action: r.action, op: r.op, value: r.value })),
       name_rules: parseNameRules(o.name_rules),
       category_overrides: catOverrides.filter((r) => r.output_id === o.id && catRef.has(r.category_id)).map((r) => {
         const c = catRef.get(r.category_id);
-        return { source: c.source_id, category: c.name, state: r.state };
+        return { source: c.source_id, category: c.name, ...kindOf(c), state: r.state };
       }),
       channel_rules: chRules.filter((r) => r.output_id === o.id && catRef.has(r.category_id)).map((r) => {
         const c = catRef.get(r.category_id);
@@ -119,7 +125,8 @@ function validate(data) {
     refs.add(s.ref);
     check(['m3u', 'xc', 'hdhr'].includes(s.type), `source "${s.name}" has an unknown type`);
   }
-  const rule = (r) => ['include', 'exclude'].includes(r.action) && OPS.includes(r.op) && typeof r.value === 'string';
+  const rule = (r) => ['include', 'exclude'].includes(r.action) && OPS.includes(r.op) && typeof r.value === 'string'
+    && (r.kind == null || KINDS.includes(r.kind));
   const tokens = new Set();
   const users = new Set();
   for (const o of data.outputs) {
@@ -169,15 +176,16 @@ export function importSettings(db, data) {
     db.setSetting('alerts_sent', '{}');
 
     const ids = new Map();
-    const catIds = new Map(); // "ref|name" -> id
+    const catIds = new Map(); // "ref|kind|name" -> id
     const chIds = new Map(); // "ref|key" -> id
-    const ensureCat = (ref, name) => {
-      const k = `${ref}|${name}`;
+    const ensureCat = (ref, name, kind) => {
+      kind = KINDS.includes(kind) ? kind : 'live';
+      const k = `${ref}|${kind}|${name}`;
       if (!catIds.has(k)) {
         const r = db.get(
-          `INSERT INTO categories (source_id, name, active, first_seen, last_seen) VALUES (?, ?, 0, ?, ?)
-           ON CONFLICT (source_id, name) DO UPDATE SET name = excluded.name RETURNING id`,
-          [ids.get(ref), String(name), t, t],
+          `INSERT INTO categories (source_id, kind, name, active, first_seen, last_seen) VALUES (?, ?, ?, 0, ?, ?)
+           ON CONFLICT (source_id, kind, name) DO UPDATE SET name = excluded.name RETURNING id`,
+          [ids.get(ref), kind, String(name), t, t],
         );
         catIds.set(k, r.id);
       }
@@ -187,17 +195,18 @@ export function importSettings(db, data) {
     data.sources.forEach((s, i) => {
       const r = db.get(
         `INSERT INTO sources (name, type, url, epg_urls, xc_host, xc_username, xc_password, xc_stream_ext, hdhr_host, user_agent,
-                              live_only, refresh_minutes, enabled, max_streams, sort, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+                              live_only, refresh_minutes, enabled, max_streams, vod_refresh_minutes, sort, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         [String(s.name || 'Source'), s.type, s.url ?? null, String(s.epg_urls || ''), s.xc_host ?? null, s.xc_username ?? null,
           s.xc_password ?? null, s.xc_stream_ext === 'm3u8' ? 'm3u8' : 'ts', s.hdhr_host ?? null, String(s.user_agent || ''), s.live_only !== false,
           Number.isFinite(Number(s.refresh_minutes)) ? Number(s.refresh_minutes) : 720, s.enabled !== false,
-          Number.isInteger(s.max_streams) && s.max_streams >= 0 ? s.max_streams : null, s.sort ?? i, t],
+          Number.isInteger(s.max_streams) && s.max_streams >= 0 ? s.max_streams : null,
+          Number.isInteger(s.vod_refresh_minutes) && s.vod_refresh_minutes >= 0 ? s.vod_refresh_minutes : 1440, s.sort ?? i, t],
       );
       ids.set(s.ref, r.id);
       summary.sources++;
       for (const c of s.categories || []) {
-        const id = ensureCat(s.ref, c.name);
+        const id = ensureCat(s.ref, c.name, c.kind);
         db.run('UPDATE categories SET custom_name = ?, jellyfin = ? WHERE id = ?', [
           c.custom_name || null, parseJellyfin((c.jellyfin || []).join(',')).join(',') || null, id,
         ]);
@@ -216,24 +225,24 @@ export function importSettings(db, data) {
     for (const o of data.outputs) {
       const r = db.get(
         `INSERT INTO outputs (name, token, stream_mode, include_all, number_start, epg_days, xc_enabled, xc_username,
-                              xc_password, name_rules, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+                              xc_password, name_rules, vod_enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         [String(o.name || 'Output'), o.token, o.stream_mode, !!o.include_all, o.number_start ?? null, Number(o.epg_days) || 7,
           !!o.xc_enabled && !!o.xc_username && !!o.xc_password, o.xc_username || null, o.xc_password || null,
-          JSON.stringify(checkNameRules(o.name_rules ?? []).rules), t, t],
+          JSON.stringify(checkNameRules(o.name_rules ?? []).rules), !!o.vod_enabled, t, t],
       );
       summary.outputs++;
       (o.sources || []).forEach((ref, i) => {
         db.run('INSERT OR IGNORE INTO output_sources (output_id, source_id, sort) VALUES (?, ?, ?)', [r.id, ids.get(ref), i]);
       });
       (o.rules || []).forEach((x, i) => {
-        db.run('INSERT INTO output_rules (output_id, source_id, action, op, value, sort) VALUES (?, ?, ?, ?, ?, ?)', [
-          r.id, x.source != null && ids.has(x.source) ? ids.get(x.source) : null, x.action, x.op, x.value, i,
+        db.run('INSERT INTO output_rules (output_id, source_id, kind, action, op, value, sort) VALUES (?, ?, ?, ?, ?, ?, ?)', [
+          r.id, x.source != null && ids.has(x.source) ? ids.get(x.source) : null, x.kind || 'live', x.action, x.op, x.value, i,
         ]);
       });
       for (const x of o.category_overrides || []) {
         db.run('INSERT OR REPLACE INTO output_category_overrides (output_id, category_id, state) VALUES (?, ?, ?)', [
-          r.id, ensureCat(x.source, x.category), x.state === 'include' ? 'include' : 'exclude',
+          r.id, ensureCat(x.source, x.category, x.kind), x.state === 'include' ? 'include' : 'exclude',
         ]);
       }
       for (const x of o.category_options || []) {

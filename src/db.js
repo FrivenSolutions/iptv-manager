@@ -231,6 +231,73 @@ const MIGRATIONS = [
   -- account's connection limit or the HDHomeRun's tuner count), 0 = no limit.
   ALTER TABLE sources ADD COLUMN max_streams INTEGER;
   `,
+  {
+    // Movies and series. Categories gain a kind ('live', 'movie' or 'series'), and a provider may
+    // use the same name for a live and a VOD category, so the unique key includes the kind.
+    foreignKeysOff: true,
+    sql: `
+  CREATE TABLE categories_new (
+    id INTEGER PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'live' CHECK (kind IN ('live', 'movie', 'series')),
+    name TEXT NOT NULL,
+    custom_name TEXT,
+    xc_id TEXT,
+    sort INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    added_in INTEGER,
+    first_seen INTEGER,
+    last_seen INTEGER,
+    jellyfin TEXT,
+    UNIQUE (source_id, kind, name)
+  );
+  INSERT INTO categories_new (id, source_id, kind, name, custom_name, xc_id, sort, active, added_in, first_seen, last_seen, jellyfin)
+    SELECT id, source_id, 'live', name, custom_name, xc_id, sort, active, added_in, first_seen, last_seen, jellyfin FROM categories;
+  DROP TABLE categories;
+  ALTER TABLE categories_new RENAME TO categories;
+
+  -- One row per movie or series. extra holds the provider's own fields (JSON), passed on to
+  -- Xtream Codes clients; episodes of a series are filled in when a player opens it.
+  CREATE TABLE vod_items (
+    id INTEGER PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('movie', 'series')),
+    key TEXT NOT NULL,
+    name TEXT NOT NULL,
+    poster TEXT,
+    ext TEXT,
+    url TEXT,
+    added INTEGER,
+    extra TEXT,
+    sort INTEGER NOT NULL DEFAULT 0,
+    active INTEGER NOT NULL DEFAULT 1,
+    first_seen INTEGER,
+    last_seen INTEGER,
+    UNIQUE (source_id, kind, key)
+  );
+  CREATE INDEX vod_items_category ON vod_items(category_id);
+
+  CREATE TABLE vod_episodes (
+    id INTEGER PRIMARY KEY,
+    series_id INTEGER NOT NULL REFERENCES vod_items(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    season INTEGER,
+    episode INTEGER,
+    title TEXT,
+    ext TEXT,
+    url TEXT,
+    info TEXT,
+    UNIQUE (series_id, key)
+  );
+
+  ALTER TABLE sources ADD COLUMN vod_refresh_minutes INTEGER NOT NULL DEFAULT 1440;
+  ALTER TABLE sources ADD COLUMN vod_refreshed_at INTEGER;
+  ALTER TABLE sources ADD COLUMN vod_stats TEXT;
+  ALTER TABLE outputs ADD COLUMN vod_enabled INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE output_rules ADD COLUMN kind TEXT NOT NULL DEFAULT 'live';
+  `,
+  },
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.

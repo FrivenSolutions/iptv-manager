@@ -52,8 +52,10 @@ function sourceView(ctx, s) {
   const counts = ctx.db.get(
     `SELECT (SELECT COUNT(*) FROM channels WHERE source_id = ? AND active = 1) AS channels,
             (SELECT COUNT(*) FROM channels WHERE source_id = ? AND active = 1 AND epg_id IS NOT NULL) AS epg_matched,
-            (SELECT COUNT(*) FROM categories WHERE source_id = ? AND active = 1) AS categories`,
-    [s.id, s.id, s.id],
+            (SELECT COUNT(*) FROM categories WHERE source_id = ? AND active = 1 AND kind = 'live') AS categories,
+            (SELECT COUNT(*) FROM vod_items WHERE source_id = ? AND active = 1 AND kind = 'movie') AS movies,
+            (SELECT COUNT(*) FROM vod_items WHERE source_id = ? AND active = 1 AND kind = 'series') AS series`,
+    [s.id, s.id, s.id, s.id, s.id],
   );
   return {
     ...s,
@@ -62,6 +64,7 @@ function sourceView(ctx, s) {
     live_only: !!s.live_only,
     enabled: !!s.enabled,
     stats: parseJson(s.stats),
+    vod_stats: parseJson(s.vod_stats),
     account_info: parseJson(s.account_info),
     job: ctx.jobs.status(s.id),
     next_refresh_at: ctx.jobs.nextDue(s),
@@ -86,6 +89,8 @@ function sourceFields(body, existing) {
     user_agent: str(body.user_agent, 500),
     live_only: body.live_only === undefined ? 1 : bool(body.live_only),
     refresh_minutes: int(body.refresh_minutes, 720, 0, 60 * 24 * 30),
+    vod_refresh_minutes: body.vod_refresh_minutes === undefined ? existing?.vod_refresh_minutes ?? 1440
+      : int(body.vod_refresh_minutes, 1440, 0, 60 * 24 * 30),
     enabled: body.enabled === undefined ? 1 : bool(body.enabled),
     // Blank = automatic, 0 = no limit.
     max_streams: body.max_streams === undefined ? existing?.max_streams ?? null
@@ -116,7 +121,10 @@ export function validateRules(list) {
           throw new HttpError(400, `Invalid regular expression: ${r.value}`);
         }
       }
-      return { action: r.action, op: r.op, value: str(r.value, 500), source_id: r.source_id ? Number(r.source_id) : null };
+      return {
+        action: r.action, op: r.op, value: str(r.value, 500), source_id: r.source_id ? Number(r.source_id) : null,
+        kind: ['movie', 'series'].includes(r.kind) ? r.kind : 'live',
+      };
     })
     .filter((r) => r.value !== '');
 }
@@ -158,6 +166,7 @@ function outputView(req, ctx, o, withDetail = false) {
     number_start: o.number_start,
     epg_days: o.epg_days,
     xc_enabled: !!o.xc_enabled,
+    vod_enabled: !!o.vod_enabled,
     xc_username: o.xc_username,
     xc_password: o.xc_password,
     updated_at: o.updated_at,
@@ -171,7 +180,7 @@ function outputView(req, ctx, o, withDetail = false) {
     view.sources = ctx.db.all('SELECT id, name, type FROM sources ORDER BY sort, id')
       .map((s) => ({ ...s, attached: attached.has(s.id), sort: attached.get(s.id) ?? 999 }))
       .sort((a, b) => a.sort - b.sort || a.id - b.id);
-    view.rules = ctx.db.all('SELECT id, source_id, action, op, value FROM output_rules WHERE output_id = ? ORDER BY sort, id', [o.id]);
+    view.rules = ctx.db.all('SELECT id, source_id, kind, action, op, value FROM output_rules WHERE output_id = ? ORDER BY sort, id', [o.id]);
     view.name_rules = parseNameRules(o.name_rules);
   }
   return view;
@@ -403,9 +412,9 @@ export function registerApi(router, ctx) {
     const f = sourceFields(await readJson(req));
     const r = db.get(
       `INSERT INTO sources (name, type, url, epg_urls, xc_host, xc_username, xc_password, xc_stream_ext, hdhr_host, user_agent,
-                            live_only, refresh_minutes, enabled, max_streams, sort, created_at)
+                            live_only, refresh_minutes, enabled, max_streams, vod_refresh_minutes, sort, created_at)
        VALUES ($name, $type, $url, $epg_urls, $xc_host, $xc_username, $xc_password, $xc_stream_ext, $hdhr_host, $user_agent,
-               $live_only, $refresh_minutes, $enabled, $max_streams, (SELECT COALESCE(MAX(sort), 0) + 1 FROM sources), $created_at)
+               $live_only, $refresh_minutes, $enabled, $max_streams, $vod_refresh_minutes, (SELECT COALESCE(MAX(sort), 0) + 1 FROM sources), $created_at)
        RETURNING id`,
       { ...f, created_at: now() },
     );
@@ -420,12 +429,13 @@ export function registerApi(router, ctx) {
     db.run(
       `UPDATE sources SET name = $name, url = $url, epg_urls = $epg_urls, xc_host = $xc_host, xc_username = $xc_username,
          xc_password = $xc_password, xc_stream_ext = $xc_stream_ext, hdhr_host = $hdhr_host, user_agent = $user_agent, live_only = $live_only,
-         refresh_minutes = $refresh_minutes, enabled = $enabled, max_streams = $max_streams WHERE id = $id`,
+         refresh_minutes = $refresh_minutes, enabled = $enabled, max_streams = $max_streams,
+         vod_refresh_minutes = $vod_refresh_minutes WHERE id = $id`,
       { ...f, id: existing.id },
     );
     const refetch = ['url', 'epg_urls', 'xc_host', 'xc_username', 'xc_password', 'xc_stream_ext', 'hdhr_host', 'user_agent', 'live_only']
       .some((k) => String(existing[k] ?? '') !== String(f[k] ?? ''));
-    if (refetch && f.enabled) ctx.jobs.enqueue(existing.id);
+    if (refetch && f.enabled) ctx.jobs.enqueue(existing.id, { forceVod: true });
     touch();
     sendJson(res, 200, sourceView(ctx, mustGet(db, 'sources', existing.id)));
   });
@@ -441,7 +451,7 @@ export function registerApi(router, ctx) {
 
   router.post('/api/sources/:id/refresh', (req, res, { params }) => {
     const s = mustGet(db, 'sources', params.id);
-    ctx.jobs.enqueue(s.id);
+    ctx.jobs.enqueue(s.id, { forceVod: true });
     sendJson(res, 202, { job: ctx.jobs.status(s.id) });
   });
 
@@ -479,7 +489,7 @@ export function registerApi(router, ctx) {
     const rows = db.all(
       `SELECT c.id, c.name, c.custom_name, c.jellyfin, c.first_seen, c.added_in,
               (SELECT COUNT(*) FROM channels ch WHERE ch.category_id = c.id AND ch.active = 1) AS channel_count
-         FROM categories c WHERE c.source_id = ? AND c.active = 1 ORDER BY c.sort`,
+         FROM categories c WHERE c.source_id = ? AND c.active = 1 AND c.kind = 'live' ORDER BY c.sort`,
       [s.id],
     );
     for (const r of rows) {
@@ -625,14 +635,14 @@ export function registerApi(router, ctx) {
     db.tx(() => {
       db.run(
         `UPDATE outputs SET name = ?, stream_mode = ?, include_all = ?, number_start = ?, epg_days = ?,
-           xc_enabled = ?, xc_username = ?, xc_password = ?, updated_at = ? WHERE id = ?`,
+           xc_enabled = ?, xc_username = ?, xc_password = ?, vod_enabled = ?, updated_at = ? WHERE id = ?`,
         [
           body.name === undefined ? o.name : str(body.name, 200) || o.name,
           mode,
           body.include_all === undefined ? o.include_all : bool(body.include_all),
           body.number_start === undefined ? o.number_start : (body.number_start === '' || body.number_start == null ? null : int(body.number_start, null, 0, 1e6)),
           body.epg_days === undefined ? o.epg_days : int(body.epg_days, 7, 1, 14),
-          xcEnabled, xcUser, xcPass, now(), o.id,
+          xcEnabled, xcUser, xcPass, body.vod_enabled === undefined ? o.vod_enabled : bool(body.vod_enabled), now(), o.id,
         ],
       );
       if (nameRules) db.run('UPDATE outputs SET name_rules = ? WHERE id = ?', [JSON.stringify(nameRules.rules), o.id]);
@@ -648,8 +658,8 @@ export function registerApi(router, ctx) {
         db.run('DELETE FROM output_rules WHERE output_id = ?', [o.id]);
         rules.forEach((r, i) => {
           if (r.source_id && !db.get('SELECT 1 FROM sources WHERE id = ?', [r.source_id])) r.source_id = null;
-          db.run('INSERT INTO output_rules (output_id, source_id, action, op, value, sort) VALUES (?, ?, ?, ?, ?, ?)', [
-            o.id, r.source_id, r.action, r.op, r.value, i,
+          db.run('INSERT INTO output_rules (output_id, source_id, kind, action, op, value, sort) VALUES (?, ?, ?, ?, ?, ?, ?)', [
+            o.id, r.source_id, r.kind, r.action, r.op, r.value, i,
           ]);
         });
       }
@@ -673,10 +683,20 @@ export function registerApi(router, ctx) {
     sendJson(res, 200, outputView(req, ctx, mustGet(db, 'outputs', o.id), true));
   });
 
-  router.get('/api/outputs/:id/categories', (req, res, { params }) => {
+  router.get('/api/outputs/:id/categories', (req, res, { params, query }) => {
     const o = loadOutput(db, Number(params.id));
     if (!o) throw new HttpError(404, 'Not found');
-    sendJson(res, 200, evaluateCategories(db, o));
+    const kind = ['movie', 'series'].includes(query.get('kind')) ? query.get('kind') : 'live';
+    sendJson(res, 200, evaluateCategories(db, o, kind));
+  });
+
+  // Titles in one movie or series category, for a look inside from the output editor.
+  router.get('/api/categories/:id/titles', (req, res, { params }) => {
+    const c = mustGet(db, 'categories', params.id);
+    const LIMIT = 500;
+    const total = db.get('SELECT COUNT(*) AS n FROM vod_items WHERE category_id = ? AND active = 1', [c.id]).n;
+    const titles = db.all('SELECT id, name, poster FROM vod_items WHERE category_id = ? AND active = 1 ORDER BY sort LIMIT ?', [c.id, LIMIT]);
+    sendJson(res, 200, { total, titles });
   });
 
   router.put('/api/outputs/:id/categories', async (req, res, { params }) => {

@@ -265,7 +265,8 @@ export function loadOutput(db, outputId) {
 }
 
 /** Categories from every source attached to the output, each with its decision. */
-export function evaluateCategories(db, output) {
+/** Categories of one kind ('live', 'movie' or 'series'), each judged by that kind's rules. */
+export function evaluateCategories(db, output, kind = 'live') {
   if (!output.sources.length) return [];
   const overrides = new Map(
     db.all('SELECT category_id, state FROM output_category_overrides WHERE output_id = ?', [output.id])
@@ -275,11 +276,14 @@ export function evaluateCategories(db, output) {
   const ids = output.sources.map((s) => s.id);
   const cats = db.all(
     `SELECT c.id, c.source_id, c.name, c.custom_name, c.jellyfin, c.sort, c.first_seen, c.added_in,
-            (SELECT COUNT(*) FROM channels ch WHERE ch.category_id = c.id AND ch.active = 1) AS channel_count
+            ${kind === 'live'
+    ? '(SELECT COUNT(*) FROM channels ch WHERE ch.category_id = c.id AND ch.active = 1)'
+    : '(SELECT COUNT(*) FROM vod_items v WHERE v.category_id = c.id AND v.active = 1)'} AS channel_count
        FROM categories c
-      WHERE c.active = 1 AND c.source_id IN (${ids.map(() => '?').join(',')})`,
-    ids,
+      WHERE c.active = 1 AND c.kind = ? AND c.source_id IN (${ids.map(() => '?').join(',')})`,
+    [kind, ...ids],
   );
+  const rules = output.rules.filter((r) => (r.kind || 'live') === kind);
   cats.sort((a, b) => order.get(a.source_id) - order.get(b.source_id) || a.sort - b.sort);
   const chRules = loadChannelRules(db, output.id);
   const catSettings = new Map(
@@ -288,7 +292,7 @@ export function evaluateCategories(db, output) {
   );
   for (const c of cats) {
     const override = overrides.get(c.id) || null;
-    Object.assign(c, categoryState(c, output.rules, override, output.include_all), { override });
+    Object.assign(c, categoryState(c, rules, override, output.include_all), { override });
     c.channel_rules = chRules.get(c.id) || [];
     c.hide_empty = !!catSettings.get(c.id)?.hide_empty;
     c.hide_by_guide = !!catSettings.get(c.id)?.hide_by_guide;

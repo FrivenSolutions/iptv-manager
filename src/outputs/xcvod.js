@@ -1,0 +1,174 @@
+// Movies and series over the Xtream Codes API of an output. Lists come from the database; a
+// movie's details and a series' episodes are asked of the provider when a player opens them.
+import { fetchJson } from '../fetch.js';
+import { xcBase } from '../ingest.js';
+import { now } from '../db.js';
+
+function parse(text) {
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return {};
+  }
+}
+
+function providerApi(src) {
+  const base = xcBase(src.xc_host);
+  const u = encodeURIComponent(src.xc_username || '');
+  const p = encodeURIComponent(src.xc_password || '');
+  return {
+    base, u, p,
+    call: (action, extra) => fetchJson(`${base}/player_api.php?username=${u}&password=${p}&action=${action}${extra}`, { userAgent: src.user_agent }),
+  };
+}
+
+const catName = (c) => c.custom_name || c.name;
+
+/** Included categories of a kind that hold at least one title. */
+export function vodCategoryList(vc) {
+  return vc.cats.filter((c) => c.included && c.channel_count > 0)
+    .map((c) => ({ category_id: String(c.id), category_name: catName(c), parent_id: 0 }));
+}
+
+function itemsOf(db, vc, categoryId) {
+  const ids = categoryId ? [Number(categoryId)].filter((id) => vc.included.has(id)) : [...vc.included];
+  if (!ids.length) return [];
+  return db.all(
+    `SELECT id, category_id, name, poster, ext, added, extra FROM vod_items
+      WHERE active = 1 AND category_id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+  ).sort((a, b) => vc.order.get(a.category_id) - vc.order.get(b.category_id) || 0);
+}
+
+export function vodStreams(db, vc, categoryId) {
+  return itemsOf(db, vc, categoryId).map((r, i) => ({
+    ...parse(r.extra),
+    num: i + 1,
+    name: r.name,
+    stream_type: 'movie',
+    stream_id: r.id,
+    stream_icon: r.poster || '',
+    added: String(r.added || ''),
+    category_id: String(r.category_id),
+    category_ids: [r.category_id],
+    container_extension: r.ext || 'mp4',
+    custom_sid: '',
+    direct_source: '',
+  }));
+}
+
+export function seriesList(db, vc, categoryId) {
+  return itemsOf(db, vc, categoryId).map((r, i) => ({
+    ...parse(r.extra),
+    num: i + 1,
+    name: r.name,
+    series_id: r.id,
+    cover: r.poster || '',
+    last_modified: String(r.added || ''),
+    category_id: String(r.category_id),
+    category_ids: [r.category_id],
+  }));
+}
+
+/** A movie or series of this output (active, in an included category), with its source. */
+export function vodItem(db, vc, id, kind) {
+  const it = db.get('SELECT * FROM vod_items WHERE id = ? AND kind = ? AND active = 1', [Number(id), kind]);
+  if (!it || !vc.included.has(it.category_id)) return null;
+  it.src = db.get('SELECT * FROM sources WHERE id = ?', [it.source_id]);
+  return it;
+}
+
+export async function vodInfo(db, vc, id) {
+  const it = vodItem(db, vc, id, 'movie');
+  if (!it) return {};
+  const movieData = { stream_id: it.id, name: it.name, added: String(it.added || ''), category_id: String(it.category_id), container_extension: it.ext || 'mp4', custom_sid: '', direct_source: '' };
+  let info = { name: it.name, movie_image: it.poster || '', cover_big: it.poster || '' };
+  if (it.src.type === 'xc') {
+    try {
+      const r = await providerApi(it.src).call('get_vod_info', `&vod_id=${encodeURIComponent(it.key)}`);
+      if (r && typeof r.info === 'object' && !Array.isArray(r.info)) info = { ...info, ...r.info };
+    } catch {
+      // The list's own details are enough to play it.
+    }
+  }
+  return { info, movie_data: movieData };
+}
+
+/**
+ * Seasons and episodes of a series. Episode ids are this server's own (stable per provider
+ * episode), so the stream URL can be checked against the output and mapped back.
+ */
+export async function seriesInfo(db, vc, id) {
+  const it = vodItem(db, vc, id, 'series');
+  if (!it) return {};
+  const extra = parse(it.extra);
+  let info = { ...extra, name: it.name, cover: it.poster || '', category_id: String(it.category_id) };
+  let seasons = [];
+  if (it.src.type === 'xc') {
+    let r;
+    try {
+      r = await providerApi(it.src).call('get_series_info', `&series_id=${encodeURIComponent(it.key)}`);
+    } catch {
+      r = null;
+    }
+    if (r && typeof r === 'object') {
+      if (r.info && typeof r.info === 'object' && !Array.isArray(r.info)) info = { ...info, ...r.info, name: it.name, category_id: String(it.category_id) };
+      if (Array.isArray(r.seasons)) seasons = r.seasons;
+      // Panels return episodes as { "1": [...] } or as a flat list.
+      const lists = Array.isArray(r.episodes) ? [r.episodes.flat()] : Object.values(r.episodes || {});
+      db.tx(() => {
+        for (const eps of lists) {
+          for (const e of Array.isArray(eps) ? eps : []) {
+            if (e?.id == null) continue;
+            db.run(
+              `INSERT INTO vod_episodes (series_id, key, season, episode, title, ext, info) VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (series_id, key) DO UPDATE SET season = excluded.season, episode = excluded.episode,
+                 title = excluded.title, ext = excluded.ext, info = excluded.info`,
+              [it.id, String(e.id), Number(e.season) || null, Number(e.episode_num) || null, String(e.title ?? ''),
+                String(e.container_extension || 'mp4'), JSON.stringify(e)],
+            );
+          }
+        }
+      });
+    }
+  }
+  const eps = db.all('SELECT * FROM vod_episodes WHERE series_id = ? ORDER BY season, episode, id', [it.id]);
+  const episodes = {};
+  for (const e of eps) {
+    const season = String(e.season ?? 1);
+    const raw = parse(e.info);
+    (episodes[season] ||= []).push({
+      ...raw,
+      id: String(e.id),
+      episode_num: e.episode ?? raw.episode_num ?? 0,
+      title: e.title || raw.title || '',
+      container_extension: e.ext || 'mp4',
+      season: e.season ?? 1,
+      info: raw.info && typeof raw.info === 'object' ? raw.info : {},
+      custom_sid: '',
+      added: String(raw.added || now()),
+      direct_source: '',
+    });
+  }
+  if (!seasons.length) {
+    seasons = Object.keys(episodes).map((n) => ({ season_number: Number(n), name: `Season ${n}`, episode_count: episodes[n].length }));
+  }
+  return { seasons, info, episodes };
+}
+
+/** Where a movie or episode actually plays from, if it belongs to this output. */
+export function vodTarget(db, vc, kind, id) {
+  if (kind === 'movie') {
+    const it = vodItem(db, vc.movie, id, 'movie');
+    if (!it) return null;
+    const api = it.src.type === 'xc' ? providerApi(it.src) : null;
+    const url = api ? `${api.base}/movie/${api.u}/${api.p}/${it.key}.${it.ext || 'mp4'}` : it.url;
+    return url ? { key: `movie:${it.id}`, url, src: it.src } : null;
+  }
+  const ep = db.get('SELECT * FROM vod_episodes WHERE id = ?', [Number(id)]);
+  const it = ep && vodItem(db, vc.series, ep.series_id, 'series');
+  if (!it) return null;
+  const api = it.src.type === 'xc' ? providerApi(it.src) : null;
+  const url = api ? `${api.base}/series/${api.u}/${api.p}/${ep.key}.${ep.ext || 'mp4'}` : ep.url;
+  return url ? { key: `episode:${ep.id}`, url, src: it.src } : null;
+}

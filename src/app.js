@@ -10,11 +10,12 @@ import { Router, HttpError, sendJson, sendText, baseUrl } from './http.js';
 import { checkSession, hashPassword, randomToken } from './auth.js';
 import { Jobs } from './jobs.js';
 import { registerApi } from './api.js';
-import { loadOutput, selectChannels } from './filters.js';
+import { loadOutput, selectChannels, evaluateCategories } from './filters.js';
 import { buildM3U, streamUrl, streamExt } from './outputs/m3u.js';
 import { writeEpg, EpgCache } from './outputs/epg.js';
 import { findXcOutput, playerApi } from './outputs/xc.js';
-import { serveChannel, serveSegment } from './stream.js';
+import { serveChannel, serveSegment, serveVod } from './stream.js';
+import { vodTarget } from './outputs/xcvod.js';
 import { Streams } from './streams.js';
 import { HDHR_API } from './hdhomerun.js';
 import { currentVersion } from './version.js';
@@ -57,6 +58,7 @@ export function createApp({
 
   let version = 1;
   const selections = new Map();
+  const vodSelections = new Map();
 
   const ctx = {
     db,
@@ -89,6 +91,29 @@ export function createApp({
       const sel = { output, channels, signature, byId: new Map(channels.map((c) => [c.id, c])) };
       selections.set(outputId, { version, minute, sel });
       return sel;
+    },
+    /**
+     * Movies and series of an output, or null when it doesn't include them: for each kind, its
+     * categories with their decisions, the included ids, and their order. Cached until data changes.
+     */
+    vod(outputId) {
+      const hit = vodSelections.get(outputId);
+      if (hit && hit.version === version) return hit.vod;
+      const output = loadOutput(db, outputId);
+      let vod = null;
+      if (output?.vod_enabled) {
+        vod = {};
+        for (const kind of ['movie', 'series']) {
+          const cats = evaluateCategories(db, output, kind);
+          vod[kind] = {
+            cats,
+            included: new Set(cats.filter((c) => c.included).map((c) => c.id)),
+            order: new Map(cats.map((c, i) => [c.id, i])),
+          };
+        }
+      }
+      vodSelections.set(outputId, { version, vod });
+      return vod;
     },
     epgCache: new EpgCache(path.join(dataDir, 'cache')),
   };
@@ -196,16 +221,13 @@ export function createApp({
     return `${base(req)}/live/${encodeURIComponent(o.xc_username)}/${encodeURIComponent(o.xc_password)}/${ch.id}.${streamExt(ch.url)}`;
   };
 
-  router.get('/player_api.php', (req, res, { query }) => {
+  const xcApi = async (req, res, { query }) => {
     const sel = xcAuth(query.get('username'), query.get('password'));
     if (!sel) return sendJson(res, 200, { user_info: { auth: 0 } });
-    sendJson(res, 200, playerApi(db, sel.output, sel, base(req), query));
-  });
-  router.post('/player_api.php', (req, res, { query }) => {
-    const sel = xcAuth(query.get('username'), query.get('password'));
-    if (!sel) return sendJson(res, 200, { user_info: { auth: 0 } });
-    sendJson(res, 200, playerApi(db, sel.output, sel, base(req), query));
-  });
+    sendJson(res, 200, await playerApi(db, sel.output, sel, base(req), query, ctx.vod(sel.output.id)));
+  };
+  router.get('/player_api.php', xcApi);
+  router.post('/player_api.php', xcApi);
   router.get('/get.php', (req, res, { query }) => {
     const sel = xcAuth(query.get('username'), query.get('password'));
     if (!sel) throw new HttpError(401, 'Invalid credentials');
@@ -223,6 +245,17 @@ export function createApp({
     return serveChannel(ctx, res, sel.output, channelOf(sel, id), ext);
   };
   router.get('/live/:u/:p/:file', xcStream);
+  // Movies and series episodes: ids are this server's, checked against the output's categories.
+  for (const kind of ['movie', 'series']) {
+    router.get(`/${kind}/:u/:p/:file`, (req, res, { params }) => {
+      const sel = xcAuth(params.u, params.p);
+      if (!sel) throw new HttpError(401, 'Invalid credentials');
+      const vod = ctx.vod(sel.output.id);
+      const target = vod && vodTarget(db, vod, kind, params.file.split('.')[0]);
+      if (!target) throw new HttpError(404, `${kind === 'movie' ? 'Movie' : 'Episode'} is not in this output`);
+      return serveVod(ctx, req, res, sel.output, target);
+    });
+  }
   router.get('/:u/:p/:file', xcStream);
 
   // --- request dispatch ----------------------------------------------------

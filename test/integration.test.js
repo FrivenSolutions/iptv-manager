@@ -22,6 +22,29 @@ const xcCats = [
   { category_id: '11', category_name: 'US| ADULT' },
   { category_id: '12', category_name: 'UK| SPORTS' },
 ];
+// Movies and series of the fake XC account. One series category shares a live category's name.
+const vodData = {
+  movieCats: [
+    { category_id: '201', category_name: 'EN| ACTION' },
+    { category_id: '202', category_name: 'EN| KIDS' },
+    { category_id: '203', category_name: 'FR| FILMS' },
+  ],
+  movies: [
+    { num: 1, name: 'Die Hard', stream_id: 5001, stream_icon: 'http://p/dh.jpg', rating: '8', added: '1700000000', category_id: '201', container_extension: 'mkv' },
+    { num: 2, name: 'Heat', stream_id: 5002, stream_icon: '', rating: '7', added: '1700000001', category_id: '201', container_extension: 'mp4' },
+    { num: 3, name: 'Frozen', stream_id: 5003, stream_icon: '', added: '1700000002', category_id: '202', container_extension: 'mp4' },
+    { num: 4, name: 'Amélie', stream_id: 5004, stream_icon: '', added: '1700000003', category_id: '203', container_extension: 'mp4' },
+  ],
+  seriesCats: [
+    { category_id: '301', category_name: 'EN| DRAMA' },
+    { category_id: '302', category_name: 'US| NEWS' },
+  ],
+  series: [
+    { num: 1, name: 'Breaking Bad', series_id: 7001, cover: 'http://p/bb.jpg', plot: 'Chemistry', last_modified: '1700000100', category_id: '301' },
+    { num: 2, name: 'The Newsroom', series_id: 7002, cover: '', last_modified: '1700000101', category_id: '302' },
+  ],
+};
+
 const xcStreams = [
   { num: 1, name: 'US: CNN HD', stream_id: 101, stream_icon: 'http://logo/cnn.png', epg_channel_id: 'cnn.us', category_id: '10' },
   { num: 2, name: 'US: Fox News', stream_id: 102, stream_icon: '', epg_channel_id: '', category_id: '10' },
@@ -79,6 +102,10 @@ function startUpstream() {
         'http://streams/cnn.ts',
         '#EXTINF:-1 group-title="MOVIES",Some Movie',
         'http://h/movie/u/p/5.mp4',
+        '#EXTINF:-1 tvg-logo="http://logo/lost.png" group-title="SHOWS",Lost S01 E01',
+        'http://h/series/u/p/77.mkv',
+        '#EXTINF:-1 group-title="SHOWS",Lost S01 E02',
+        'http://h/series/u/p/78.mkv',
       ].join('\n'));
     }
     if (u.pathname === '/m3u-guide.xml.gz') {
@@ -91,6 +118,23 @@ function startUpstream() {
       if (!action) return json({ user_info: { auth: 1, status: 'Active', exp_date: String(xcAccount.exp), max_connections: '2' }, server_info: {} });
       if (action === 'get_live_categories') return json(xcCats);
       if (action === 'get_live_streams') return json(xcStreams);
+      if (action === 'get_vod_categories') return json(vodData.movieCats);
+      if (action === 'get_vod_streams') return json(vodData.movies);
+      if (action === 'get_series_categories') return json(vodData.seriesCats);
+      if (action === 'get_series') return json(vodData.series);
+      if (action === 'get_vod_info') {
+        return json({ info: { plot: 'A cop in a tower', tmdb_id: '562' }, movie_data: { stream_id: Number(u.searchParams.get('vod_id')), container_extension: 'mkv' } });
+      }
+      if (action === 'get_series_info' && u.searchParams.get('series_id') === '7001') {
+        return json({
+          seasons: [{ season_number: 1, name: 'Season 1' }],
+          info: { name: 'Breaking Bad', plot: 'Chemistry teacher' },
+          episodes: { 1: [
+            { id: '90001', episode_num: 1, title: 'Pilot', container_extension: 'mkv', season: 1, info: { duration: '00:58:00' } },
+            { id: '90002', episode_num: 2, title: 'Cat in the Bag', container_extension: 'mkv', season: 1, info: {} },
+          ] },
+        });
+      }
       return json([]);
     }
     if (u.pathname === '/xmltv.php') {
@@ -117,6 +161,20 @@ function startUpstream() {
         live.open.set(liveId, live.open.get(liveId) - 1);
       });
       return;
+    }
+    // Movie and episode files, with Range support like a real server.
+    const vodFile = /^\/(movie|series)\/xu\/xp\/(\d+)\.(\w+)$/.exec(u.pathname);
+    if (vodFile) {
+      const body = Buffer.from(`${vodFile[1].toUpperCase()}-${vodFile[2]}-`.padEnd(100, '.'));
+      const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || '');
+      if (range) {
+        const from = Number(range[1]);
+        const to = range[2] ? Number(range[2]) : body.length - 1;
+        res.writeHead(206, { 'content-type': 'video/x-matroska', 'content-range': `bytes ${from}-${to}/${body.length}`, 'accept-ranges': 'bytes', 'content-length': to - from + 1 });
+        return res.end(body.subarray(from, to + 1));
+      }
+      res.writeHead(200, { 'content-type': 'video/x-matroska', 'accept-ranges': 'bytes', 'content-length': body.length });
+      return res.end(body);
     }
     if (u.pathname.startsWith('/live/xu/xp/')) {
       if (req.headers['user-agent'] !== 'TestAgent/1') {
@@ -1159,6 +1217,123 @@ test('proxy mode: viewers of a channel share one upstream stream; a source is ca
   const r = await Promise.all(urls.map((u) => fetch(u, { redirect: 'manual' })));
   assert.deepEqual(r.map((x) => x.status), [302, 302, 302]);
   await setMax(xcId, '');
+  await api('DELETE', `/api/outputs/${o.id}`);
+});
+
+test('movies and series: loaded when a source includes them, filtered per output, served over the Xtream Codes login', async () => {
+  const setSource = async (id, fields) => {
+    const src = (await api('GET', `/api/sources/${id}`)).data;
+    assert.equal((await api('PUT', `/api/sources/${id}`, { ...src, ...fields })).status, 200);
+    await app.ctx.jobs.idle();
+    return (await api('GET', `/api/sources/${id}`)).data;
+  };
+  let src = await setSource(xcId, { live_only: false });
+  assert.deepEqual([src.counts.movies, src.counts.series], [4, 2]);
+  assert.deepEqual([src.vod_stats.movies, src.vod_stats.series], [4, 2]);
+  // Live TV lists are unchanged: VOD categories live apart, even one named like a live category.
+  const liveCats = (await api('GET', `/api/sources/${xcId}/categories`)).data.map((c) => c.name);
+  assert.ok(!liveCats.includes('EN| ACTION'));
+  assert.equal(liveCats.filter((n) => n === 'US| NEWS').length, 1);
+
+  const o = (await api('POST', '/api/outputs', { name: 'Movie night' })).data;
+  let r = await api('PUT', `/api/outputs/${o.id}`, {
+    source_ids: [xcId, m3uId], stream_mode: 'redirect', xc_enabled: true, xc_username: 'vod', xc_password: 'pw', vod_enabled: true,
+    rules: [
+      { kind: 'movie', action: 'include', op: 'starts_with', value: 'en|' },
+      { kind: 'series', action: 'include', op: 'contains', value: 'drama' },
+    ],
+  });
+  assert.equal(r.data.vod_enabled, true);
+  assert.deepEqual(r.data.rules.map((x) => x.kind), ['movie', 'series']);
+  const cats = async (kind) => Object.fromEntries((await api('GET', `/api/outputs/${o.id}/categories?kind=${kind}`)).data.map((c) => [c.name, c.included]));
+  assert.deepEqual(await cats('movie'), { 'EN| ACTION': true, 'EN| KIDS': true, 'FR| FILMS': false });
+  assert.deepEqual(await cats('series'), { 'EN| DRAMA': true, 'US| NEWS': false });
+  assert.equal((await api('GET', `/api/outputs/${o.id}/categories`)).data.every((c) => !c.included), true, 'no live rules: no live TV');
+
+  const xc = (action, extra = '') => fetch(`${base}/player_api.php?username=vod&password=pw&action=${action}${extra}`).then((x) => x.json());
+  const vodCats = await xc('get_vod_categories');
+  assert.deepEqual(vodCats.map((c) => c.category_name), ['EN| ACTION', 'EN| KIDS']);
+  const movies = await xc('get_vod_streams');
+  assert.deepEqual(movies.map((m) => m.name), ['Die Hard', 'Heat', 'Frozen']);
+  const dieHard = movies[0];
+  assert.notEqual(dieHard.stream_id, 5001, 'ids are this server\'s own');
+  assert.deepEqual([dieHard.stream_type, dieHard.rating, dieHard.container_extension, dieHard.stream_icon], ['movie', '8', 'mkv', 'http://p/dh.jpg']);
+  assert.deepEqual((await xc('get_vod_streams', `&category_id=${vodCats[1].category_id}`)).map((m) => m.name), ['Frozen']);
+  const info = await xc('get_vod_info', `&vod_id=${dieHard.stream_id}`);
+  assert.deepEqual([info.info.plot, info.movie_data.stream_id, info.movie_data.container_extension], ['A cop in a tower', dieHard.stream_id, 'mkv']);
+
+  assert.deepEqual((await xc('get_series_categories')).map((c) => c.category_name), ['EN| DRAMA']);
+  const shows = await xc('get_series');
+  assert.deepEqual(shows.map((x) => [x.name, x.plot]), [['Breaking Bad', 'Chemistry']]);
+  const bb = await xc('get_series_info', `&series_id=${shows[0].series_id}`);
+  assert.equal(bb.info.plot, 'Chemistry teacher');
+  assert.deepEqual(bb.episodes['1'].map((e) => [e.episode_num, e.title]), [[1, 'Pilot'], [2, 'Cat in the Bag']]);
+  const pilot = bb.episodes['1'][0];
+  assert.notEqual(pilot.id, '90001');
+  // Opening the show again keeps the same episode ids (players remember what was watched).
+  assert.equal((await xc('get_series_info', `&series_id=${shows[0].series_id}`)).episodes['1'][0].id, pilot.id);
+
+  // Playing: Redirect sends the player to the provider's own URL.
+  const get = (p, headers = {}) => fetch(`${base}${p}`, { redirect: 'manual', headers });
+  r = await get(`/movie/vod/pw/${dieHard.stream_id}.mkv`);
+  assert.equal(r.status, 302);
+  assert.match(r.headers.get('location'), /\/movie\/xu\/xp\/5001\.mkv$/);
+  r = await get(`/series/vod/pw/${pilot.id}.mkv`);
+  assert.match(r.headers.get('location'), /\/series\/xu\/xp\/90001\.mkv$/);
+  const amelie = app.ctx.db.get("SELECT id FROM vod_items WHERE name = 'Amélie'").id;
+  assert.equal((await get(`/movie/vod/pw/${amelie}.mp4`)).status, 404, 'a movie outside the output is refused');
+  assert.equal((await get(`/movie/vod/wrong/${dieHard.stream_id}.mkv`)).status, 401);
+
+  // Proxy relays it, seeking included.
+  await api('PUT', `/api/outputs/${o.id}`, { stream_mode: 'proxy' });
+  r = await get(`/movie/vod/pw/${dieHard.stream_id}.mkv`, { range: 'bytes=0-9' });
+  assert.equal(r.status, 206);
+  assert.equal(r.headers.get('content-range'), 'bytes 0-9/100');
+  assert.equal(await r.text(), 'MOVIE-5001');
+  r = await get(`/series/vod/pw/${pilot.id}.mkv`);
+  assert.equal(r.status, 200);
+  assert.match(await r.text(), /^SERIES-90001-/);
+
+  // A title the provider drops disappears on the next refresh.
+  vodData.movies.splice(1, 1); // Heat
+  await api('POST', `/api/sources/${xcId}/refresh`);
+  await app.ctx.jobs.idle();
+  assert.deepEqual((await xc('get_vod_streams')).map((m) => m.name), ['Die Hard', 'Frozen']);
+
+  // M3U playlists: movies and episodes come from the playlist itself.
+  src = await setSource(m3uId, { live_only: false });
+  assert.deepEqual([src.counts.movies, src.counts.series], [1, 1]);
+  await api('PUT', `/api/outputs/${o.id}`, {
+    stream_mode: 'redirect',
+    rules: [
+      { kind: 'movie', action: 'include', op: 'starts_with', value: 'en|' },
+      { kind: 'series', action: 'include', op: 'contains', value: 'drama' },
+      { kind: 'series', action: 'include', op: 'equals', value: 'shows' },
+    ],
+  });
+  const lost = (await xc('get_series')).find((x) => x.name === 'Lost');
+  assert.equal(lost.cover, 'http://logo/lost.png');
+  const lostEps = (await xc('get_series_info', `&series_id=${lost.series_id}`)).episodes['1'];
+  assert.deepEqual(lostEps.map((e) => e.episode_num), [1, 2]);
+  r = await get(`/series/vod/pw/${lostEps[1].id}.mkv`);
+  assert.equal(r.headers.get('location'), 'http://h/series/u/p/78.mkv');
+
+  // Backed up with the output.
+  const file = (await api('GET', '/api/export')).data;
+  const saved = file.outputs.find((x) => x.token === o.token);
+  assert.equal(saved.vod_enabled, true);
+  assert.deepEqual(saved.rules.map((x) => x.kind), ['movie', 'series', 'series']);
+
+  // Switching the output's VOD off, or the source back to live only, takes it all away.
+  await api('PUT', `/api/outputs/${o.id}`, { vod_enabled: false });
+  assert.deepEqual(await xc('get_vod_categories'), []);
+  assert.equal((await get(`/movie/vod/pw/${dieHard.stream_id}.mkv`)).status, 404);
+  await api('PUT', `/api/outputs/${o.id}`, { vod_enabled: true });
+  src = await setSource(xcId, { live_only: true });
+  assert.deepEqual([src.counts.movies, src.counts.series], [0, 0]);
+  assert.deepEqual((await xc('get_vod_streams')).map((m) => m.name), []);
+  src = await setSource(m3uId, { live_only: true });
+  assert.deepEqual([src.counts.movies, src.counts.series], [0, 0]);
   await api('DELETE', `/api/outputs/${o.id}`);
 });
 

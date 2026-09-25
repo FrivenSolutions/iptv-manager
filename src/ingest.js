@@ -7,6 +7,7 @@ import { parseXmltv, parseXmltvTime } from './xmltv.js';
 import { matchChannels } from './epgmatch.js';
 import { loadHdhrLineup, buildHdhrGuide } from './hdhomerun.js';
 import { now } from './db.js';
+import { loadXcVod, m3uVod, applyVod, clearVod } from './vod.js';
 
 const PROGRAMME_PAST_S = 6 * 3600;
 const PROGRAMME_FUTURE_S = 14 * 86400;
@@ -81,7 +82,7 @@ async function loadXc(ctx, src) {
     is_trial: ui.is_trial ?? null,
   };
   const epgUrls = [`${base}/xmltv.php?username=${u}&password=${p}`, ...splitUrls(src.epg_urls)];
-  return { items, categories, epgUrls, account };
+  return { items, categories, epgUrls, account, api };
 }
 
 async function loadHdhr(src) {
@@ -99,8 +100,12 @@ async function loadM3u(ctx, src, tmps) {
   // Channel identity survives refreshes via tvg-id + name; duplicates get a counter.
   const seen = new Map();
   const items = [];
+  const vodEntries = [];
   for (const e of entries) {
-    if (src.live_only && isVod(e.url)) continue;
+    if (isVod(e.url)) {
+      if (!src.live_only) vodEntries.push(e);
+      continue;
+    }
     const tvgId = e.attrs['tvg-id'] || '';
     const base = `${tvgId}|${e.name}`;
     const n = (seen.get(base) || 0) + 1;
@@ -125,7 +130,7 @@ async function loadM3u(ctx, src, tmps) {
     const fromHeader = header['url-tvg'] || header['x-tvg-url'] || '';
     epgUrls = fromHeader.split(',').map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s));
   }
-  return { items, categories: [], epgUrls, account: null };
+  return { items, categories: [], epgUrls, account: null, vod: src.live_only ? null : m3uVod(vodEntries) };
 }
 
 function applyPlaylist(db, src, items, categories) {
@@ -144,14 +149,14 @@ function applyPlaylist(db, src, items, categories) {
   const refresh = src.refresh_count + 1;
   db.tx(() => {
     db.run('UPDATE sources SET refresh_count = ? WHERE id = ?', [refresh, src.id]);
-    db.run('UPDATE categories SET active = 0 WHERE source_id = ?', [src.id]);
+    db.run("UPDATE categories SET active = 0 WHERE source_id = ? AND kind = 'live'", [src.id]);
     const catIds = new Map();
     cats.forEach((c, i) => {
       if (catIds.has(c.name)) return;
       const r = db.get(
         `INSERT INTO categories (source_id, name, xc_id, sort, active, added_in, first_seen, last_seen)
          VALUES (?, ?, ?, ?, 1, ?, ?, ?)
-         ON CONFLICT (source_id, name) DO UPDATE SET
+         ON CONFLICT (source_id, kind, name) DO UPDATE SET
            xc_id = excluded.xc_id, sort = excluded.sort, active = 1, last_seen = excluded.last_seen
          RETURNING id, added_in`,
         [src.id, c.name, c.xcId, i, refresh, t, t],
@@ -321,7 +326,39 @@ async function loadEpg(ctx, src, epgUrls, tmps, localFiles = [], warnings = []) 
   };
 }
 
-export async function refreshSource(ctx, id) {
+/**
+ * Movies and series for a source, when its setting includes them. M3U playlists list them with the
+ * live channels, so they come along every time; Xtream Codes accounts have separate (large) lists,
+ * loaded when the VOD interval is due or on a manual refresh. Returns stats, or null if not loaded.
+ */
+async function refreshVod(ctx, src, data, tmps, force) {
+  const { db } = ctx;
+  if (src.type === 'hdhr') return null;
+  if (src.live_only) {
+    if (db.get('SELECT 1 FROM vod_items WHERE source_id = ? AND active = 1 LIMIT 1', [src.id])) clearVod(db, src.id);
+    return null;
+  }
+  const t = now();
+  let vod = data.vod;
+  if (src.type === 'xc') {
+    const due = force || !src.vod_refreshed_at
+      || (src.vod_refresh_minutes > 0 && src.vod_refreshed_at + src.vod_refresh_minutes * 60 <= t);
+    if (!due) return null;
+    vod = await loadXcVod(src, data.api, { tmpFile: (label) => tmpFile(ctx, label), tmps, userAgent: src.user_agent });
+  }
+  if (!vod) return null;
+  const started = Date.now();
+  if (!vod.items.length && db.get('SELECT 1 FROM vod_items WHERE source_id = ? AND active = 1 LIMIT 1', [src.id])) {
+    throw new Error('The source listed no movies or series; keeping the previous ones');
+  }
+  const stats = await applyVod(db, src, vod);
+  stats.seconds = Math.round((Date.now() - started) / 100) / 10;
+  db.run('UPDATE sources SET vod_refreshed_at = ?, vod_stats = ? WHERE id = ?', [t, JSON.stringify(stats), src.id]);
+  ctx.bump();
+  return stats;
+}
+
+export async function refreshSource(ctx, id, { forceVod = false } = {}) {
   const { db, log } = ctx;
   const src = db.get('SELECT * FROM sources WHERE id = ?', [id]);
   if (!src) return;
@@ -332,8 +369,9 @@ export async function refreshSource(ctx, id) {
     const data = src.type === 'xc' ? await loadXc(ctx, src)
       : src.type === 'hdhr' ? await loadHdhr(src)
       : await loadM3u(ctx, src, tmps);
-    if (!data.items.length) throw new Error('Source returned no live channels; keeping the previous data');
-    const cat = applyPlaylist(db, src, data.items, data.categories);
+    const vodOnly = !data.items.length && data.vod?.items.length;
+    if (!data.items.length && !vodOnly) throw new Error('Source returned no live channels; keeping the previous data');
+    const cat = vodOnly ? { categories: 0, newCategories: 0 } : applyPlaylist(db, src, data.items, data.categories);
     ctx.bump();
 
     let epg;
@@ -360,6 +398,16 @@ export async function refreshSource(ctx, id) {
     } catch (e) {
       epg = { error: `EPG failed: ${e.message}` };
     }
+    let vod = null;
+    let vodError = null;
+    try {
+      vod = await refreshVod(ctx, { ...src, refresh_count: src.refresh_count + (vodOnly ? 0 : 1) }, data, tmps, forceVod);
+    } catch (e) {
+      vodError = `Movies & series: ${redact(e.message)}`;
+      const prev = JSON.parse(src.vod_stats || 'null') || {};
+      db.run('UPDATE sources SET vod_stats = ? WHERE id = ?', [JSON.stringify({ ...prev, error: vodError }), src.id]);
+    }
+    const warning = [epg.error ? redact(epg.error) : null, vodError].filter(Boolean).join('; ') || null;
     const stats = {
       channels: data.items.length,
       categories: cat.categories,
@@ -370,13 +418,14 @@ export async function refreshSource(ctx, id) {
     db.run(
       `UPDATE sources SET last_refresh_at = ?, first_refresh_at = COALESCE(first_refresh_at, ?),
          last_status = ?, last_error = ?, stats = ?, account_info = COALESCE(?, account_info), fail_count = 0 WHERE id = ?`,
-      [now(), now(), epg.error ? 'warning' : 'ok', epg.error ? redact(epg.error) : null, JSON.stringify(stats),
+      [now(), now(), warning ? 'warning' : 'ok', warning, JSON.stringify(stats),
         data.account ? JSON.stringify(data.account) : null, src.id],
     );
     log(`Source "${src.name}": ${stats.channels} channels, ${stats.categories} categories` +
       (stats.newCategories ? `, ${stats.newCategories} new` : '') +
       (epg.channels ? `, EPG ${epg.matched}/${stats.channels} matched, ${epg.programmes} programmes` : '') +
-      ` in ${stats.seconds}s` + (epg.error ? ` (warning: ${redact(epg.error)})` : ''));
+      (vod ? `, ${vod.movies} movies, ${vod.series} series` : '') +
+      ` in ${stats.seconds}s` + (warning ? ` (warning: ${warning})` : ''));
   } catch (e) {
     db.run('UPDATE sources SET last_refresh_at = ?, last_status = ?, last_error = ?, fail_count = fail_count + 1 WHERE id = ?', [
       now(), 'error', redact(e.message), src.id,

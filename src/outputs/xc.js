@@ -1,5 +1,7 @@
-// Xtream Codes compatible API over an output profile (live TV only).
+// Xtream Codes compatible API over an output profile: live TV, plus movies and series when the
+// output includes them.
 import crypto from 'node:crypto';
+import { vodCategoryList, vodStreams, seriesList, vodInfo, seriesInfo } from './xcvod.js';
 import { now } from '../db.js';
 import { firstText } from '../xmltv.js';
 
@@ -105,8 +107,11 @@ function listings(db, ch, limit) {
   }));
 }
 
-/** Returns the JSON body for player_api.php. */
-export function playerApi(db, output, sel, base, params) {
+/**
+ * Returns the JSON body for player_api.php. vod is { movie, series } (each the output's categories
+ * of that kind), or null when the output has no movies and series.
+ */
+export async function playerApi(db, output, sel, base, params, vod = null) {
   const action = params.get('action') || '';
   switch (action) {
     case '':
@@ -116,13 +121,17 @@ export function playerApi(db, output, sel, base, params) {
     case 'get_live_streams':
       return streamsOf(sel, params.get('category_id'));
     case 'get_vod_categories':
+      return vod ? vodCategoryList(vod.movie) : [];
     case 'get_series_categories':
+      return vod ? vodCategoryList(vod.series) : [];
     case 'get_vod_streams':
+      return vod ? vodStreams(db, vod.movie, params.get('category_id')) : [];
     case 'get_series':
-      return [];
+      return vod ? seriesList(db, vod.series, params.get('category_id')) : [];
     case 'get_vod_info':
+      return vod ? vodInfo(db, vod.movie, params.get('vod_id')) : {};
     case 'get_series_info':
-      return {};
+      return vod ? seriesInfo(db, vod.series, params.get('series_id')) : {};
     case 'get_short_epg': {
       const ch = sel.byId.get(Number(params.get('stream_id')));
       return { epg_listings: listings(db, ch, Math.min(Number(params.get('limit')) || 4, 50)) };

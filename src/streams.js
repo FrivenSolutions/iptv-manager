@@ -99,6 +99,7 @@ export class Streams {
     this.ctx = ctx;
     this.hubs = new Map(); // "channelId|url" -> Hub (opening, or streaming TS)
     this.hls = new Map(); // channelId -> { source_id, at }
+    this.vod = new Map(); // "movie:id" / "episode:id" -> { source_id, n } (open proxied requests)
     this.refusedLogged = new Map(); // sourceId -> time of the last "all in use" log line
   }
 
@@ -114,6 +115,7 @@ export class Streams {
   open(sourceId) {
     const ids = new Set();
     for (const hub of this.hubs.values()) if (hub.ch.source_id === sourceId) ids.add(hub.ch.id);
+    for (const [key, x] of this.vod) if (x.source_id === sourceId) ids.add(key);
     const cutoff = Date.now() - HLS_IDLE_MS;
     for (const [id, x] of this.hls) {
       if (x.at < cutoff) this.hls.delete(id);
@@ -135,6 +137,22 @@ export class Streams {
       this.ctx.log(`Source "${name}": all ${limit} stream${limit === 1 ? '' : 's'} are in use; refused another channel`);
     }
     return { ok: false, limit };
+  }
+
+  /**
+   * Count a proxied movie or episode while its request is open; returns the release function.
+   * Several requests for one title (players seek with new ones) take a single slot.
+   */
+  hold(item) {
+    const x = this.vod.get(item.id) || { source_id: item.source_id, n: 0 };
+    x.n++;
+    this.vod.set(item.id, x);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (--x.n <= 0) this.vod.delete(item.id);
+    };
   }
 
   touchHls(ch) {

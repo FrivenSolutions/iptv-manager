@@ -12,10 +12,13 @@ export class Jobs {
     this.running = false;
     this.timer = null;
     this.waiters = [];
+    this.forceVod = new Set();
   }
 
-  enqueue(id) {
+  /** forceVod: also reload movies and series now (manual refreshes and setting changes). */
+  enqueue(id, { forceVod = false } = {}) {
     id = Number(id);
+    if (forceVod) this.forceVod.add(id);
     if (this.state.has(id)) return false;
     this.state.set(id, 'queued');
     this.queue.push(id);
@@ -35,7 +38,8 @@ export class Jobs {
         const id = this.queue.shift();
         this.state.set(id, 'running');
         try {
-          await refreshSource(this.ctx, id);
+          const forceVod = this.forceVod.delete(id);
+          await refreshSource(this.ctx, id, { forceVod });
         } catch (e) {
           this.ctx.log(`Refresh of source ${id} crashed: ${e.stack || e}`);
         } finally {

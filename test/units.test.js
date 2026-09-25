@@ -13,6 +13,8 @@ import { rewriteHls } from '../src/stream.js';
 import { splitUrls, xcBase } from '../src/ingest.js';
 import { firstText } from '../src/outputs/xc.js';
 import { addCategories, parseJellyfin } from '../src/outputs/epg.js';
+import { jsonObjects } from '../src/jsonstream.js';
+import { parseEpisodeName } from '../src/vod.js';
 
 test('parseM3U reads header, attributes, commas in names and player options', () => {
   const { header, entries } = parseM3U([
@@ -210,4 +212,38 @@ test('splitUrls and xcBase normalize user input', () => {
   assert.deepEqual(splitUrls('http://a/x.xml\n\nhttp://b/y.xml, http://c/z.xml'), ['http://a/x.xml', 'http://b/y.xml', 'http://c/z.xml']);
   assert.equal(xcBase('provider.tv:8080/'), 'http://provider.tv:8080');
   assert.equal(xcBase('https://p.tv/player_api.php?username=a'), 'https://p.tv');
+});
+
+test('jsonObjects reads big JSON lists one object at a time, across chunks and tricky strings', async () => {
+  const f = path.join(os.tmpdir(), `iptvm-json-${process.pid}.json`);
+  const items = Array.from({ length: 5000 }, (_, i) => ({
+    stream_id: i, name: `Movie {${i}} "quoted" \ back [x]`, plot: 'é'.repeat(i % 97), nested: { a: [1, { b: '}' }] },
+  }));
+  try {
+    fs.writeFileSync(f, JSON.stringify(items)); // ~1 MB: several read chunks
+    const got = [];
+    for await (const [text, v] of jsonObjects(f)) {
+      assert.deepEqual(JSON.parse(text), v);
+      got.push(v);
+    }
+    assert.deepEqual(got, items);
+    fs.writeFileSync(f, JSON.stringify({ 1: items[1], 2: items[2] }, null, 2)); // keyed by id
+    const ids = [];
+    for await (const [, v] of jsonObjects(f)) ids.push(v.stream_id);
+    assert.deepEqual(ids, [1, 2]);
+    for (const body of ['[]', '{}', 'null', '[1,2,"x"]']) {
+      fs.writeFileSync(f, body);
+      for await (const _ of jsonObjects(f)) assert.fail(`nothing expected from ${body}`);
+    }
+  } finally {
+    fs.rmSync(f, { force: true });
+  }
+});
+
+test('parseEpisodeName finds the show, season and episode in playlist names', () => {
+  assert.deepEqual(parseEpisodeName('Lost S01 E02'), { show: 'Lost', season: 1, episode: 2 });
+  assert.deepEqual(parseEpisodeName('The.Office.US.S03E14.720p'), { show: 'The Office US', season: 3, episode: 14 });
+  assert.deepEqual(parseEpisodeName('EN - Dark - S2E10 - Title'), { show: 'EN - Dark', season: 2, episode: 10 });
+  assert.equal(parseEpisodeName('Some Movie (2020)'), null);
+  assert.equal(parseEpisodeName('S01 E01'), null, 'no show name');
 });
