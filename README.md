@@ -34,17 +34,25 @@ around 25 seconds.
     *ends with*, *does not end with*, *equals*, *does not equal* and *regex*.
   - Channel rules inside a category, with a live "matches N of M" count as you type.
   - Manual picks for categories and channels, including Select all and Deselect all.
-  - A per-category toggle that hides empty sports/event placeholder channels, using patterns you
-    can edit.
+  - Per-category toggles that hide empty sports/event placeholder channels, by name or by what
+    the guide says is on now, using patterns you can edit.
   - A live preview of what the rules do before you save.
+  - One search box for categories and channels: find a channel anywhere in an output and see
+    whether it is in, and why.
 - **Multiple outputs:** each output is its own lineup with its own URLs and optional Xtream Codes
   login. One output can merge categories from several sources.
 - **Stream delivery per output:** Direct, Redirect or Proxy (see [Stream modes](#stream-modes)).
+  In Proxy mode, viewers of the same channel share one connection, and each source is held to its
+  provider's connection limit.
 - **Scheduled refresh** per source, every 12 hours by default. An empty or failed refresh never
   wipes working data.
 - **Edits that survive refreshes:** channel name, logo, number and guide id; category display
   names; **Jellyfin categories** (Movies, Sports, News, Kids) per channel group.
-- **Backup and restore** of all settings as one JSON file.
+- **Backup and restore** of all settings as one JSON file, plus an automatic backup every day.
+- **Alerts** by ntfy or webhook when a source keeps failing, an account is about to expire, or a
+  guide has run out.
+- **Advanced options** (hidden until you turn them on): guide logos for channels without one, and
+  name cleanup rules per output.
 - Admin login for the web UI. Output URLs carry a random token, which you can regenerate.
 
 Only live TV is supported. VOD and series are skipped on purpose.
@@ -159,7 +167,8 @@ by itself on its next run.
 | `iptv-manager-update --force` | Reinstall and restart, or retry a skipped release |
 | `iptv-manager-update --setup` | Install or repair the systemd units, including the one behind **Update now** |
 
-Nightly updates are off unless you turn them on. They install whatever is on the `main` branch.
+Nightly updates are off unless you turn them on, here or with the switch under **Settings →
+Version & updates**. They install whatever is on the `main` branch.
 Forks can point an install at their own repository with `IPTV_REPO=<url>` (and `IPTV_BRANCH`).
 
 Installs made before the updater existed need a one-time conversion. Run this on the host;
@@ -204,7 +213,9 @@ when they are built, from the `.git` folder in the build context. An image built
 
    The category list shows what each rule does before you save. Click **Include** or
    **Exclude** on a category to override the rules for it. Expand a category (▸) to filter or
-   pick its channels.
+   pick its channels. To find a channel, type part of its name in the search box: categories
+   that hold a match show it as a chip, marked ✓ (in the output) or ✕ (with the reason). Click a
+   chip to open its category at that channel.
 3. Copy the URLs from **Connect your apps** into your player:
    - **M3U:** `http://<host>:8080/o/<token>/playlist.m3u`
    - **EPG:** `http://<host>:8080/o/<token>/epg.xml` (or `epg.xml.gz`)
@@ -302,7 +313,8 @@ Docker.
   Genre tags from the guide become XMLTV categories, and **Movies** is also tagged **Movie** for
   Jellyfin.
 - **Streams** play straight from the box (`http://<box>:5004/auto/v9.1`), so use Direct or
-  Redirect mode unless you need Proxy. Each stream uses one of the box's tuners.
+  Redirect mode unless you need Proxy. Each stream uses one of the box's tuners. In Proxy mode, the
+  tuner count is the source's stream limit, and viewers of the same channel share a tuner.
 
 ### Jellyfin categories
 
@@ -336,6 +348,37 @@ keep it safe.
 sources. Outputs keep their URLs, so your apps keep working. Playlists, guides and uploaded
 files are not in the export; they are downloaded again.
 
+**Automatic backups** are on by default. Once a day a full export (including provider passwords,
+like the database next to it) is saved to `backups/` in the data folder, and the last 14 are
+kept. The same card lists them with **Download** and **Restore**, and has **Back up now** and an
+on/off switch. They sit on the same disk as the database, so copy one elsewhere now and then.
+
+### Alerts
+
+**Settings → Alerts** sends a notification to [ntfy](https://ntfy.sh) (a topic URL such as
+`https://ntfy.sh/my-iptv`) or to any webhook (a JSON POST) when:
+- a source has failed three refreshes in a row,
+- an Xtream Codes account expires in 14, 7, 3 or 1 days, or has expired,
+- a source's guide has run out (it has programmes, but none airing now).
+
+Each problem is sent once, and a "Resolved" note follows when it clears (expiry warnings just move
+on to the next step). The same list shows on the dashboard. Use **Send test** to check the address.
+
+### Advanced options
+
+Turn on **Settings → Show advanced options** to see features most setups don't need. Turning it
+off hides them again; anything already set up keeps working.
+
+- **Use guide logos for channels without one.** If the provider gives a channel no logo, the logo
+  its guide lists is used. Provider logos and your own always win.
+- **Name cleanup** (on each output's page). Find/replace rules on channel names, category names
+  or both, such as `US: CNN ᴴᴰ` into `CNN`. Patterns are case-sensitive regular expressions, and
+  `$1` works in the replacement. Rules run top to bottom, then leftover spaces are tidied.
+  **Country prefix** and **Quality tags** presets are included, and a preview shows how many names
+  change, with examples. Names you set by hand are never changed, and a name that would end up
+  empty keeps its original. The cleaned names are used in the M3U, the XMLTV guide and the Xtream
+  Codes login alike. With advanced options off, an output with rules shows one line saying so.
+
 ### Stream modes
 
 | Mode | Playlist URL points to | Bandwidth through this server | Provider credentials visible to clients |
@@ -345,7 +388,16 @@ files are not in the export; they are downloaded again.
 | Proxy | this server | all video | no |
 
 Xtream Codes clients always build URLs on this server, so Direct behaves like Redirect for them.
-Proxy mode does not enforce your provider's connection limit.
+
+**Connection limits (Proxy only).** Everyone watching the same channel shares one connection to
+the provider, which opens with the first viewer and closes with the last. Each source can be held
+to a number of channels playing at once: the source's **Advanced → Streams at once**. Blank means
+automatic: the Xtream Codes account's `max_connections`, or the HDHomeRun's tuner count. 0 means
+no limit. A new channel over the limit is refused with *503 Service Unavailable* instead of
+knocking another stream off at the provider. More viewers of a channel already playing are
+always let in. HLS channels count while their playlist or segments are being fetched, and for 30
+seconds after. The Sources list shows the streams in use. Direct and Redirect can't be limited,
+because players connect to the provider themselves.
 
 ## Configuration
 
