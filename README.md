@@ -51,11 +51,14 @@ around 25 seconds.
 - **Backup and restore** of all settings as one JSON file, plus an automatic backup every day.
 - **Alerts** by ntfy or webhook when a source keeps failing, an account is about to expire, or a
   guide has run out.
+- **Movies and series** (optional) through an output's Xtream Codes login, picked with the same
+  kind of rules on their own tabs.
 - **Advanced options** (hidden until you turn them on): guide logos for channels without one, and
   name cleanup rules per output.
 - Admin login for the web UI. Output URLs carry a random token, which you can regenerate.
 
-Only live TV is supported. VOD and series are skipped on purpose.
+Live TV comes first. **Movies and series** are optional, per source and per output (see
+[Movies and series](#movies-and-series)); until you turn them on, they are skipped.
 
 ## Install
 
@@ -378,6 +381,31 @@ off hides them again; anything already set up keeps working.
   change, with examples. Names you set by hand are never changed, and a name that would end up
   empty keeps its original. The cleaned names are used in the M3U, the XMLTV guide and the Xtream
   Codes login alike. With advanced options off, an output with rules shows one line saying so.
+
+### Movies and series
+
+Off by default, in two places:
+
+1. **The source.** Edit it and set **Content** to *Live TV, movies and series* (Xtream Codes and
+   M3U sources). An Xtream Codes account's movie and series lists load on their own schedule,
+   once a day by default (**Advanced → Refresh movies & series every**), and on every manual
+   **Refresh**. The lists are read one entry at a time, so big catalogs don't need much memory.
+   An M3U playlist's `/movie/` and `/series/` entries come with each refresh; episodes are
+   grouped into shows by names like `Show S01 E02`.
+2. **The output.** Tick **Include movies & series** under Settings. **Live TV**, **Movies** and
+   **Series** tabs then appear on the output's page. Each VOD tab has its own rules and category
+   list, which work like live TV's: include and exclude rules on category names, hand picks that
+   always win, and new categories that match added automatically. Expand a category (▸) to see
+   its titles.
+
+Players get movies and series through the output's **Xtream Codes login** (TiviMate, IPTV
+Smarters, Kodi and similar), with posters, plots and ratings passed on from the provider. A
+movie's details and a show's episode list are fetched from the provider when a player opens
+them. The M3U playlist and the XMLTV guide stay live TV only.
+
+Playback follows the output's stream mode. Direct and Redirect send the player to the provider.
+Proxy relays the video, seeking included, and counts each title that is playing against the
+source's **Streams at once** limit.
 
 ### Stream modes
 

@@ -523,6 +523,11 @@ function outputCard(o) {
 
 const TYPE_LABELS = { m3u: 'M3U', xc: 'Xtream Codes', hdhr: 'HDHomeRun' };
 
+// "12,345 movies · 678 series"
+function vodCounts(s) {
+  return `${s.counts.movies.toLocaleString()} movies · ${s.counts.series.toLocaleString()} series`;
+}
+
 // "1 of 2 streams in use" (proxy outputs only), or null when nothing is playing and there's no limit.
 function streamsText(s) {
   const { open = 0, limit = 0 } = s.streams || {};
@@ -560,7 +565,8 @@ function sourceRow(s, update) {
     h('td', null, h('a', { href: `#/sources/${s.id}`, class: 'strong' }, s.name), h('div', { class: 'meta' }, TYPE_LABELS[s.type])),
     h('td', null, statusBadge(s), s.last_error ? h('div', { class: 'meta clip', title: s.last_error }, s.last_error) : null,
       streamsText(s) ? h('div', { class: 'meta' }, `▶ ${streamsText(s)}`) : null),
-    h('td', { class: 'num' }, s.counts.channels),
+    h('td', { class: 'num' }, s.counts.channels,
+      s.counts.movies || s.counts.series ? h('div', { class: 'meta' }, vodCounts(s)) : null),
     h('td', { class: 'num' }, s.counts.categories),
     h('td', { class: 'num' }, s.counts.epg_matched),
     h('td', null, ago(s.last_refresh_at), h('div', { class: 'meta' }, s.next_refresh_at ? `next ${ago(s.next_refresh_at)}` : 'manual only')),
@@ -595,7 +601,10 @@ function sourceForm(src, onSaved = route) {
     hdhr_host: h('input', { value: v(src?.hdhr_host), placeholder: '192.168.1.50' }),
     user_agent: h('input', { value: v(src?.user_agent), placeholder: 'VLC/3.0.21 LibVLC/3.0.21 (default)' }),
     hours: h('input', { type: 'number', min: 0, step: 0.5, value: src ? src.refresh_minutes / 60 : 12 }),
-    live_only: h('input', { type: 'checkbox', checked: src ? src.live_only : true }),
+    content: h('select', null,
+      h('option', { value: 'live', selected: !src || src.live_only }, 'Live TV only'),
+      h('option', { value: 'vod', selected: !!src && !src.live_only }, 'Live TV, movies and series')),
+    vod_hours: h('input', { type: 'number', min: 0, step: 1, value: src ? src.vod_refresh_minutes / 60 : 24 }),
     enabled: h('input', { type: 'checkbox', checked: src ? src.enabled : true }),
     max_streams: h('input', {
       type: 'number', min: 0, value: src?.max_streams ?? '',
@@ -606,8 +615,7 @@ function sourceForm(src, onSaved = route) {
 
   const m3uPart = h('div', null,
     field('Playlist URL', f.url, src?.url?.startsWith('upload:') ? 'Currently using an uploaded file. Enter a URL to switch back.' : 'Or upload a file below.'),
-    field('…or upload a playlist file', f.file),
-    h('label', { class: 'check' }, f.live_only, ' Skip movies and series (live TV only)'));
+    field('…or upload a playlist file', f.file));
   const xcPart = h('div', null,
     field('Server URL', f.xc_host, 'The address your provider gave you, including the port.'),
     h('div', { class: 'two' }, field('Username', f.xc_username), field('Password', f.xc_password)),
@@ -627,11 +635,17 @@ function sourceForm(src, onSaved = route) {
         sync();
       },
     }, label))) : null;
+  const contentPart = field('Content', f.content,
+    'Movies and series reach players through an output\'s Xtream Codes login, once the output includes them. Large catalogs take a minute to load.');
+  const vodHoursPart = field('Refresh movies & series every (hours)', f.vod_hours,
+    'Catalogs are large and change slowly. 0 = only when you click Refresh.');
   const epgHint = h('p', { class: 'hint' });
   const sync = () => {
     m3uPart.hidden = type !== 'm3u';
     xcPart.hidden = type !== 'xc';
     hdhrPart.hidden = type !== 'hdhr';
+    contentPart.hidden = type === 'hdhr';
+    vodHoursPart.hidden = type !== 'xc';
     epgHint.textContent = {
       xc: 'The provider\'s own guide (xmltv.php) is used automatically. Add extra XMLTV URLs here to fill gaps.',
       hdhr: 'The HDHomeRun guide is fetched automatically. Add extra XMLTV URLs here to fill gaps.',
@@ -643,7 +657,7 @@ function sourceForm(src, onSaved = route) {
   const body = h('form', { class: 'form', onsubmit: (e) => { e.preventDefault(); save(); } },
     typeSwitch,
     field('Name', f.name),
-    m3uPart, xcPart, hdhrPart,
+    m3uPart, xcPart, hdhrPart, contentPart,
     h('details', { open: !!src?.epg_urls },
       h('summary', null, 'Guide (EPG)'),
       epgHint,
@@ -652,6 +666,7 @@ function sourceForm(src, onSaved = route) {
     h('details', null,
       h('summary', null, 'Advanced'),
       field('Refresh every (hours)', f.hours, '0 = only when you click Refresh.'),
+      vodHoursPart,
       field('User agent', f.user_agent, 'Sent to the provider for playlists, guides and proxied streams.'),
       field('Streams at once', f.max_streams,
         'For outputs set to Proxy: how many channels from this source can play at the same time. People watching the same channel share one ' +
@@ -665,7 +680,8 @@ function sourceForm(src, onSaved = route) {
       name: f.name.value, type, url: f.url.value || (src?.url?.startsWith('upload:') ? src.url : ''),
       epg_urls: f.epg_urls.value, xc_host: f.xc_host.value, xc_username: f.xc_username.value, xc_password: f.xc_password.value,
       xc_stream_ext: f.xc_stream_ext.value, hdhr_host: f.hdhr_host.value, user_agent: f.user_agent.value,
-      refresh_minutes: Math.round(Number(f.hours.value || 0) * 60), live_only: f.live_only.checked, enabled: f.enabled.checked,
+      refresh_minutes: Math.round(Number(f.hours.value || 0) * 60), live_only: f.content.value === 'live', enabled: f.enabled.checked,
+      vod_refresh_minutes: Math.round(Number(f.vod_hours.value || 0) * 60),
       max_streams: f.max_streams.value,
     };
     if (type === 'm3u' && !payload.url && !f.file.files[0]) return toast('Enter a playlist URL or choose a file', 'error');
@@ -757,6 +773,9 @@ async function sourceDetail(main, id) {
       h('div', { class: 'stats wide card' },
         stat(src.counts.channels, 'channels'), stat(src.counts.categories, 'categories'),
         stat(src.counts.epg_matched, 'with guide'),
+        src.counts.movies || src.counts.series ? stat(src.counts.movies.toLocaleString(), 'movies') : null,
+        src.counts.movies || src.counts.series ? stat(src.counts.series.toLocaleString(), 'series') : null,
+        !src.live_only && src.vod_refreshed_at ? stat(ago(src.vod_refreshed_at), 'movies & series loaded') : null,
         stat(st.epg?.programmes ?? '–', 'programmes'),
         stat(ago(src.last_refresh_at), 'last refresh'),
         src.account_info?.exp_date ? stat(new Date(Number(src.account_info.exp_date) * 1000).toLocaleDateString(), 'account expires') : null,
@@ -920,10 +939,14 @@ async function outputEditor(main, id) {
     xc_username: o.xc_username || '',
     xc_password: o.xc_password || '',
     sources: o.sources.map((s) => ({ ...s })),
-    rules: o.rules.map((r) => ({ ...r })),
+    // Category rules per kind: live TV here, movies and series in vod_rules.
+    rules: o.rules.filter((r) => r.kind === 'live').map((r) => ({ ...r })),
+    vod_rules: { movie: o.rules.filter((r) => r.kind === 'movie').map((r) => ({ ...r })), series: o.rules.filter((r) => r.kind === 'series').map((r) => ({ ...r })) },
+    vod_enabled: o.vod_enabled,
     name_rules: o.name_rules.map((r) => ({ ...r })),
   };
   let dirty = false;
+  let redrawVod = () => {};
   // hits: channels matching the search (from the server), per category, for hitsQ.
   const view = { q: '', show: 'all', open: new Set(), hits: new Map(), hitsQ: '', hitTotal: 0 };
   const saveBar = h('div', { class: 'savebar', hidden: true },
@@ -934,6 +957,7 @@ async function outputEditor(main, id) {
     dirty = true;
     saveBar.hidden = false;
     drawCats();
+    redrawVod();
   };
   const onLeave = (e) => {
     if (dirty) {
@@ -969,8 +993,12 @@ async function outputEditor(main, id) {
       h('div', { class: 'two' },
         field('Renumber channels from', inp('number_start', { type: 'number', min: 0, placeholder: 'Keep provider numbers' })),
         field('Guide days', inp('epg_days', { type: 'number', min: 1, max: 14 }))),
-      h('label', { class: 'check' }, xcToggle, ' Also publish as an Xtream Codes login (live TV)'),
-      xcBox));
+      h('label', { class: 'check' }, xcToggle, ' Also publish as an Xtream Codes login'),
+      xcBox,
+      h('label', { class: 'check' },
+        h('input', { type: 'checkbox', checked: draft.vod_enabled, onchange: (e) => { draft.vod_enabled = e.target.checked; markDirty(); } }),
+        ' Include movies & series'),
+      h('span', { class: 'hint' }, 'Players see them through the Xtream Codes login. Pick them on the Movies and Series tabs.')));
 
   // --- sources
   const sourcesBox = h('div', { class: 'source-list' });
@@ -985,28 +1013,33 @@ async function outputEditor(main, id) {
   drawSources();
   const sourcesCard = h('section', { class: 'card' }, h('h2', null, 'Sources'), h('p', { class: 'hint' }, 'Channels are listed in this source order. Save to load categories from newly attached sources.'), sourcesBox);
 
-  // --- rules
-  const rulesBox = h('div', { class: 'rules' });
-  const drawRules = () => {
-    fill(rulesBox, ruleGroups({
-      rules: draft.rules,
-      subject: 'categories',
-      newRule: (action) => ({ action, op: action === 'include' ? 'starts_with' : 'contains', value: '', source_id: null }),
-      commit: () => { drawRules(); markDirty(); },
-      onAdd: () => drawRules(),
-      fields: (r) => [
-        h('span', { class: 'meta' }, 'from'),
-        h('select', { onchange: (e) => { r.source_id = e.target.value ? Number(e.target.value) : null; markDirty(); } },
-          h('option', { value: '' }, 'any source'),
-          draft.sources.filter((s) => s.attached || s.id === r.source_id).map((s) => h('option', { value: s.id, selected: r.source_id === s.id }, s.name))),
-        h('span', { class: 'meta' }, 'whose name'),
-        h('select', { onchange: (e) => { r.op = e.target.value; markDirty(); } },
-          Object.entries(OP_LABELS).map(([k, l]) => h('option', { value: k, selected: r.op === k }, l))),
-        h('input', { value: r.value, placeholder: 'e.g. US|', oninput: (e) => { r.value = e.target.value; markDirty(); } }),
-      ],
-    }));
+  // --- rules: one editor per kind of category (live TV, movies, series)
+  const rulesEditor = (list, placeholder) => {
+    const box = h('div', { class: 'rules' });
+    const draw = () => {
+      fill(box, ruleGroups({
+        rules: list(),
+        subject: 'categories',
+        newRule: (action) => ({ action, op: action === 'include' ? 'starts_with' : 'contains', value: '', source_id: null }),
+        commit: () => { draw(); markDirty(); },
+        onAdd: () => draw(),
+        fields: (r) => [
+          h('span', { class: 'meta' }, 'from'),
+          h('select', { onchange: (e) => { r.source_id = e.target.value ? Number(e.target.value) : null; markDirty(); } },
+            h('option', { value: '' }, 'any source'),
+            draft.sources.filter((src) => src.attached || src.id === r.source_id).map((src) => h('option', { value: src.id, selected: r.source_id === src.id }, src.name))),
+          h('span', { class: 'meta' }, 'whose name'),
+          h('select', { onchange: (e) => { r.op = e.target.value; markDirty(); } },
+            Object.entries(OP_LABELS).map(([k, l]) => h('option', { value: k, selected: r.op === k }, l))),
+          h('input', { value: r.value, placeholder, oninput: (e) => { r.value = e.target.value; markDirty(); } }),
+        ],
+      }));
+    };
+    draw();
+    return { box, draw };
   };
-  drawRules();
+  const liveRules = rulesEditor(() => draft.rules, 'e.g. US|');
+  const rulesBox = liveRules.box;
   const includeAll = h('input', { type: 'checkbox', checked: draft.include_all, onchange: (e) => { draft.include_all = e.target.checked; markDirty(); } });
   const rulesCard = h('section', { class: 'card' },
     h('h2', null, 'Filter rules'),
@@ -1443,31 +1476,175 @@ async function outputEditor(main, id) {
       xc_username: draft.xc_username,
       xc_password: draft.xc_password,
       source_ids: attachedIds(),
-      rules: draft.rules.filter((r) => r.value !== ''),
+      rules: [
+        ...draft.rules.map((r) => ({ ...r, kind: 'live' })),
+        ...draft.vod_rules.movie.map((r) => ({ ...r, kind: 'movie' })),
+        ...draft.vod_rules.series.map((r) => ({ ...r, kind: 'series' })),
+      ].filter((r) => r.value !== ''),
+      vod_enabled: draft.vod_enabled,
       // Only sent when shown, so an output's rules are never touched with advanced options off.
       name_rules: settings.advanced ? draft.name_rules.filter((r) => r.find !== '') : undefined,
     };
     o = await attempt(() => api('PUT', `/api/outputs/${id}`, payload), 'Output saved');
     cats = await api('GET', `/api/outputs/${id}/categories`);
-    draft.rules = o.rules.map((r) => ({ ...r }));
+    draft.rules = o.rules.filter((r) => r.kind === 'live').map((r) => ({ ...r }));
+    for (const kind of ['movie', 'series']) draft.vod_rules[kind] = o.rules.filter((r) => r.kind === kind).map((r) => ({ ...r }));
     draft.name_rules = o.name_rules.map((r) => ({ ...r }));
     dirty = false;
     saveBar.hidden = true;
     title.textContent = o.name;
-    drawRules();
+    liveRules.draw();
     if (settings.advanced) {
       drawNames();
       previewNames();
     }
     drawCats();
     drawUrls();
+    // Newly attached sources bring their own movie and series categories.
+    for (const p of Object.values(vodPanes)) {
+      p.rules.draw();
+      if (p.loaded) p.load();
+    }
+    redrawVod();
   };
+
+  // --- movies & series: one tab each, with their own rules and categories
+  const VOD_LABELS = {
+    movie: { title: 'Movie', plural: 'movies', tab: 'Movies' },
+    series: { title: 'Series', plural: 'series', tab: 'Series' },
+  };
+  const vodPane = (kind) => {
+    const L = VOD_LABELS[kind];
+    const state = { cats: null, q: '', show: 'all', open: new Set() };
+    const titlePanels = new Map();
+    const rules = rulesEditor(() => draft.vod_rules[kind], 'e.g. EN|');
+    const list = h('div', { class: 'cat-table' });
+    const summary = h('span', { class: 'meta' });
+    const notice = h('div');
+    const evalVod = (c) => (attachedIds().includes(c.source_id)
+      ? categoryState(c, draft.vod_rules[kind], c.override, draft.include_all)
+      : { included: false, reason: 'detached' });
+    const visible = () => {
+      const q = state.q.toLowerCase();
+      return (state.cats || []).filter((c) => {
+        const st = evalVod(c);
+        if (q && !(c.custom_name || c.name).toLowerCase().includes(q)) return false;
+        if (state.show === 'included') return st.included;
+        if (state.show === 'excluded') return !st.included;
+        if (state.show === 'new') return c.is_new;
+        if (state.show === 'manual') return !!c.override;
+        return true;
+      });
+    };
+    const setOverride = async (ids, value) => {
+      await attempt(() => api('PUT', `/api/outputs/${id}/categories`, { ids, state: value }));
+      for (const c of state.cats) if (ids.includes(c.id)) c.override = value;
+      draw();
+    };
+    // A look inside a category: its titles, loaded once.
+    const titlesPanel = (c) => {
+      let p = titlePanels.get(c.id);
+      if (!p) {
+        p = h('div', { class: 'ch-panel' }, h('p', { class: 'meta' }, 'Loading…'));
+        titlePanels.set(c.id, p);
+        api('GET', `/api/categories/${c.id}/titles`).then((r) => fill(p,
+          r.titles.length ? h('div', { class: 'title-list' }, r.titles.map((t) => h('span', { class: 'title-item', title: t.name }, t.name))) : h('p', { class: 'meta' }, 'Empty.'),
+          r.total > r.titles.length ? h('p', { class: 'meta' }, `Showing the first ${r.titles.length} of ${r.total}.`) : null));
+      }
+      return p;
+    };
+    const draw = () => {
+      fill(notice,
+        draft.xc_enabled ? null : h('div', { class: 'ch-warning' },
+          h('span', null, h('b', null, 'Players get movies and series through the Xtream Codes login. '), 'Turn it on under Settings.')));
+      if (!state.cats) {
+        fill(list, h('p', { class: 'meta pad' }, 'Loading…'));
+        return;
+      }
+      if (!state.cats.length) {
+        summary.textContent = '';
+        fill(list, h('p', { class: 'meta pad' },
+          `None of this output's sources has ${L.plural}. Edit a source and set its content to "Live TV, movies and series".`));
+        return;
+      }
+      let inc = 0;
+      let titles = 0;
+      for (const c of state.cats) {
+        if (evalVod(c).included) {
+          inc++;
+          titles += c.channel_count;
+        }
+      }
+      summary.textContent = `${inc} of ${state.cats.length} categories · ${titles.toLocaleString()} ${L.plural}${dirty ? ' (preview)' : ''}`;
+      const rows = visible();
+      const LIMIT = 500;
+      fill(list,
+        ...rows.slice(0, LIMIT).map((c) => {
+          const st = evalVod(c);
+          const seg = (label, val, cls) => h('button', { class: `${c.override === val ? 'on' : ''} ${cls}`, title: val ? `Always ${val}` : 'Follow the rules', onclick: () => setOverride([c.id], val) }, label);
+          const row = h('div', { class: `cat-row ${st.included ? 'in' : 'out'}` },
+            h('button', { class: 'expander', title: `Show the ${L.plural}`, onclick: () => { state.open.has(c.id) ? state.open.delete(c.id) : state.open.add(c.id); draw(); } }, state.open.has(c.id) ? '▾' : '▸'),
+            h('span', { class: 'dot' }),
+            h('span', { class: 'cat-name' }, c.custom_name || c.name, c.is_new ? badge('new', 'info') : null,
+              h('span', { class: 'meta' }, ` ${sourceName(c.source_id)} · ${c.channel_count.toLocaleString()} ${L.plural} · ${reasonText(st)}`)),
+            h('span', { class: 'segmented small' }, seg('Auto', null, ''), seg('Include', 'include', 'inc'), seg('Exclude', 'exclude', 'exc')));
+          return state.open.has(c.id) ? h('div', null, row, titlesPanel(c)) : row;
+        }),
+        rows.length > LIMIT ? h('p', { class: 'meta pad' }, `Showing the first ${LIMIT} of ${rows.length}. Use the search box to narrow the list.`) : null,
+        rows.length ? null : h('p', { class: 'meta pad' }, 'No categories to show.'));
+    };
+    const load = async () => {
+      state.cats = await api('GET', `/api/outputs/${id}/categories?kind=${kind}`);
+      draw();
+    };
+    const bulk = (value) => () => setOverride(visible().map((c) => c.id), value);
+    const el = h('div', { hidden: true },
+      notice,
+      h('section', { class: 'card' },
+        h('h2', null, `${L.title} rules`),
+        h('p', { class: 'hint' },
+          `Rules run against the provider's ${L.title.toLowerCase()} category names on every refresh, so new categories that match are added automatically. `,
+          'A category is kept when it matches any Include rule and no Exclude rule. Picking a category by hand below always wins.'),
+        rules.box),
+      h('section', { class: 'card' },
+        h('div', { class: 'card-head' }, h('h2', null, `${L.title} categories`), summary),
+        h('div', { class: 'toolbar' },
+          h('input', { type: 'search', placeholder: 'Search categories', oninput: (e) => { state.q = e.target.value; draw(); } }),
+          h('select', { onchange: (e) => { state.show = e.target.value; draw(); } },
+            [['all', 'All'], ['included', 'Included'], ['excluded', 'Excluded'], ['new', 'New'], ['manual', 'Picked by hand']].map(([v, l]) => h('option', { value: v }, l))),
+          h('span', { class: 'row' },
+            h('button', { class: 'btn small', onclick: bulk('include') }, 'Include shown'),
+            h('button', { class: 'btn small', onclick: bulk('exclude') }, 'Exclude shown'),
+            h('button', { class: 'btn small', onclick: bulk(null) }, 'Reset shown to Auto'))),
+        list));
+    return { el, draw, load, rules, get loaded() { return !!state.cats; } };
+  };
+  const vodPanes = { movie: vodPane('movie'), series: vodPane('series') };
+  const livePane = h('div', null, rulesCard, namesCard, catsCard);
+  const tabsBar = h('div', { class: 'tabs' });
+  let tab = 'live';
+  const drawTabs = () => {
+    if (!draft.vod_enabled) tab = 'live';
+    tabsBar.hidden = !draft.vod_enabled;
+    fill(tabsBar, [['live', 'Live TV'], ['movie', 'Movies'], ['series', 'Series']].map(([k, label]) =>
+      h('button', { class: tab === k ? 'on' : '', onclick: () => { tab = k; drawTabs(); } }, label)));
+    livePane.hidden = tab !== 'live';
+    for (const [k, p] of Object.entries(vodPanes)) {
+      p.el.hidden = tab !== k;
+      if (tab === k && !p.loaded) p.load();
+    }
+  };
+  redrawVod = () => {
+    drawTabs();
+    for (const p of Object.values(vodPanes)) if (p.loaded) p.draw();
+  };
+  drawTabs();
 
   const title = h('h1', null, o.name);
   fill(main, 
     h('div', { class: 'page-head' }, h('div', null, h('a', { href: '#/outputs', class: 'crumb' }, '‹ Outputs'), title)),
     h('div', { class: 'editor' },
-      h('div', { class: 'editor-main' }, rulesCard, namesCard, catsCard),
+      h('div', { class: 'editor-main' }, tabsBar, livePane, vodPanes.movie.el, vodPanes.series.el),
       h('div', { class: 'editor-side' }, urlsCard, settingsCard, sourcesCard)),
     saveBar);
   drawCats();

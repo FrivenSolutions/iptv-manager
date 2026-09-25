@@ -361,3 +361,12 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 .name-sample .before { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .error-text { color: var(--error); }
 .quiet-line { margin: 0 4px; }
+
+/* --- output tabs: Live TV / Movies / Series (only with movies & series on) */
+.tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+.tabs button { font: inherit; font-weight: 600; background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 8px 14px; color: var(--muted); cursor: pointer; }
+.tabs button:hover { color: var(--text); }
+.tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+.editor-main > .ch-warning, .editor-main > div > .ch-warning { margin-bottom: 16px; }
+.title-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 16px; font-size: 13px; }
+.title-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
