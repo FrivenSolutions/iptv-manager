@@ -1490,7 +1490,7 @@ async function outputEditor(main, id) {
         h('h3', null, 'Xtream Codes login'),
         copyField('Server', o.urls.xc_server), h('div', { class: 'two' }, copyField('Username', o.xc_username), copyField('Password', o.xc_password))) : null,
       o.xc_enabled ? loginsBox() : null,
-      h('div', { class: 'row' },
+      h('div', { class: 'xc-box' }, h('h3', null, 'Manage output'), h('div', { class: 'row' },
         h('a', { class: 'btn small', href: o.urls.m3u, target: '_blank', rel: 'noopener' }, 'Open playlist'),
         h('button', {
           class: 'btn small danger-text',
@@ -1518,7 +1518,7 @@ async function outputEditor(main, id) {
             dirty = false;
             location.hash = '#/outputs';
           },
-        }, 'Delete output')));
+        }, 'Delete output'))));
   };
   // Other people's logins to this output: each with its own username and password, paused or
   // removed on its own. Saved right away (not with the output's Save).
