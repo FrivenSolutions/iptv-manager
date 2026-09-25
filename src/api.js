@@ -163,6 +163,8 @@ function outputView(req, ctx, o, withDetail = false) {
     token: o.token,
     stream_mode: o.stream_mode,
     include_all: !!o.include_all,
+    include_all_movie: !!o.include_all_movie,
+    include_all_series: !!o.include_all_series,
     number_start: o.number_start,
     epg_days: o.epg_days,
     xc_enabled: !!o.xc_enabled,
@@ -646,6 +648,10 @@ export function registerApi(router, ctx) {
         ],
       );
       if (nameRules) db.run('UPDATE outputs SET name_rules = ? WHERE id = ?', [JSON.stringify(nameRules.rules), o.id]);
+      for (const kind of ['movie', 'series']) {
+        const key = `include_all_${kind}`;
+        if (body[key] !== undefined) db.run(`UPDATE outputs SET ${key} = ? WHERE id = ?`, [bool(body[key]), o.id]);
+      }
       if (Array.isArray(body.source_ids)) {
         db.run('DELETE FROM output_sources WHERE output_id = ?', [o.id]);
         body.source_ids.forEach((sid, i) => {
@@ -674,6 +680,36 @@ export function registerApi(router, ctx) {
     ctx.epgCache.drop(o.id);
     touch();
     sendJson(res, 200, { ok: true });
+  });
+
+  // A copy of an output with everything in it: sources, rules of every kind, hand picks, channel
+  // rules, per-category switches and name cleanup. It gets its own URLs; its Xtream Codes login
+  // starts off, since a username can only belong to one output.
+  router.post('/api/outputs/:id/clone', (req, res, { params }) => {
+    const o = mustGet(db, 'outputs', params.id);
+    const t = now();
+    const id = db.tx(() => {
+      const copyId = db.get(
+        `INSERT INTO outputs (name, token, stream_mode, include_all, include_all_movie, include_all_series, number_start, epg_days,
+                              xc_enabled, xc_username, xc_password, name_rules, vod_enabled, created_at, updated_at)
+         SELECT ?, ?, stream_mode, include_all, include_all_movie, include_all_series, number_start, epg_days,
+                0, NULL, NULL, name_rules, vod_enabled, ?, ?
+           FROM outputs WHERE id = ? RETURNING id`,
+        [`${o.name} (copy)`.slice(0, 200), randomToken(), t, t, o.id],
+      ).id;
+      db.run('INSERT INTO output_sources (output_id, source_id, sort) SELECT ?, source_id, sort FROM output_sources WHERE output_id = ?', [copyId, o.id]);
+      db.run(`INSERT INTO output_rules (output_id, source_id, kind, action, op, value, sort)
+              SELECT ?, source_id, kind, action, op, value, sort FROM output_rules WHERE output_id = ? ORDER BY sort, id`, [copyId, o.id]);
+      db.run(`INSERT INTO output_channel_rules (output_id, category_id, action, op, value, sort)
+              SELECT ?, category_id, action, op, value, sort FROM output_channel_rules WHERE output_id = ? ORDER BY sort, id`, [copyId, o.id]);
+      db.run('INSERT INTO output_category_overrides (output_id, category_id, state) SELECT ?, category_id, state FROM output_category_overrides WHERE output_id = ?', [copyId, o.id]);
+      db.run('INSERT INTO output_channel_overrides (output_id, channel_id, state) SELECT ?, channel_id, state FROM output_channel_overrides WHERE output_id = ?', [copyId, o.id]);
+      db.run(`INSERT INTO output_category_settings (output_id, category_id, hide_empty, hide_by_guide, hide_unlisted)
+              SELECT ?, category_id, hide_empty, hide_by_guide, hide_unlisted FROM output_category_settings WHERE output_id = ?`, [copyId, o.id]);
+      return copyId;
+    });
+    touch();
+    sendJson(res, 201, outputView(req, ctx, mustGet(db, 'outputs', id), true));
   });
 
   router.post('/api/outputs/:id/token', (req, res, { params }) => {

@@ -219,6 +219,10 @@ when they are built, from the `.git` folder in the build context. An image built
    pick its channels. To find a channel, type part of its name in the search box: categories
    that hold a match show it as a chip, marked ✓ (in the output) or ✕ (with the reason). Click a
    chip to open its category at that channel.
+
+   To start a similar lineup from an existing one, use **Duplicate** (under **Connect your
+   apps**). The copy has the same sources, rules, hand picks and settings, and its own URLs. Its
+   Xtream Codes login starts off, because a username belongs to one output; give it a new one.
 3. Copy the URLs from **Connect your apps** into your player:
    - **M3U:** `http://<host>:8080/o/<token>/playlist.m3u`
    - **EPG:** `http://<host>:8080/o/<token>/epg.xml` (or `epg.xml.gz`)
@@ -398,8 +402,9 @@ Off by default, in two places:
 2. **The output.** Tick **Include movies & series** under Settings. **Live TV**, **Movies** and
    **Series** tabs then appear on the output's page. Each VOD tab has its own rules and category
    list, which work like live TV's: include and exclude rules on category names, hand picks that
-   always win, and new categories that match added automatically. Expand a category (▸) to see
-   its titles.
+   always win, new categories that match added automatically, and an "include all of a source's
+   categories when it has no Include rules" switch of its own. Expand a category (▸) to see its
+   titles.
 
 Players get movies and series through the output's **Xtream Codes login** (TiviMate, IPTV
 Smarters, Kodi and similar), with posters, plots and ratings passed on from the provider. A

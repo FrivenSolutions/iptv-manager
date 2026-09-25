@@ -298,6 +298,13 @@ const MIGRATIONS = [
   ALTER TABLE output_rules ADD COLUMN kind TEXT NOT NULL DEFAULT 'live';
   `,
   },
+  `
+  -- "Include all categories of a source with no Include rules", per kind. Movies and series used
+  -- the live TV switch until now, so they start from it.
+  ALTER TABLE outputs ADD COLUMN include_all_movie INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE outputs ADD COLUMN include_all_series INTEGER NOT NULL DEFAULT 0;
+  UPDATE outputs SET include_all_movie = include_all, include_all_series = include_all;
+  `,
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.

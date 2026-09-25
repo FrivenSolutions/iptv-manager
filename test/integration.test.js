@@ -1248,6 +1248,19 @@ test('movies and series: loaded when a source includes them, filtered per output
   const cats = async (kind) => Object.fromEntries((await api('GET', `/api/outputs/${o.id}/categories?kind=${kind}`)).data.map((c) => [c.name, c.included]));
   assert.deepEqual(await cats('movie'), { 'EN| ACTION': true, 'EN| KIDS': true, 'FR| FILMS': false });
   assert.deepEqual(await cats('series'), { 'EN| DRAMA': true, 'US| NEWS': false });
+  // "Include all when a source has no Include rules" is its own switch per kind.
+  await api('PUT', `/api/outputs/${o.id}`, { include_all_series: true, rules: [{ kind: 'movie', action: 'include', op: 'starts_with', value: 'en|' }] });
+  assert.deepEqual(await cats('series'), { 'EN| DRAMA': true, 'US| NEWS': true });
+  assert.equal((await api('GET', `/api/outputs/${o.id}/categories`)).data.every((c) => !c.included), true, 'live TV keeps its own switch');
+  assert.deepEqual(await cats('movie'), { 'EN| ACTION': true, 'EN| KIDS': true, 'FR| FILMS': false });
+  await api('PUT', `/api/outputs/${o.id}`, {
+    include_all_series: false,
+    rules: [
+      { kind: 'movie', action: 'include', op: 'starts_with', value: 'en|' },
+      { kind: 'series', action: 'include', op: 'contains', value: 'drama' },
+    ],
+  });
+  assert.deepEqual(await cats('series'), { 'EN| DRAMA': true, 'US| NEWS': false });
   assert.equal((await api('GET', `/api/outputs/${o.id}/categories`)).data.every((c) => !c.included), true, 'no live rules: no live TV');
 
   const xc = (action, extra = '') => fetch(`${base}/player_api.php?username=vod&password=pw&action=${action}${extra}`).then((x) => x.json());
@@ -1359,6 +1372,34 @@ test('movies and series: loaded when a source includes them, filtered per output
   src = await setSource(m3uId, { live_only: true });
   assert.deepEqual([src.counts.movies, src.counts.series], [0, 0]);
   await api('DELETE', `/api/outputs/${o.id}`);
+});
+
+test('duplicating an output copies everything but its URLs and Xtream Codes login', async () => {
+  const orig = (await api('GET', `/api/outputs/${outputId}`)).data;
+  const r = await api('POST', `/api/outputs/${outputId}/clone`);
+  assert.equal(r.status, 201);
+  const copy = r.data;
+  assert.equal(copy.name, `${orig.name} (copy)`);
+  assert.notEqual(copy.token, orig.token);
+  assert.deepEqual([copy.xc_enabled, copy.xc_username], [false, null]);
+  assert.deepEqual([copy.stream_mode, copy.number_start, copy.epg_days, copy.include_all, copy.vod_enabled],
+    [orig.stream_mode, orig.number_start, orig.epg_days, orig.include_all, orig.vod_enabled]);
+  const strip = (rules) => rules.map(({ id, ...x }) => x);
+  assert.deepEqual(strip(copy.rules), strip(orig.rules));
+  assert.deepEqual(copy.sources.filter((x) => x.attached).map((x) => x.id), orig.sources.filter((x) => x.attached).map((x) => x.id));
+  // Hand picks, channel rules and per-category switches came along: the lineups are the same.
+  const lineup = async (t) => (await (await fetch(`${base}/o/${t}/playlist.m3u`)).text()).split('\n').filter((l) => l.startsWith('#EXTINF'));
+  const a = await lineup(orig.token);
+  assert.ok(a.length > 3);
+  assert.deepEqual(await lineup(copy.token), a);
+  const catState = async (id) => (await api('GET', `/api/outputs/${id}/categories`)).data
+    .map((c) => [c.id, c.included, c.override, c.channel_rules.length, c.hide_empty, c.hide_by_guide]);
+  assert.deepEqual(await catState(copy.id), await catState(outputId));
+  // The copy is independent.
+  await api('PUT', `/api/outputs/${copy.id}`, { rules: [] });
+  assert.deepEqual(await lineup(orig.token), a);
+  assert.equal((await api('POST', '/api/outputs/99999/clone')).status, 404);
+  await api('DELETE', `/api/outputs/${copy.id}`);
 });
 
 test('rule order is saved and returned as given, for category and channel rules', async () => {

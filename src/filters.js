@@ -298,7 +298,7 @@ export function evaluateCategories(db, output, kind = 'live') {
   );
   for (const c of cats) {
     const override = overrides.get(c.id) || null;
-    Object.assign(c, categoryState(c, rules, override, output.include_all), { override });
+    Object.assign(c, categoryState(c, rules, override, kind === 'live' ? output.include_all : output[`include_all_${kind}`]), { override });
     c.channel_rules = chRules.get(c.id) || [];
     c.hide_empty = !!catSettings.get(c.id)?.hide_empty;
     c.hide_by_guide = !!catSettings.get(c.id)?.hide_by_guide;

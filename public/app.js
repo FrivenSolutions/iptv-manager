@@ -937,6 +937,8 @@ async function outputEditor(main, id) {
     number_start: o.number_start ?? '',
     epg_days: o.epg_days,
     include_all: o.include_all,
+    include_all_movie: o.include_all_movie,
+    include_all_series: o.include_all_series,
     xc_enabled: o.xc_enabled,
     xc_username: o.xc_username || '',
     xc_password: o.xc_password || '',
@@ -1481,6 +1483,16 @@ async function outputEditor(main, id) {
           },
         }, 'Regenerate URLs'),
         h('button', {
+          class: 'btn small',
+          title: 'A copy with the same sources, rules, picks and settings, and its own URLs',
+          onclick: async () => {
+            if (dirty) return toast('Save or discard your changes first; the copy is made from the saved output.', 'error');
+            const copy = await attempt(() => api('POST', `/api/outputs/${id}/clone`),
+              o.xc_enabled ? 'Output duplicated. Its Xtream Codes login is off until you give it a username.' : 'Output duplicated');
+            location.hash = `#/outputs/${copy.id}`;
+          },
+        }, 'Duplicate'),
+        h('button', {
           class: 'btn small danger-text',
           onclick: async () => {
             if (!(await confirmBox(`Delete the output "${o.name}"? Its URLs will stop working.`))) return;
@@ -1503,6 +1515,8 @@ async function outputEditor(main, id) {
       number_start: draft.number_start === '' ? null : Number(draft.number_start),
       epg_days: Number(draft.epg_days) || 7,
       include_all: draft.include_all,
+      include_all_movie: draft.include_all_movie,
+      include_all_series: draft.include_all_series,
       xc_enabled: draft.xc_enabled,
       xc_username: draft.xc_username,
       xc_password: draft.xc_password,
@@ -1553,7 +1567,7 @@ async function outputEditor(main, id) {
     const summary = h('span', { class: 'meta' });
     const notice = h('div');
     const evalVod = (c) => (attachedIds().includes(c.source_id)
-      ? categoryState(c, draft.vod_rules[kind], c.override, draft.include_all)
+      ? categoryState(c, draft.vod_rules[kind], c.override, draft[`include_all_${kind}`])
       : { included: false, reason: 'detached' });
     const visible = () => {
       const q = state.q.toLowerCase();
@@ -1637,7 +1651,10 @@ async function outputEditor(main, id) {
         h('p', { class: 'hint' },
           `Rules run against the provider's ${L.title.toLowerCase()} category names on every refresh, so new categories that match are added automatically. `,
           'A category is kept when it matches any Include rule and no Exclude rule. Picking a category by hand below always wins.'),
-        rules.box),
+        rules.box,
+        h('label', { class: 'check' },
+          h('input', { type: 'checkbox', checked: draft[`include_all_${kind}`], onchange: (e) => { draft[`include_all_${kind}`] = e.target.checked; markDirty(); } }),
+          ` When a source has no Include rules, include all of its ${L.title.toLowerCase()} categories`)),
       h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('h2', null, `${L.title} categories`), summary),
         h('div', { class: 'toolbar' },
