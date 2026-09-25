@@ -392,5 +392,8 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 .login-body { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 4px 18px; }
 /* "Manage output": look, keep up to date, then the disruptive ones, a row each. */
 .manage-rows { display: flex; flex-direction: column; gap: 8px; }
+/* Each row fills the width: its buttons share it equally (halves, then thirds). */
+.manage-rows .row { flex-wrap: nowrap; }
+.manage-rows .row > .btn { flex: 1 1 0; min-width: 0; justify-content: center; text-align: center; white-space: nowrap; }
 .manage-note { margin-bottom: 10px; }
 h1 .badge { margin-left: 10px; vertical-align: middle; font-size: 12px; }
