@@ -44,15 +44,28 @@ export class WebUpdater {
     return this.pending || (st?.state === 'running' && now() - (st.started_at || 0) < STALE_RUNNING_S);
   }
 
-  view() {
-    return { available: this.available, pending: this.pending, busy: this.busy(), status: this.status(), log: this.log() };
+  /** Nightly-update schedule as last written by the updater, or null if it hasn't yet. */
+  auto() {
+    try {
+      const a = JSON.parse(fs.readFileSync(path.join(this.dir, 'auto.json'), 'utf8'));
+      return { enabled: !!a.enabled, at: /^\d\d:\d\d$/.test(a.at) ? a.at : '04:00' };
+    } catch {
+      return null;
+    }
   }
 
-  /** Returns false when an update is already requested or running. */
-  request() {
+  view() {
+    return { available: this.available, pending: this.pending, busy: this.busy(), status: this.status(), log: this.log(), auto: this.auto() };
+  }
+
+  /**
+   * Ask the root updater to act: { action: 'update' }, { action: 'enable-auto', at: 'HH:MM' }
+   * or { action: 'disable-auto' }. Returns false when a request or an update is already underway.
+   */
+  request(body = { action: 'update' }) {
     if (this.busy()) return false;
     fs.mkdirSync(this.dir, { recursive: true });
-    fs.writeFileSync(path.join(this.dir, 'request'), JSON.stringify({ requested_at: now() }) + '\n');
+    fs.writeFileSync(path.join(this.dir, 'request'), JSON.stringify({ ...body, requested_at: now() }) + '\n');
     return true;
   }
 }

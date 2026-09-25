@@ -1027,6 +1027,27 @@ test('Update now: only where the updater path unit exists; one request at a time
     status({ state: 'updated', message: 'Updated to b', trigger: 'web', started_at: t, finished_at: t + 20 });
     r = await call('GET', '/api/updates');
     assert.deepEqual([r.data.web_update.busy, r.data.web_update.status.state], [false, 'updated']);
+    const req = () => JSON.parse(fs.readFileSync(path.join(data, 'update', 'request'), 'utf8'));
+
+    // Nightly updates: requests carry an action for the root updater.
+    const post = async (p, body) => {
+      const x = await fetch(b + p, { method: 'POST', headers: { cookie: c, 'content-type': 'application/json', 'x-requested-with': 'fetch' }, body: JSON.stringify(body) });
+      return { status: x.status, data: await x.json() };
+    };
+    assert.equal(r.data.web_update.auto, null, 'unknown until the updater writes auto.json');
+    assert.equal((await post('/api/updates/auto', { enabled: true, at: '25:00' })).status, 400);
+    assert.equal((await post('/api/updates/auto', { enabled: true, at: '03:30' })).status, 202);
+    assert.deepEqual([req().action, req().at], ['enable-auto', '03:30']);
+    assert.equal((await post('/api/updates/auto', { enabled: false })).status, 409, 'one request at a time');
+    fs.rmSync(path.join(data, 'update', 'request'));
+    fs.writeFileSync(path.join(data, 'update', 'auto.json'), '{"enabled":true,"at":"03:30"}');
+    r = await call('GET', '/api/updates');
+    assert.deepEqual(r.data.web_update.auto, { enabled: true, at: '03:30' });
+    assert.equal((await post('/api/updates/auto', { enabled: false })).status, 202);
+    assert.equal(req().action, 'disable-auto');
+    fs.rmSync(path.join(data, 'update', 'request'));
+    assert.equal((await call('POST', '/api/updates/apply')).status, 202);
+    assert.equal(req().action, 'update');
   } finally {
     await a.close();
     fs.rmSync(dir, { recursive: true, force: true });

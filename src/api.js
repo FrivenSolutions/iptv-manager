@@ -280,8 +280,18 @@ export function registerApi(router, ctx) {
     if (!ctx.webUpdate.available) {
       throw new HttpError(409, 'Updating from the web is not set up on this install');
     }
-    if (!ctx.webUpdate.request()) throw new HttpError(409, 'An update is already in progress');
+    if (!ctx.webUpdate.request({ action: 'update' })) throw new HttpError(409, 'An update is already in progress');
     ctx.log('Update requested from the web interface');
+    sendJson(res, 202, updateView());
+  });
+  // Turn nightly updates on (at HH:MM) or off; carried out by the root updater like Update now.
+  router.post('/api/updates/auto', async (req, res) => {
+    if (!ctx.webUpdate.available) throw new HttpError(409, 'Updating from the web is not set up on this install');
+    const body = await readJson(req);
+    const at = str(body.at || '04:00', 5);
+    if (body.enabled && !/^([01]\d|2[0-3]):[0-5]\d$/.test(at)) throw new HttpError(400, 'Time must be HH:MM (24-hour)');
+    const ok = ctx.webUpdate.request(body.enabled ? { action: 'enable-auto', at } : { action: 'disable-auto' });
+    if (!ok) throw new HttpError(409, 'An update is in progress; try again when it finishes');
     sendJson(res, 202, updateView());
   });
 

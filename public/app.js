@@ -1416,6 +1416,41 @@ function updatesCard(initial) {
     return recent && label ? h('p', null, badge(label, kind), ' ', h('span', { class: 'meta' }, `${st.message} (${ago(st.finished_at)})`)) : null;
   };
 
+  // "Update automatically every night at HH:MM": carried out by the root updater, which confirms
+  // through auto.json; the switch waits for that confirmation.
+  const nightly = (u) => {
+    const wu = u.web_update || {};
+    if (!wu.available) return null;
+    const a = wu.auto;
+    const time = h('input', { type: 'time', class: 'time-input', value: a?.at || '04:00' });
+    const box = h('input', { type: 'checkbox', checked: !!a?.enabled });
+    const apply = async (enabled) => {
+      box.disabled = time.disabled = true;
+      try {
+        await attempt(() => api('POST', '/api/updates/auto', { enabled, at: time.value }));
+        for (let i = 0; i < 15; i++) {
+          await new Promise((r) => setTimeout(r, 1000));
+          const r = await api('GET', '/api/updates');
+          const now = r.web_update.auto;
+          if (now && now.enabled === enabled && (!enabled || now.at === time.value)) {
+            toast(enabled ? `Nightly updates at ${time.value}` : 'Nightly updates off');
+            draw(r);
+            return;
+          }
+        }
+        toast('The updater has not confirmed the change yet; check again in a minute', 'error');
+      } catch {
+        box.checked = !enabled;
+      } finally {
+        box.disabled = time.disabled = false;
+      }
+    };
+    box.addEventListener('change', () => apply(box.checked));
+    time.addEventListener('change', () => { if (box.checked) apply(true); });
+    return h('div', { class: 'check nightly' }, box, h('span', null, ' Update automatically every night at '), time,
+      h('span', { class: 'meta' }, ' (plus up to 30 min random delay)'));
+  };
+
   // Sits in the action row next to "Check now".
   const updateButton = (u) => {
     const wu = u.web_update || {};
@@ -1494,6 +1529,7 @@ function updatesCard(initial) {
           onchange: (e) => attempt(() => api('PUT', '/api/settings', { update_check: e.target.checked }), e.target.checked ? 'Daily check on' : 'Daily check off'),
         }),
         ` Check GitHub (${u.repo}) for updates once a day`),
+      nightly(u),
       h('p', { class: 'hint' }, u.web_update?.available
         ? 'Update now runs the same updater as iptv-manager-update in the container, including its automatic rollback.'
         : 'The check only reports new versions; updating is done the way this copy was installed.'));

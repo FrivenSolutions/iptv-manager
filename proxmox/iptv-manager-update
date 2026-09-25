@@ -228,6 +228,7 @@ WantedBy=multi-user.target")"
   if ! systemctl is-enabled "$PATH_UNIT" >/dev/null 2>&1 || [ -n "$changed" ]; then
     systemctl enable --now "$PATH_UNIT" >/dev/null 2>&1 || log "warning: could not enable $PATH_UNIT"
   fi
+  write_auto_state
 }
 
 enable_auto() {
@@ -238,11 +239,45 @@ enable_auto() {
   systemctl daemon-reload
   systemctl enable --now "$TIMER" >/dev/null 2>&1
   log "Nightly updates enabled at $at (plus up to 30 minutes of random delay)"
+  write_auto_state
 }
 
 disable_auto() {
   systemctl disable --now "$TIMER" >/dev/null 2>&1 || true
   log "Nightly updates disabled"
+  write_auto_state
+}
+
+# Nightly-update state for the web interface: $UPDATE_DIR/auto.json {"enabled":..,"at":"HH:MM"}.
+write_auto_state() {
+  local enabled=false at="04:00" drop="$SYSTEMD_DIR/$TIMER.d/schedule.conf"
+  systemctl is-enabled "$TIMER" >/dev/null 2>&1 && enabled=true
+  if [ -f "$drop" ]; then
+    at="$(sed -n 's/^OnCalendar=\*-\*-\* \([0-9][0-9]:[0-9][0-9]\):00$/\1/p' "$drop" | tail -1)"
+    at="${at:-04:00}"
+  fi
+  mkdir -p "$UPDATE_DIR"
+  printf '{"enabled":%s,"at":"%s"}\n' "$enabled" "$at" > "$UPDATE_DIR/auto.json.tmp"
+  mv -f "$UPDATE_DIR/auto.json.tmp" "$UPDATE_DIR/auto.json"
+  chown "$SERVICE_USER:$SERVICE_USER" "$UPDATE_DIR/auto.json" 2>/dev/null || true
+}
+
+# A request from the web interface: {"action":"update"} (or older files: anything else),
+# {"action":"enable-auto","at":"HH:MM"} or {"action":"disable-auto"}.
+handle_request() {
+  local req action at
+  req="$(cat "$UPDATE_DIR/request" 2>/dev/null || true)"
+  action="$(printf '%s' "$req" | sed -n 's/.*"action"[[:space:]]*:[[:space:]]*"\([a-z-]*\)".*/\1/p')"
+  case "$action" in
+    enable-auto)
+      rm -f "$UPDATE_DIR/request"
+      at="$(printf '%s' "$req" | sed -n 's/.*"at"[[:space:]]*:[[:space:]]*"\([0-9][0-9]:[0-9][0-9]\)".*/\1/p')"
+      enable_auto "${at:-04:00}" ;;
+    disable-auto)
+      rm -f "$UPDATE_DIR/request"
+      disable_auto ;;
+    *) update 0 ;;   # consumes the request itself
+  esac
 }
 
 status() {
@@ -272,7 +307,7 @@ main() {
   esac
   setup
   case "${1:-}" in
-    "") update 0 ;;
+    "") if [ -e "$UPDATE_DIR/request" ]; then handle_request; else update 0; fi ;;
     --force) update 1 ;;
     --check) check ;;
     --status) status ;;
