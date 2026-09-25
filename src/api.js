@@ -730,6 +730,41 @@ export function registerApi(router, ctx) {
     });
   });
 
+  // Find channels by name across every category of an output's attached sources, with the same
+  // included/reason a category's channel list would show. Saved state only (not unsaved edits).
+  router.get('/api/outputs/:id/search', (req, res, { params, query }) => {
+    const o = loadOutput(db, Number(params.id));
+    if (!o) throw new HttpError(404, 'Not found');
+    const q = String(query.get('q') || '').trim().toLowerCase();
+    if (q.length < 2) return sendJson(res, 200, { matches: [], total: 0 });
+    const LIMIT = 200;
+    const cats = new Map(evaluateCategories(db, o).map((c) => [c.id, c]));
+    if (!cats.size) return sendJson(res, 200, { matches: [], total: 0 });
+    // LIKE is only ASCII case-insensitive, so the final match is done here in JS.
+    const rows = db.all(
+      `SELECT id, category_id, name, custom_name, epg_id, custom_epg_id, tvg_id
+         FROM channels WHERE active = 1 AND category_id IN (${[...cats.keys()].map(() => '?').join(',')})
+        ORDER BY category_id, sort`,
+      [...cats.keys()],
+    ).filter((r) => r.name.toLowerCase().includes(q) || (r.custom_name || '').toLowerCase().includes(q));
+    const shown = rows.slice(0, LIMIT);
+    const overrides = new Map(db.all('SELECT channel_id, state FROM output_channel_overrides WHERE output_id = ?', [o.id])
+      .map((r) => [r.channel_id, r.state]));
+    const hitCats = [...new Set(shown.map((r) => r.category_id))].map((cid) => cats.get(cid));
+    const emptyRegexes = compilePatterns(emptyEventPatterns(db));
+    const guide = guideHider(db, o, hitCats);
+    sendJson(res, 200, {
+      total: rows.length,
+      matches: shown.map((r) => {
+        const cat = cats.get(r.category_id);
+        const ch = { ...r, source_id: cat.source_id };
+        const override = overrides.get(r.id) || null;
+        const st = channelState(r.name, cat.included, cat.channel_rules, override, hiddenReason(cat, ch, emptyRegexes, guide));
+        return { id: r.id, category_id: r.category_id, name: r.name, custom_name: r.custom_name, override, included: st.included, reason: st.reason };
+      }),
+    });
+  });
+
   // Per-category switches for one output; only the switches present in the body change.
   router.put('/api/outputs/:id/categories/:catId/options', async (req, res, { params }) => {
     const o = mustGet(db, 'outputs', params.id);

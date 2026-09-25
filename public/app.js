@@ -195,6 +195,12 @@ function syncList(container, items, keyOf, render, extra = () => '') {
 // "x minutes ago" labels drift, so let rows re-render once a minute.
 const minuteTick = () => String(Math.floor(Date.now() / 60000));
 
+// Why a channel is in or out (besides its category), as shown in lists and search hits.
+const CH_REASONS = {
+  manual: 'picked by hand', rule: 'by rule', nomatch: 'no include rule matched', empty: 'empty event',
+  guide: 'nothing on now', unlisted: 'nothing listed now',
+};
+
 const OP_LABELS = {
   contains: 'contains',
   not_contains: 'does not contain',
@@ -897,7 +903,8 @@ async function outputEditor(main, id) {
     rules: o.rules.map((r) => ({ ...r })),
   };
   let dirty = false;
-  const view = { q: '', show: 'all', open: new Set() };
+  // hits: channels matching the search (from the server), per category, for hitsQ.
+  const view = { q: '', show: 'all', open: new Set(), hits: new Map(), hitsQ: '', hitTotal: 0 };
   const saveBar = h('div', { class: 'savebar', hidden: true },
     h('span', null, 'Unsaved changes. The category list below already shows their effect.'),
     h('button', { class: 'btn', onclick: () => route() }, 'Discard'),
@@ -1007,7 +1014,7 @@ async function outputEditor(main, id) {
     const q = view.q.toLowerCase();
     return cats.filter((c) => {
       const st = evalCat(c);
-      if (q && !(c.custom_name || c.name).toLowerCase().includes(q) && !c.name.toLowerCase().includes(q)) return false;
+      if (q && !(c.custom_name || c.name).toLowerCase().includes(q) && !c.name.toLowerCase().includes(q) && !channelHits(c).length) return false;
       if (view.show === 'included') return st.included;
       if (view.show === 'excluded') return !st.included;
       if (view.show === 'new') return c.is_new;
@@ -1045,7 +1052,8 @@ async function outputEditor(main, id) {
             c.channel_rules?.length ? badge(`${c.channel_rules.length} channel rule${c.channel_rules.length === 1 ? '' : 's'}`, 'info') : null,
             c.hide_empty ? badge('hides empty events', 'info') : null,
             c.hide_by_guide ? badge(c.hide_unlisted ? 'hides by guide + unlisted' : 'hides by guide', 'info') : null,
-            h('span', { class: 'meta' }, ` ${sourceName(c.source_id)} · ${c.channel_count} ch · ${reasonText(st)}`)),
+            h('span', { class: 'meta' }, ` ${sourceName(c.source_id)} · ${c.channel_count} ch · ${reasonText(st)}`),
+            hitLine(c)),
           h('button', { class: 'icon-btn', title: 'Edit group (display name, Jellyfin category)', onclick: () => editCategory(c, drawCats) }, '✎'),
           h('span', { class: 'segmented small' }, seg('Auto', null, ''), seg('Include', 'include', 'inc'), seg('Exclude', 'exclude', 'exc')));
         if (!view.open.has(c.id)) return row;
@@ -1053,6 +1061,64 @@ async function outputEditor(main, id) {
       }),
       rows.length > LIMIT ? h('p', { class: 'meta pad' }, `Showing the first ${LIMIT} of ${rows.length}. Use the search box to narrow the list.`) : null,
       rows.length ? null : h('p', { class: 'meta pad' }, 'No categories to show.'));
+    fill(hitNote, view.hitTotal > 200 && view.hitsQ === view.q.trim().toLowerCase()
+      ? `Showing channel matches for the first 200 of ${view.hitTotal} channels. Type more to narrow it down.` : '');
+    for (const p of panels.values()) markHits(p.el);
+  };
+
+  // --- find a channel: matches across every category of this output, with their state
+  const hitNote = h('p', { class: 'meta' });
+  const channelHits = (c) => (view.hitsQ && view.hitsQ === view.q.trim().toLowerCase() && view.hits.get(c.id)) || [];
+  const hitLine = (c) => {
+    const hits = channelHits(c);
+    if (!hits.length) return null;
+    const MAX = 6;
+    const open = () => {
+      view.open.add(c.id);
+      view.scrollTo = c.id;
+      drawCats();
+      scrollToHit(c.id);
+    };
+    return h('span', { class: 'ch-hits' },
+      hits.slice(0, MAX).map((m) => h('button', {
+        class: `hit-chip ${m.included ? 'in' : 'out'}`,
+        title: `${m.included ? 'In the output' : 'Not in the output'}${m.reason === 'category' && !m.included ? ' (category not included)' : CH_REASONS[m.reason] ? ` (${CH_REASONS[m.reason]})` : ''}${dirty ? ', as saved' : ''}. Click to show it.`,
+        onclick: open,
+      }, m.included ? '✓ ' : '✕ ', m.custom_name || m.name,
+        !m.included && CH_REASONS[m.reason] ? h('span', { class: 'meta' }, ` · ${CH_REASONS[m.reason]}`) : null)),
+      hits.length > MAX ? h('button', { class: 'link', onclick: open }, `+${hits.length - MAX} more`) : null);
+  };
+  // Once the category's channels are on screen (right away, or after its panel loads).
+  const scrollToHit = (catId) => {
+    const row = view.scrollTo === catId && panels.get(catId)?.el.querySelector('.ch-row.hit, .ch-row');
+    if (!row) return;
+    view.scrollTo = null;
+    row.scrollIntoView({ block: 'center' });
+  };
+  const markHits = (el) => {
+    const q = view.q.trim().toLowerCase();
+    for (const row of el.querySelectorAll('.ch-row')) row.classList.toggle('hit', q.length >= 2 && (row.dataset.name || '').toLowerCase().includes(q));
+  };
+  let searchTimer = null;
+  let searchSeq = 0;
+  const searchChannels = () => {
+    clearTimeout(searchTimer);
+    const q = view.q.trim().toLowerCase();
+    if (q.length < 2) {
+      view.hits = new Map();
+      view.hitsQ = '';
+      view.hitTotal = 0;
+      return;
+    }
+    searchTimer = setTimeout(async () => {
+      const seq = ++searchSeq;
+      const r = await api('GET', `/api/outputs/${id}/search?q=${encodeURIComponent(q)}`).catch(() => null);
+      if (!r || seq !== searchSeq) return;
+      const hits = new Map();
+      for (const m of r.matches) (hits.get(m.category_id) || hits.set(m.category_id, []).get(m.category_id)).push(m);
+      Object.assign(view, { hits, hitsQ: q, hitTotal: r.total });
+      drawCats();
+    }, 250);
   };
   // Expanded category: its channel rules plus the channel list. Panels are kept per
   // category and reused across redraws, reloading only when the category's state changes.
@@ -1127,10 +1193,7 @@ async function outputEditor(main, id) {
 
     const included = chans.filter((ch) => ch.included).length;
     const overridden = chans.filter((ch) => ch.override).map((ch) => ch.id);
-    const reason = (ch) => ({
-      manual: 'picked by hand', rule: 'by rule', nomatch: 'no include rule matched', empty: 'empty event',
-      guide: 'nothing on now', unlisted: 'nothing listed now',
-    })[ch.reason] || '';
+    const reason = (ch) => CH_REASONS[ch.reason] || '';
     const emptyCount = chans.filter((ch) => ch.is_empty_event).length;
     const guideCount = chans.filter((ch) => ch.is_guide_placeholder).length;
     const unlistedCount = chans.filter((ch) => ch.is_unlisted).length;
@@ -1195,7 +1258,7 @@ async function outputEditor(main, id) {
           const why = !off && ch.reason !== 'category' ? reason(ch) : '';
           const now = ch.now_title ? h('span', { class: `now-title ${ch.is_guide_placeholder ? 'placeholder' : ''}`, title: `On now: ${ch.now_title}` }, `▸ ${ch.now_title}`)
             : ch.is_unlisted ? h('span', { class: 'now-title placeholder', title: 'Nothing airing now in the guide' }, '▸ nothing listed') : null;
-          return h('label', { class: `ch-row ${ch.override && !off ? 'overridden' : ''} ${ch.included ? '' : 'out'}`, title: off ? 'Include the category first' : [name, why].filter(Boolean).join('\n') },
+          return h('label', { class: `ch-row ${ch.override && !off ? 'overridden' : ''} ${ch.included ? '' : 'out'}`, 'data-name': `${ch.name}\n${ch.custom_name || ''}`, title: off ? 'Include the category first' : [name, why].filter(Boolean).join('\n') },
             h('input', { type: 'checkbox', disabled: off, checked: ch.included, onchange: (e) => setChannels([ch.id], e.target.checked ? 'include' : 'exclude') }),
             h('span', { class: 'ch-name' }, name),
             now || why || (ch.override && !off)
@@ -1206,9 +1269,11 @@ async function outputEditor(main, id) {
               : null);
         }),
         chans.length ? null : h('p', { class: 'meta' }, 'No channels.')));
+    markHits(p.el);
+    scrollToHit(c.id);
   };
 
-  const catSearch = h('input', { type: 'search', placeholder: 'Search categories', oninput: (e) => { view.q = e.target.value; drawCats(); } });
+  const catSearch = h('input', { type: 'search', placeholder: 'Search categories and channels', oninput: (e) => { view.q = e.target.value; searchChannels(); drawCats(); } });
   const show = h('select', { onchange: (e) => { view.show = e.target.value; drawCats(); } },
     [['all', 'All'], ['included', 'Included'], ['excluded', 'Excluded'], ['new', 'New'], ['manual', 'Picked by hand']].map(([v, l]) => h('option', { value: v }, l)));
   const bulk = (state) => () => setOverride(visible().map((c) => c.id), state);
@@ -1219,6 +1284,7 @@ async function outputEditor(main, id) {
         h('button', { class: 'btn small', onclick: bulk('include') }, 'Include shown'),
         h('button', { class: 'btn small', onclick: bulk('exclude') }, 'Exclude shown'),
         h('button', { class: 'btn small', onclick: bulk(null) }, 'Reset shown to Auto'))),
+    hitNote,
     catBox);
 
   // --- urls

@@ -490,6 +490,24 @@ test('channel rules inside one category; manual channel picks still win', async 
   assert.equal(cnn.reason, 'rule');
 });
 
+test('find a channel across an output: every attached source, with its state and why', async () => {
+  const find = async (q) => (await api('GET', `/api/outputs/${outputId}/search?q=${encodeURIComponent(q)}`)).data;
+  const cats = new Map((await api('GET', `/api/outputs/${outputId}/categories`)).data.map((c) => [c.id, c]));
+  const brief = (r) => r.matches.map((m) => [m.name, cats.get(m.category_id).source_id === xcId ? 'xc' : 'm3u', m.included, m.reason]);
+
+  // Case-insensitive, from both sources; the XC news category still has 'starts with "us: cnn"'.
+  let r = await find('CnN');
+  assert.deepEqual(brief(r).sort(), [['CNN', 'm3u', true, 'category'], ['US: CNN HD', 'xc', true, 'rule']]);
+  assert.equal(r.total, 2);
+  r = await find('fox news');
+  assert.deepEqual(brief(r).filter((m) => m[1] === 'xc'), [['US: Fox News', 'xc', false, 'nomatch']]);
+  r = await find('sky sports');
+  assert.deepEqual(brief(r), [['UK: Sky Sports', 'xc', false, 'category']], 'channels of excluded categories are found too');
+  assert.deepEqual(await find('c'), { matches: [], total: 0 }, 'two characters at least');
+  assert.deepEqual((await find('no such channel zz')).matches, []);
+  assert.equal((await api('GET', '/api/outputs/99999/search?q=cnn')).status, 404);
+});
+
 test('an excluded category excludes its channels even if picked by hand; picks return when included', async () => {
   const cats = (await api('GET', `/api/outputs/${outputId}/categories`)).data;
   const uk = cats.find((c) => c.name === 'UK| SPORTS' && c.source_id === xcId);
