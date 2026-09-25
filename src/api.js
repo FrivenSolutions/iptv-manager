@@ -704,6 +704,7 @@ export function registerApi(router, ctx) {
               SELECT ?, category_id, action, op, value, sort FROM output_channel_rules WHERE output_id = ? ORDER BY sort, id`, [copyId, o.id]);
       db.run('INSERT INTO output_category_overrides (output_id, category_id, state) SELECT ?, category_id, state FROM output_category_overrides WHERE output_id = ?', [copyId, o.id]);
       db.run('INSERT INTO output_channel_overrides (output_id, channel_id, state) SELECT ?, channel_id, state FROM output_channel_overrides WHERE output_id = ?', [copyId, o.id]);
+      db.run('INSERT INTO output_vod_overrides (output_id, item_id, state) SELECT ?, item_id, state FROM output_vod_overrides WHERE output_id = ?', [copyId, o.id]);
       db.run(`INSERT INTO output_category_settings (output_id, category_id, hide_empty, hide_by_guide, hide_unlisted)
               SELECT ?, category_id, hide_empty, hide_by_guide, hide_unlisted FROM output_category_settings WHERE output_id = ?`, [copyId, o.id]);
       return copyId;
@@ -726,13 +727,63 @@ export function registerApi(router, ctx) {
     sendJson(res, 200, evaluateCategories(db, o, kind));
   });
 
-  // Titles in one movie or series category, for a look inside from the output editor.
-  router.get('/api/categories/:id/titles', (req, res, { params }) => {
-    const c = mustGet(db, 'categories', params.id);
-    const LIMIT = 500;
-    const total = db.get('SELECT COUNT(*) AS n FROM vod_items WHERE category_id = ? AND active = 1', [c.id]).n;
-    const titles = db.all('SELECT id, name, poster FROM vod_items WHERE category_id = ? AND active = 1 ORDER BY sort LIMIT ?', [c.id, LIMIT]);
-    sendJson(res, 200, { total, titles });
+  // The titles of one movie or series category in an output, each with its hand pick (if any)
+  // and whether it is in: a title is in when its category is and it isn't picked out by hand.
+  router.get('/api/outputs/:id/titles', (req, res, { params, query }) => {
+    const o = loadOutput(db, Number(params.id));
+    if (!o) throw new HttpError(404, 'Not found');
+    const c = mustGet(db, 'categories', query.get('category_id'));
+    if (c.kind === 'live') throw new HttpError(400, 'Not a movie or series category');
+    const cat = evaluateCategories(db, o, c.kind).find((x) => x.id === c.id);
+    if (!cat) throw new HttpError(404, 'Category is not part of this output');
+    const LIMIT = 5000;
+    const rows = db.all(
+      `SELECT v.id, v.name, v.custom_name, x.state AS override FROM vod_items v
+         LEFT JOIN output_vod_overrides x ON x.item_id = v.id AND x.output_id = ?
+        WHERE v.category_id = ? AND v.active = 1 ORDER BY v.sort LIMIT ?`,
+      [o.id, c.id, LIMIT + 1],
+    );
+    sendJson(res, 200, {
+      category_included: cat.included,
+      total: cat.channel_count,
+      truncated: rows.length > LIMIT,
+      titles: rows.slice(0, LIMIT).map((r) => ({ ...r, included: cat.included && r.override !== 'exclude' })),
+    });
+  });
+
+  // Pick titles in or out by hand (state null clears the pick): by ids, or a whole category.
+  router.put('/api/outputs/:id/titles', async (req, res, { params }) => {
+    const o = mustGet(db, 'outputs', params.id);
+    const { ids, category_id: categoryId, state } = await readJson(req);
+    if (state != null && !['include', 'exclude'].includes(state)) throw new HttpError(400, 'state must be include, exclude or null');
+    let list;
+    if (categoryId != null) list = db.all('SELECT id FROM vod_items WHERE category_id = ? AND active = 1', [Number(categoryId)]).map((r) => r.id);
+    else if (Array.isArray(ids)) list = ids.map(Number);
+    else throw new HttpError(400, 'Give ids or a category_id');
+    db.tx(() => {
+      for (const id of list) {
+        if (state) {
+          db.run(
+            `INSERT INTO output_vod_overrides (output_id, item_id, state) SELECT ?, id, ? FROM vod_items WHERE id = ?
+             ON CONFLICT (output_id, item_id) DO UPDATE SET state = excluded.state`,
+            [o.id, state, id],
+          );
+        } else {
+          db.run('DELETE FROM output_vod_overrides WHERE output_id = ? AND item_id = ?', [o.id, id]);
+        }
+      }
+    });
+    touch();
+    sendJson(res, 200, { ok: true, count: list.length });
+  });
+
+  // A title's own display name, in every output (blank goes back to the provider's).
+  router.put('/api/vod/:id', async (req, res, { params }) => {
+    const it = mustGet(db, 'vod_items', params.id);
+    const body = await readJson(req);
+    db.run('UPDATE vod_items SET custom_name = ? WHERE id = ?', [optStr(body.custom_name, 300), it.id]);
+    touch();
+    sendJson(res, 200, { ok: true, custom_name: db.get('SELECT custom_name FROM vod_items WHERE id = ?', [it.id]).custom_name });
   });
 
   router.put('/api/outputs/:id/categories', async (req, res, { params }) => {
@@ -830,7 +881,7 @@ export function registerApi(router, ctx) {
       const vodCats = [...evaluateCategories(db, o, 'movie'), ...evaluateCategories(db, o, 'series')].filter((c) => c.included);
       const titles = vodCats.length
         ? db.all(
-          `SELECT name FROM vod_items WHERE active = 1 AND category_id IN (${vodCats.map(() => '?').join(',')}) ORDER BY category_id, sort`,
+          `SELECT name FROM vod_items WHERE active = 1 AND custom_name IS NULL AND category_id IN (${vodCats.map(() => '?').join(',')}) ORDER BY category_id, sort`,
           vodCats.map((c) => c.id),
         ).map((r) => r.name)
         : [];
@@ -854,8 +905,27 @@ export function registerApi(router, ctx) {
     const q = String(query.get('q') || '').trim().toLowerCase();
     if (q.length < 2) return sendJson(res, 200, { matches: [], total: 0 });
     const LIMIT = 200;
-    const cats = new Map(evaluateCategories(db, o).map((c) => [c.id, c]));
+    const kind = ['movie', 'series'].includes(query.get('kind')) ? query.get('kind') : 'live';
+    const cats = new Map(evaluateCategories(db, o, kind).map((c) => [c.id, c]));
     if (!cats.size) return sendJson(res, 200, { matches: [], total: 0 });
+    // Movies and series: a title is in when its category is and it isn't picked out by hand.
+    if (kind !== 'live') {
+      const titles = db.all(
+        `SELECT v.id, v.category_id, v.name, v.custom_name, x.state AS override FROM vod_items v
+           LEFT JOIN output_vod_overrides x ON x.item_id = v.id AND x.output_id = ?
+          WHERE v.active = 1 AND v.category_id IN (${[...cats.keys()].map(() => '?').join(',')})
+          ORDER BY v.category_id, v.sort`,
+        [o.id, ...cats.keys()],
+      ).filter((r) => r.name.toLowerCase().includes(q) || (r.custom_name || '').toLowerCase().includes(q));
+      return sendJson(res, 200, {
+        total: titles.length,
+        matches: titles.slice(0, LIMIT).map((r) => {
+          const cat = cats.get(r.category_id);
+          const included = cat.included && r.override !== 'exclude';
+          return { ...r, included, reason: !cat.included ? 'category' : r.override ? 'manual' : 'category' };
+        }),
+      });
+    }
     // LIKE is only ASCII case-insensitive, so the final match is done here in JS.
     const rows = db.all(
       `SELECT id, category_id, name, custom_name, epg_id, custom_epg_id, tvg_id

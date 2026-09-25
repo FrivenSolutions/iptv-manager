@@ -25,10 +25,12 @@ function providerApi(src) {
 // Names as players see them: a name set by hand, else the provider's after the output's name cleanup.
 const catName = (vc, c) => c.custom_name || vc.clean.category(c.name);
 const title = (vc, name) => vc.clean.channel(name);
+// A title's own display name (set by hand) wins over name cleanup.
+const itemName = (vc, r) => r.custom_name || title(vc, r.name);
 
-/** Included categories of a kind that hold at least one title. */
+/** Included categories of a kind that hold at least one title that is in. */
 export function vodCategoryList(vc) {
-  return vc.cats.filter((c) => c.included && c.channel_count > 0)
+  return vc.cats.filter((c) => c.included && c.channel_count - (c.excluded_count || 0) > 0)
     .map((c) => ({ category_id: String(c.id), category_name: catName(vc, c), parent_id: 0 }));
 }
 
@@ -36,17 +38,17 @@ function itemsOf(db, vc, categoryId) {
   const ids = categoryId ? [Number(categoryId)].filter((id) => vc.included.has(id)) : [...vc.included];
   if (!ids.length) return [];
   return db.all(
-    `SELECT id, category_id, name, poster, ext, added, extra FROM vod_items
+    `SELECT id, category_id, name, custom_name, poster, ext, added, extra FROM vod_items
       WHERE active = 1 AND category_id IN (${ids.map(() => '?').join(',')})`,
     ids,
-  ).sort((a, b) => vc.order.get(a.category_id) - vc.order.get(b.category_id) || 0);
+  ).filter((r) => !vc.excluded.has(r.id)).sort((a, b) => vc.order.get(a.category_id) - vc.order.get(b.category_id) || 0);
 }
 
 export function vodStreams(db, vc, categoryId) {
   return itemsOf(db, vc, categoryId).map((r, i) => ({
     ...parse(r.extra),
     num: i + 1,
-    name: title(vc, r.name),
+    name: itemName(vc, r),
     stream_type: 'movie',
     stream_id: r.id,
     stream_icon: r.poster || '',
@@ -63,7 +65,7 @@ export function seriesList(db, vc, categoryId) {
   return itemsOf(db, vc, categoryId).map((r, i) => ({
     ...parse(r.extra),
     num: i + 1,
-    name: title(vc, r.name),
+    name: itemName(vc, r),
     series_id: r.id,
     cover: r.poster || '',
     last_modified: String(r.added || ''),
@@ -75,7 +77,7 @@ export function seriesList(db, vc, categoryId) {
 /** A movie or series of this output (active, in an included category), with its source. */
 export function vodItem(db, vc, id, kind) {
   const it = db.get('SELECT * FROM vod_items WHERE id = ? AND kind = ? AND active = 1', [Number(id), kind]);
-  if (!it || !vc.included.has(it.category_id)) return null;
+  if (!it || !vc.included.has(it.category_id) || vc.excluded.has(it.id)) return null;
   it.src = db.get('SELECT * FROM sources WHERE id = ?', [it.source_id]);
   return it;
 }
@@ -83,8 +85,8 @@ export function vodItem(db, vc, id, kind) {
 export async function vodInfo(db, vc, id) {
   const it = vodItem(db, vc, id, 'movie');
   if (!it) return {};
-  const movieData = { stream_id: it.id, name: title(vc, it.name), added: String(it.added || ''), category_id: String(it.category_id), container_extension: it.ext || 'mp4', custom_sid: '', direct_source: '' };
-  let info = { name: title(vc, it.name), movie_image: it.poster || '', cover_big: it.poster || '' };
+  const movieData = { stream_id: it.id, name: itemName(vc, it), added: String(it.added || ''), category_id: String(it.category_id), container_extension: it.ext || 'mp4', custom_sid: '', direct_source: '' };
+  let info = { name: itemName(vc, it), movie_image: it.poster || '', cover_big: it.poster || '' };
   if (it.src.type === 'xc') {
     try {
       const r = await providerApi(it.src).call('get_vod_info', `&vod_id=${encodeURIComponent(it.key)}`);
@@ -104,7 +106,7 @@ export async function seriesInfo(db, vc, id) {
   const it = vodItem(db, vc, id, 'series');
   if (!it) return {};
   const extra = parse(it.extra);
-  const name = title(vc, it.name);
+  const name = itemName(vc, it);
   let info = { ...extra, name, cover: it.poster || '', category_id: String(it.category_id) };
   let seasons = [];
   if (it.src.type === 'xc') {

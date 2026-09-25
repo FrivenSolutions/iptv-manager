@@ -851,6 +851,23 @@ function editCategory(cat, onSaved, { vod = false } = {}) {
   ]);
 }
 
+// A movie's or series' own display name, in every output.
+function renameTitle(t, onSaved) {
+  const name = h('input', { value: t.custom_name || '', placeholder: t.name });
+  const close = modal(`Rename: ${t.custom_name || t.name}`, h('div', { class: 'form' },
+    field('Display name', name, 'Leave empty to use the provider\'s name. It wins over name cleanup, in every output.')), [
+    h('button', { class: 'btn', onclick: () => close() }, 'Cancel'),
+    h('button', {
+      class: 'btn primary',
+      onclick: async () => {
+        await attempt(() => api('PUT', `/api/vod/${t.id}`, { custom_name: name.value }), 'Renamed');
+        close();
+        onSaved?.();
+      },
+    }, 'Save'),
+  ]);
+}
+
 function epgBadge(ch) {
   if (!ch.epg_id) return badge('none', 'muted');
   return badge({ 'tvg-id': 'by tvg-id', name: 'by name', manual: 'manual' }[ch.epg_match] || ch.epg_match, ch.epg_match === 'manual' ? 'info' : 'ok');
@@ -1560,7 +1577,51 @@ async function outputEditor(main, id) {
   };
   const vodPane = (kind) => {
     const L = VOD_LABELS[kind];
-    const state = { cats: null, q: '', show: 'all', open: new Set() };
+    // hits: titles matching the search (from the server), per category, for hitsQ.
+    const state = { cats: null, q: '', show: 'all', open: new Set(), hits: new Map(), hitsQ: '', hitTotal: 0 };
+    const titleHits = (c) => (state.hitsQ && state.hitsQ === state.q.trim().toLowerCase() && state.hits.get(c.id)) || [];
+    let searchTimer = null;
+    let searchSeq = 0;
+    const searchTitles = () => {
+      clearTimeout(searchTimer);
+      const q = state.q.trim().toLowerCase();
+      if (q.length < 2) {
+        Object.assign(state, { hits: new Map(), hitsQ: '', hitTotal: 0 });
+        return;
+      }
+      searchTimer = setTimeout(async () => {
+        const seq = ++searchSeq;
+        const r = await api('GET', `/api/outputs/${id}/search?kind=${kind}&q=${encodeURIComponent(q)}`).catch(() => null);
+        if (!r || seq !== searchSeq) return;
+        const hits = new Map();
+        for (const m of r.matches) (hits.get(m.category_id) || hits.set(m.category_id, []).get(m.category_id)).push(m);
+        Object.assign(state, { hits, hitsQ: q, hitTotal: r.total });
+        draw();
+      }, 250);
+    };
+    // Chips under a category for its matching titles; a click opens it filtered to the search.
+    const hitLine = (c) => {
+      const hits = titleHits(c);
+      if (!hits.length) return null;
+      const MAX = 6;
+      const open = () => {
+        state.open.add(c.id);
+        const p = titlePanels.get(c.id);
+        if (p) {
+          p.q = state.q.trim();
+          p.rerender?.();
+        }
+        draw();
+      };
+      return h('span', { class: 'ch-hits' },
+        hits.slice(0, MAX).map((m) => h('button', {
+          class: `hit-chip ${m.included ? 'in' : 'out'}`,
+          title: `${m.included ? 'In the output' : m.reason === 'manual' ? 'Picked out by hand' : 'Its category is not in the output'}${dirty ? ', as saved' : ''}. Click to show it.`,
+          onclick: open,
+        }, m.included ? '✓ ' : '✕ ', m.custom_name || m.name)),
+        hits.length > MAX ? h('button', { class: 'link', onclick: open }, `+${hits.length - MAX} more`) : null);
+    };
+    const hitNote = h('p', { class: 'meta' });
     const titlePanels = new Map();
     const rules = rulesEditor(() => draft.vod_rules[kind], 'e.g. EN|');
     const list = h('div', { class: 'cat-table' });
@@ -1573,7 +1634,7 @@ async function outputEditor(main, id) {
       const q = state.q.toLowerCase();
       return (state.cats || []).filter((c) => {
         const st = evalVod(c);
-        if (q && !(c.custom_name || c.name).toLowerCase().includes(q) && !c.name.toLowerCase().includes(q)) return false;
+        if (q && !(c.custom_name || c.name).toLowerCase().includes(q) && !c.name.toLowerCase().includes(q) && !titleHits(c).length) return false;
         if (state.show === 'included') return st.included;
         if (state.show === 'excluded') return !st.included;
         if (state.show === 'new') return c.is_new;
@@ -1586,17 +1647,75 @@ async function outputEditor(main, id) {
       for (const c of state.cats) if (ids.includes(c.id)) c.override = value;
       draw();
     };
-    // A look inside a category: its titles, loaded once.
+    // Inside a category: its titles, each picked in or out by hand, and renamed if wanted. Panels
+    // are kept per category and reloaded when the category's own state changes.
     const titlesPanel = (c) => {
+      const key = `${c.override}|${c.included}`;
       let p = titlePanels.get(c.id);
       if (!p) {
-        p = h('div', { class: 'ch-panel' }, h('p', { class: 'meta' }, 'Loading…'));
+        // Opened from a search hit: start filtered to the search.
+        p = { el: h('div', { class: 'ch-panel' }, h('p', { class: 'meta' }, 'Loading…')), key, q: titleHits(c).length ? state.q.trim() : '' };
         titlePanels.set(c.id, p);
-        api('GET', `/api/categories/${c.id}/titles`).then((r) => fill(p,
-          r.titles.length ? h('div', { class: 'title-list' }, r.titles.map((t) => h('span', { class: 'title-item', title: t.name }, t.name))) : h('p', { class: 'meta' }, 'Empty.'),
-          r.total > r.titles.length ? h('p', { class: 'meta' }, `Showing the first ${r.titles.length} of ${r.total}.`) : null));
+        loadTitles(c, p);
+      } else if (p.key !== key) {
+        p.key = key;
+        loadTitles(c, p);
       }
-      return p;
+      return p.el;
+    };
+    const loadTitles = async (c, p) => {
+      renderTitles(c, p, await api('GET', `/api/outputs/${id}/titles?category_id=${c.id}`));
+    };
+    const renderTitles = (c, p, data) => {
+      p.rerender = () => renderTitles(c, p, data);
+      const off = !data.category_included;
+      const set = async (body) => {
+        await attempt(() => api('PUT', `/api/outputs/${id}/titles`, body));
+        await loadTitles(c, p);
+        await load(); // the category's count of titles that are in
+      };
+      const inCount = data.titles.filter((t) => t.included).length;
+      const picked = data.titles.filter((t) => t.override).map((t) => t.id);
+      const box = h('div', { class: 'ch-box' });
+      const drawBox = () => {
+        const q = p.q.toLowerCase();
+        const list = data.titles.filter((t) => !q || (t.custom_name || t.name).toLowerCase().includes(q) || t.name.toLowerCase().includes(q));
+        const LIMIT = 500;
+        fill(box,
+          list.slice(0, LIMIT).map((t) => h('label', {
+            class: `ch-row title-row ${t.override && !off ? 'overridden' : ''} ${t.included ? '' : 'out'}`,
+            title: off ? 'Include the category first' : [t.custom_name || t.name, t.override ? 'picked by hand' : ''].filter(Boolean).join('\n'),
+          },
+          h('input', { type: 'checkbox', disabled: off, checked: t.included, onchange: (e) => set({ ids: [t.id], state: e.target.checked ? 'include' : 'exclude' }) }),
+          h('span', { class: 'ch-name' }, t.custom_name || t.name),
+          h('button', { class: 'icon-btn rename', title: 'Rename (in every output)', onclick: (e) => { e.preventDefault(); renameTitle(t, () => loadTitles(c, p)); } }, '✎'),
+          t.custom_name || (t.override && !off)
+            ? h('span', { class: 'ch-details' },
+              t.custom_name ? h('span', { class: 'ch-why' }, `provider: ${t.name}`) : null,
+              t.override && !off ? h('button', { class: 'link', onclick: (e) => { e.preventDefault(); set({ ids: [t.id], state: null }); } }, 'reset') : null)
+            : null)),
+          list.length > LIMIT ? h('p', { class: 'meta' }, `Showing the first ${LIMIT} of ${list.length}. Type in the filter to narrow it down.`) : null,
+          list.length ? null : h('p', { class: 'meta' }, data.titles.length ? 'No titles match.' : 'No titles.'));
+      };
+      drawBox();
+      p.el.classList.toggle('locked', off);
+      fill(p.el,
+        off ? h('div', { class: 'ch-warning' },
+          h('span', null, h('b', null, 'This category is not in the output. '),
+            `Include it to pick ${L.plural}.`,
+            picked.length ? ` Your ${picked.length} earlier hand pick${picked.length === 1 ? ' comes' : 's come'} back when you do.` : ''),
+          h('button', { class: 'btn small primary', onclick: () => setOverride([c.id], 'include') }, 'Include category')) : null,
+        h('div', { class: 'ch-toolbar' },
+          h('span', { class: 'meta' }, `${inCount.toLocaleString()} of ${data.total.toLocaleString()} ${data.total === 1 ? L.one : L.plural} included`),
+          data.titles.length > 20 || p.q
+            ? h('input', { type: 'search', class: 'title-filter', placeholder: `Filter ${L.plural}`, value: p.q, oninput: (e) => { p.q = e.target.value; drawBox(); } })
+            : null,
+          h('span', { class: 'row' },
+            h('button', { class: 'btn small', disabled: off, title: `Include every ${L.one} in this category by hand`, onclick: () => set({ category_id: c.id, state: 'include' }) }, 'Select all'),
+            h('button', { class: 'btn small', disabled: off, title: `Exclude every ${L.one} in this category by hand`, onclick: () => set({ category_id: c.id, state: 'exclude' }) }, 'Deselect all'),
+            h('button', { class: 'btn small', disabled: off || !picked.length, title: 'Clear hand picks, so the whole category is in', onclick: () => set({ ids: picked, state: null }) }, 'Reset to rules'))),
+        data.truncated ? h('p', { class: 'meta' }, `This category is very large; the first ${data.titles.length.toLocaleString()} titles are listed.`) : null,
+        box);
     };
     const draw = () => {
       fill(notice,
@@ -1617,7 +1736,7 @@ async function outputEditor(main, id) {
       for (const c of state.cats) {
         if (evalVod(c).included) {
           inc++;
-          titles += c.channel_count;
+          titles += c.channel_count - (c.excluded_count || 0);
         }
       }
       summary.textContent = `${inc} of ${state.cats.length} categories · ${titles.toLocaleString()} ${titles === 1 ? L.one : L.plural}${dirty ? ' (preview)' : ''}`;
@@ -1631,13 +1750,16 @@ async function outputEditor(main, id) {
             h('button', { class: 'expander', title: `Show the ${L.plural}`, onclick: () => { state.open.has(c.id) ? state.open.delete(c.id) : state.open.add(c.id); draw(); } }, state.open.has(c.id) ? '▾' : '▸'),
             h('span', { class: 'dot' }),
             h('span', { class: 'cat-name' }, c.custom_name || c.name, c.is_new ? badge('new', 'info') : null,
-              h('span', { class: 'meta' }, `${c.custom_name ? ` (${c.name})` : ''} · ${c.channel_count.toLocaleString()} ${c.channel_count === 1 ? L.one : L.plural} · ${reasonText(st)}`)),
+              h('span', { class: 'meta' }, `${c.custom_name ? ` (${c.name})` : ''} · ${c.excluded_count ? `${(c.channel_count - c.excluded_count).toLocaleString()} of ` : ''}${c.channel_count.toLocaleString()} ${c.channel_count === 1 ? L.one : L.plural} · ${reasonText(st)}`),
+              hitLine(c)),
             h('button', { class: 'icon-btn', title: 'Rename (the name players see)', onclick: () => editCategory(c, draw, { vod: true }) }, '✎'),
             h('span', { class: 'segmented small' }, seg('Auto', null, ''), seg('Include', 'include', 'inc'), seg('Exclude', 'exclude', 'exc')));
           return state.open.has(c.id) ? h('div', null, row, titlesPanel(c)) : row;
         }),
         rows.length > LIMIT ? h('p', { class: 'meta pad' }, `Showing the first ${LIMIT} of ${rows.length}. Use the search box to narrow the list.`) : null,
         rows.length ? null : h('p', { class: 'meta pad' }, 'No categories to show.'));
+      fill(hitNote, state.hitTotal > 200 && state.hitsQ === state.q.trim().toLowerCase()
+        ? `Showing title matches for the first 200 of ${state.hitTotal.toLocaleString()} ${L.plural}. Type more to narrow it down.` : '');
     };
     const load = async () => {
       state.cats = await api('GET', `/api/outputs/${id}/categories?kind=${kind}`);
@@ -1658,13 +1780,14 @@ async function outputEditor(main, id) {
       h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('h2', null, `${L.title} categories`), summary),
         h('div', { class: 'toolbar' },
-          h('input', { type: 'search', placeholder: 'Search categories', oninput: (e) => { state.q = e.target.value; draw(); } }),
+          h('input', { type: 'search', placeholder: 'Search categories and titles', oninput: (e) => { state.q = e.target.value; searchTitles(); draw(); } }),
           h('select', { onchange: (e) => { state.show = e.target.value; draw(); } },
             [['all', 'All'], ['included', 'Included'], ['excluded', 'Excluded'], ['new', 'New'], ['manual', 'Picked by hand']].map(([v, l]) => h('option', { value: v }, l))),
           h('span', { class: 'row' },
             h('button', { class: 'btn small', onclick: bulk('include') }, 'Include shown'),
             h('button', { class: 'btn small', onclick: bulk('exclude') }, 'Exclude shown'),
             h('button', { class: 'btn small', onclick: bulk(null) }, 'Reset shown to Auto'))),
+        hitNote,
         list));
     return { el, draw, load, rules, get loaded() { return !!state.cats; } };
   };

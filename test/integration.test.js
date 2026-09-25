@@ -7,6 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { createApp } from '../src/app.js';
+import { openDb } from '../src/db.js';
+import { importSettings } from '../src/backup.js';
 
 const PASSWORD = 'correct horse';
 let upstream;
@@ -1282,6 +1284,70 @@ test('movies and series: loaded when a source includes them, filtered per output
   assert.deepEqual([renamed.name, renamed.kind], ['EN| ACTION', 'movie'], 'backed up with its kind');
   await api('PUT', `/api/categories/${vodCats[0].category_id}`, { custom_name: '' });
   assert.deepEqual((await xc('get_vod_categories')).map((c) => c.category_name), ['EN| ACTION', 'EN| KIDS']);
+
+  // Titles picked in or out by hand, inside an included category.
+  const action = vodCats[0].category_id;
+  const titles = async (catId) => (await api('GET', `/api/outputs/${o.id}/titles?category_id=${catId}`)).data;
+  let t = await titles(action);
+  assert.deepEqual([t.category_included, t.total, t.titles.map((x) => [x.name, x.included, x.override])],
+    [true, 2, [['Die Hard', true, null], ['Heat', true, null]]]);
+  const heat = t.titles[1];
+  await api('PUT', `/api/outputs/${o.id}/titles`, { ids: [heat.id], state: 'exclude' });
+  assert.deepEqual((await xc('get_vod_streams')).map((m) => m.name), ['Die Hard', 'Frozen']);
+  assert.equal((await fetch(`${base}/movie/vod/pw/${heat.id}.mp4`, { redirect: 'manual' })).status, 404, 'a title picked out can\'t be played');
+  let movieCats = (await api('GET', `/api/outputs/${o.id}/categories?kind=movie`)).data;
+  assert.deepEqual(movieCats.map((c) => [c.name, c.channel_count, c.excluded_count]), [['EN| ACTION', 2, 1], ['EN| KIDS', 1, 0], ['FR| FILMS', 1, 0]]);
+  // Deselect all empties the category (it drops out of the list); Select all brings everything back.
+  await api('PUT', `/api/outputs/${o.id}/titles`, { category_id: Number(action), state: 'exclude' });
+  assert.deepEqual((await xc('get_vod_categories')).map((c) => c.category_name), ['EN| KIDS']);
+  await api('PUT', `/api/outputs/${o.id}/titles`, { category_id: Number(action), state: 'include' });
+  t = await titles(action);
+  assert.deepEqual(t.titles.map((x) => [x.included, x.override]), [[true, 'include'], [true, 'include']]);
+  assert.deepEqual((await xc('get_vod_streams')).map((m) => m.name), ['Die Hard', 'Heat', 'Frozen']);
+  // A pick can't pull a title out of an excluded category.
+  const french = (await api('GET', `/api/outputs/${o.id}/categories?kind=movie`)).data.find((c) => c.name === 'FR| FILMS');
+  const amelieRow = (await titles(french.id)).titles[0];
+  await api('PUT', `/api/outputs/${o.id}/titles`, { ids: [amelieRow.id], state: 'include' });
+  assert.deepEqual([(await titles(french.id)).category_included, (await titles(french.id)).titles[0].included], [false, false]);
+  assert.ok(!(await xc('get_vod_streams')).some((m) => m.name === 'Amélie'));
+  await api('PUT', `/api/outputs/${o.id}/titles`, { ids: [amelieRow.id], state: null });
+  // Renaming a title shows in every output, over name cleanup.
+  await api('PUT', `/api/vod/${heat.id}`, { custom_name: 'Heat (Director\'s Cut)' });
+  assert.ok((await xc('get_vod_streams')).some((m) => m.name === 'Heat (Director\'s Cut)'));
+  // Searching titles, across the categories of a kind, with whether each is in and why not.
+  const search = async (k, q) => (await api('GET', `/api/outputs/${o.id}/search?kind=${k}&q=${encodeURIComponent(q)}`)).data.matches
+    .map((m) => [m.custom_name || m.name, m.included, m.reason]);
+  assert.deepEqual(await search('movie', 'DIE'), [['Die Hard', true, 'manual']]);
+  assert.deepEqual(await search('movie', 'amé'), [['Amélie', false, 'category']], 'titles of excluded categories are found too');
+  assert.deepEqual(await search('movie', 'director'), [['Heat (Director\'s Cut)', true, 'manual']], 'renamed titles match their name');
+  assert.deepEqual(await search('series', 'bad'), [['Breaking Bad', true, 'category']]);
+  assert.deepEqual(await search('movie', 'bad'), [], 'each tab searches its own kind');
+  // Backed up by provider id, and duplicated with the output.
+  const exported = (await api('GET', '/api/export')).data;
+  assert.deepEqual(exported.sources.find((x) => x.ref === xcId).vod_titles, [{ kind: 'movie', key: '5002', name: 'Heat', custom_name: 'Heat (Director\'s Cut)' }]);
+  assert.deepEqual(exported.outputs.find((x) => x.token === o.token).title_overrides.map((x) => [x.kind, x.key, x.state]).sort(),
+    [['movie', '5001', 'include'], ['movie', '5002', 'include']]);
+  // Restored into a fresh database, picks and names wait on placeholders for the next refresh.
+  const dbFile = path.join(os.tmpdir(), `iptvm-titles-${process.pid}.db`);
+  const db2 = openDb(dbFile);
+  try {
+    importSettings(db2, exported);
+    const restored = db2.all(`SELECT v.kind, v.key, v.custom_name, x.state FROM output_vod_overrides x
+      JOIN vod_items v ON v.id = x.item_id JOIN outputs o ON o.id = x.output_id WHERE o.token = ? ORDER BY v.key`, [o.token]);
+    assert.deepEqual(restored.map((r) => [r.kind, r.key, r.custom_name, r.state]),
+      [['movie', '5001', null, 'include'], ['movie', '5002', 'Heat (Director\'s Cut)', 'include']]);
+  } finally {
+    db2.close();
+    for (const f of [dbFile, `${dbFile}-wal`, `${dbFile}-shm`]) fs.rmSync(f, { force: true });
+  }
+  const dupe = (await api('POST', `/api/outputs/${o.id}/clone`)).data;
+  assert.equal((await titles(action)).titles.filter((x) => x.override).length, 2);
+  assert.equal((await api('GET', `/api/outputs/${dupe.id}/titles?category_id=${action}`)).data.titles.filter((x) => x.override).length, 2);
+  await api('DELETE', `/api/outputs/${dupe.id}`);
+  await api('PUT', `/api/outputs/${o.id}/titles`, { category_id: Number(action), state: null });
+  await api('PUT', `/api/vod/${heat.id}`, { custom_name: '' });
+  movieCats = (await api('GET', `/api/outputs/${o.id}/categories?kind=movie`)).data;
+  assert.equal(movieCats[0].excluded_count, 0);
 
   // Name cleanup for movies and series: only rules aimed at them (or everywhere) apply.
   const nameRules = [

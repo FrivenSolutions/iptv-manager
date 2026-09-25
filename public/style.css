@@ -370,7 +370,12 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 .tabs button:hover { color: var(--text); }
 .tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
 .editor-main > .ch-warning, .editor-main > div > .ch-warning { margin-bottom: 16px; }
-.title-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 16px; font-size: 13px; }
-.title-item { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Provider heading inside a category list with more than one provider. */
 .cat-group { padding: 8px 10px 6px; background: var(--panel-2); border-bottom: 1px solid var(--border); font-size: 13px; }
+/* A title inside a movie or series category: checkbox, name, rename (shown on hover). */
+.ch-row.title-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+.ch-row.title-row .ch-details { grid-column: 2 / 4; }
+.ch-row.title-row .rename { opacity: 0; padding: 0 4px; }
+.ch-row.title-row:hover .rename, .ch-row.title-row .rename:focus { opacity: 1; }
+.ch-panel.locked .ch-row.title-row .rename { display: none; }
+.title-filter { max-width: 220px; }

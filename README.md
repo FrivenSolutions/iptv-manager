@@ -404,7 +404,10 @@ Off by default, in two places:
    list, which work like live TV's: include and exclude rules on category names, hand picks that
    always win, new categories that match added automatically, and an "include all of a source's
    categories when it has no Include rules" switch of its own. Expand a category (▸) to see its
-   titles.
+   titles: untick the ones you don't want, or use **Select all**, **Deselect all** and **Reset
+   to rules** for the whole category. ✎ renames a title (in every output). The search box finds
+   titles as well as categories: matches show as chips under their category, ✓ in or ✕ out, and a
+   click opens the category filtered to them.
 
 Players get movies and series through the output's **Xtream Codes login** (TiviMate, IPTV
 Smarters, Kodi and similar), with posters, plots and ratings passed on from the provider. A

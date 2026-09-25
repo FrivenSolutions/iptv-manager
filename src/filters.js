@@ -285,9 +285,11 @@ export function evaluateCategories(db, output, kind = 'live') {
             ${kind === 'live'
     ? '(SELECT COUNT(*) FROM channels ch WHERE ch.category_id = c.id AND ch.active = 1)'
     : '(SELECT COUNT(*) FROM vod_items v WHERE v.category_id = c.id AND v.active = 1)'} AS channel_count
+            ${kind === 'live' ? '' : `, (SELECT COUNT(*) FROM output_vod_overrides x JOIN vod_items v ON v.id = x.item_id
+                 WHERE x.output_id = ? AND x.state = 'exclude' AND v.category_id = c.id AND v.active = 1) AS excluded_count`}
        FROM categories c
       WHERE c.active = 1 AND c.kind = ? AND c.source_id IN (${ids.map(() => '?').join(',')})`,
-    [kind, ...ids],
+    kind === 'live' ? [kind, ...ids] : [output.id, kind, ...ids],
   );
   const rules = output.rules.filter((r) => (r.kind || 'live') === kind);
   cats.sort((a, b) => order.get(a.source_id) - order.get(b.source_id) || a.sort - b.sort);

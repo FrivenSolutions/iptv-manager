@@ -104,11 +104,14 @@ export function createApp({
       if (output?.vod_enabled) {
         vod = {};
         const clean = nameCleaner(checkNameRules(parseNameRules(output.name_rules)).rules || [], 'vod');
+        // Titles picked out by hand (picks in are the default already).
+        const excluded = new Set(db.all("SELECT item_id FROM output_vod_overrides WHERE output_id = ? AND state = 'exclude'", [outputId]).map((r) => r.item_id));
         for (const kind of ['movie', 'series']) {
           const cats = evaluateCategories(db, output, kind);
           vod[kind] = {
             cats,
             clean,
+            excluded,
             included: new Set(cats.filter((c) => c.included).map((c) => c.id)),
             order: new Map(cats.map((c, i) => [c.id, i])),
           };

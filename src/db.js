@@ -305,6 +305,16 @@ const MIGRATIONS = [
   ALTER TABLE outputs ADD COLUMN include_all_series INTEGER NOT NULL DEFAULT 0;
   UPDATE outputs SET include_all_movie = include_all, include_all_series = include_all;
   `,
+  `
+  -- Movies and series picked in or out by hand per output, and a title's own display name.
+  CREATE TABLE output_vod_overrides (
+    output_id INTEGER NOT NULL REFERENCES outputs(id) ON DELETE CASCADE,
+    item_id INTEGER NOT NULL REFERENCES vod_items(id) ON DELETE CASCADE,
+    state TEXT NOT NULL CHECK (state IN ('include', 'exclude')),
+    PRIMARY KEY (output_id, item_id)
+  );
+  ALTER TABLE vod_items ADD COLUMN custom_name TEXT;
+  `,
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.

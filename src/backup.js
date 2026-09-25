@@ -35,6 +35,10 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
   const customPatterns = db.getSetting('empty_event_patterns');
   const customGuide = db.getSetting('guide_patterns');
   const neededChans = new Set(chOverrides.map((r) => r.channel_id));
+  // Movies and series: renamed titles, and hand picks, named by source, kind and provider id.
+  const vodOverrides = db.all('SELECT * FROM output_vod_overrides');
+  const vodRef = new Map(db.all('SELECT id, source_id, kind, key FROM vod_items WHERE custom_name IS NOT NULL OR id IN (SELECT item_id FROM output_vod_overrides)')
+    .map((v) => [v.id, v]));
 
   return {
     format: FORMAT,
@@ -69,6 +73,8 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
       )
         .filter((c) => c.custom_name || c.custom_logo || c.custom_epg_id || c.custom_chno || neededChans.has(c.id))
         .map((c) => pick(c, ['key', 'name', 'custom_name', 'custom_logo', 'custom_epg_id', 'custom_chno']));
+      const titles = db.all('SELECT kind, key, name, custom_name FROM vod_items WHERE source_id = ? AND custom_name IS NOT NULL', [s.id]);
+      if (titles.length) src.vod_titles = titles;
       return src;
     }),
     outputs: outputs.map((o) => ({
@@ -101,6 +107,10 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
       channel_overrides: chOverrides.filter((r) => r.output_id === o.id && chRef.has(r.channel_id)).map((r) => {
         const c = chRef.get(r.channel_id);
         return { source: c.source_id, key: c.key, state: r.state };
+      }),
+      title_overrides: vodOverrides.filter((r) => r.output_id === o.id && vodRef.has(r.item_id)).map((r) => {
+        const v = vodRef.get(r.item_id);
+        return { source: v.source_id, kind: v.kind, key: v.key, state: r.state };
       }),
     })),
   };
@@ -143,7 +153,8 @@ function validate(data) {
     const names = checkNameRules(o.name_rules ?? []);
     check(!names.error, `output "${o.name}": ${names.error}`);
     const used = [...(o.sources || []), ...[...(o.category_overrides || []), ...(o.channel_rules || []), ...(o.category_options || []),
-      ...(o.channel_overrides || [])].map((x) => x.source)];
+      ...(o.channel_overrides || []), ...(o.title_overrides || [])].map((x) => x.source)];
+    check((o.title_overrides || []).every((x) => ['movie', 'series'].includes(x.kind) && x.key != null), `output "${o.name}" has an invalid title pick`);
     for (const r of used) {
       check(refs.has(r), `output "${o.name}" refers to a source that is not in the file`);
     }
@@ -180,6 +191,20 @@ export function importSettings(db, data) {
     const ids = new Map();
     const catIds = new Map(); // "ref|kind|name" -> id
     const chIds = new Map(); // "ref|key" -> id
+    const vodIds = new Map(); // "ref|kind|key" -> id
+    // A movie or series named by the file, as an inactive placeholder until the next refresh
+    // fills it in (ingest upserts on source, kind and key, keeping its name and picks).
+    const ensureTitle = (ref, kind, key, name, customName) => {
+      const k = `${ref}|${kind}|${key}`;
+      if (!vodIds.has(k)) {
+        vodIds.set(k, db.get(
+          `INSERT INTO vod_items (source_id, kind, key, name, custom_name, active, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+           ON CONFLICT (source_id, kind, key) DO UPDATE SET custom_name = COALESCE(excluded.custom_name, custom_name) RETURNING id`,
+          [ids.get(ref), kind, String(key), String(name || key), customName ?? null, t, t],
+        ).id);
+      }
+      return vodIds.get(k);
+    };
     const ensureCat = (ref, name, kind) => {
       kind = KINDS.includes(kind) ? kind : 'live';
       const k = `${ref}|${kind}|${name}`;
@@ -221,6 +246,9 @@ export function importSettings(db, data) {
             c.custom_chno ?? null, t, t],
         );
         chIds.set(`${s.ref}|${c.key}`, row.id);
+      }
+      for (const v of s.vod_titles || []) {
+        if (['movie', 'series'].includes(v.kind) && v.key != null) ensureTitle(s.ref, v.kind, v.key, v.name, v.custom_name || null);
       }
     });
 
@@ -271,6 +299,11 @@ export function importSettings(db, data) {
         }
         db.run('INSERT OR REPLACE INTO output_channel_overrides (output_id, channel_id, state) VALUES (?, ?, ?)', [
           r.id, id, x.state === 'include' ? 'include' : 'exclude',
+        ]);
+      }
+      for (const x of o.title_overrides || []) {
+        db.run('INSERT OR REPLACE INTO output_vod_overrides (output_id, item_id, state) VALUES (?, ?, ?)', [
+          r.id, ensureTitle(x.source, x.kind, x.key), x.state === 'include' ? 'include' : 'exclude',
         ]);
       }
     }
