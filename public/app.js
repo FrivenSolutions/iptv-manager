@@ -1762,7 +1762,45 @@ function backupCard() {
       h('div', null, h('button', { class: 'btn primary', onclick: exportNow }, 'Export settings')),
       h('hr', { class: 'sep' }),
       field('Import a settings file', file, 'Importing replaces every source and output here with the ones in the file. Output URLs and logins stay the same, so your apps keep working.'),
-      h('div', null, h('button', { class: 'btn danger', onclick: importNow }, 'Import and replace…'))));
+      h('div', null, h('button', { class: 'btn danger', onclick: importNow }, 'Import and replace…')),
+      h('hr', { class: 'sep' }),
+      autoBackups()));
+}
+
+/** Daily copies saved on the server: a switch, "Back up now", and the list tucked in a <details>. */
+function autoBackups() {
+  const box = h('div', { class: 'auto-backups' });
+  const fmtSize = (n) => (n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  const draw = (b) => {
+    fill(box,
+      h('label', { class: 'check' },
+        h('input', {
+          type: 'checkbox',
+          checked: b.enabled,
+          onchange: (e) => attempt(() => api('PUT', '/api/settings', { auto_backup: e.target.checked }), e.target.checked ? 'Daily backups on' : 'Daily backups off'),
+        }),
+        h('b', null, ' Save a backup automatically every day')),
+      h('span', { class: 'hint' }, `Kept on this server in its data folder (the last ${b.keep}), including provider passwords, like the database next to them.`),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn small', onclick: async () => draw({ ...b, ...(await attempt(() => api('POST', '/api/backups'), 'Backup saved')) }) }, 'Back up now'),
+        b.files[0] ? h('span', { class: 'meta' }, `Latest: ${b.files[0].date}`) : h('span', { class: 'meta' }, 'None saved yet')),
+      b.files.length ? h('details', null,
+        h('summary', null, `Saved backups (${b.files.length})`),
+        h('div', { class: 'backup-list' }, b.files.map((f) => h('div', { class: 'backup-row' },
+          h('span', null, f.date), h('span', { class: 'meta' }, fmtSize(f.size)),
+          h('a', { class: 'btn small', href: `/api/backups/${f.name}`, download: `iptv-manager-${f.name}` }, 'Download'),
+          h('button', {
+            class: 'btn small danger-text',
+            onclick: async () => {
+              if (!(await confirmBox(`Restore the backup from ${f.date}? Every source and output is replaced with the ones in it, then the sources refresh.`, 'Restore'))) return;
+              const r = await attempt(() => api('POST', `/api/backups/${f.name}/restore`));
+              toast(`Restored ${r.sources} sources and ${r.outputs} outputs; refreshing sources now`);
+              location.hash = '#/sources';
+            },
+          }, 'Restore'))))) : null);
+  };
+  api('GET', '/api/backups').then(draw).catch(() => {});
+  return box;
 }
 
 window.addEventListener('hashchange', route);

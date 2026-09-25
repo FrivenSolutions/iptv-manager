@@ -1177,3 +1177,53 @@ test('alerts: expiring account, failing source, empty guide; sent once, resolved
   assert.equal((await api('GET', '/api/export?secrets=0')).data.settings.notify_url, '');
   await api('PUT', '/api/settings', { notify_type: '', notify_url: '' });
 });
+
+test('automatic backups: saved daily, 14 kept, downloadable, restorable, no path tricks', async () => {
+  const dir = path.join(dataDir, 'backups');
+  // Older backups than we keep: the oldest are dropped when a new one is saved.
+  fs.mkdirSync(dir, { recursive: true });
+  for (let d = 1; d <= 16; d++) fs.writeFileSync(path.join(dir, `settings-2020-01-${String(d).padStart(2, '0')}.json`), '{}');
+  fs.writeFileSync(path.join(dir, 'notes.txt'), 'not a backup');
+
+  let r = await api('GET', '/api/backups');
+  assert.equal(r.data.enabled, true, 'on by default');
+  app.ctx.autoBackup.tick(); // what the hourly timer does
+  r = await api('GET', '/api/backups');
+  const d = new Date();
+  const today = `settings-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.json`;
+  assert.equal(r.data.files.length, 14);
+  assert.equal(r.data.files[0].name, today, 'newest first');
+  assert.ok(!r.data.files.some((f) => f.name === 'settings-2020-01-01.json'), 'oldest dropped');
+  assert.ok(fs.existsSync(path.join(dir, 'notes.txt')), 'other files left alone');
+
+  // The saved file is a full export, secrets included.
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, today), 'utf8'));
+  assert.equal(saved.format, 'iptv-manager-settings');
+  assert.equal(saved.sources.find((s) => s.type === 'xc').xc_password, 'xp');
+
+  const dl = await fetch(`${base}/api/backups/${today}`, { headers: { cookie } });
+  assert.equal(dl.status, 200);
+  assert.match(dl.headers.get('content-disposition'), /attachment/);
+  for (const bad of ['..%2Fiptv-manager.db', 'notes.txt', 'settings-2020-01-01.json']) {
+    assert.equal((await fetch(`${base}/api/backups/${bad}`, { headers: { cookie } })).status, 404, bad);
+  }
+  assert.equal((await fetch(`${base}/api/backups/${today}`)).status, 401, 'admin only');
+
+  // Switched off: the daily tick does nothing; "Back up now" still works.
+  await api('PUT', '/api/settings', { auto_backup: false });
+  fs.rmSync(path.join(dir, today));
+  app.ctx.autoBackup.tick();
+  assert.ok(!fs.existsSync(path.join(dir, today)));
+  r = await api('POST', '/api/backups');
+  assert.equal(r.data.name, today);
+  await api('PUT', '/api/settings', { auto_backup: true });
+
+  // Restore: change something, restore today's backup, and the change is undone.
+  const before = (await api('GET', '/api/outputs')).data.map((o) => o.name).sort();
+  const extra = (await api('POST', '/api/outputs', { name: 'Made after the backup' })).data;
+  assert.ok((await api('GET', '/api/outputs')).data.some((o) => o.id === extra.id));
+  r = await api('POST', `/api/backups/${today}/restore`);
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  await app.ctx.jobs.idle();
+  assert.deepEqual((await api('GET', '/api/outputs')).data.map((o) => o.name).sort(), before);
+});

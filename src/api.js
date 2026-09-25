@@ -13,6 +13,7 @@ import { rematchSource } from './ingest.js';
 import { JELLYFIN_CATEGORIES, parseJellyfin } from './outputs/epg.js';
 import { exportSettings, importSettings } from './backup.js';
 import { computeAlerts } from './alerts.js';
+import { KEEP as AUTO_BACKUP_KEEP } from './autobackup.js';
 import { now } from './db.js';
 
 const UPLOAD_LIMIT = 1024 * 1024 * 1024;
@@ -250,6 +251,7 @@ export function registerApi(router, ctx) {
     }
     if (body.update_check !== undefined) db.setSetting('update_check', bool(body.update_check));
     if (body.advanced !== undefined) db.setSetting('ui_advanced', bool(body.advanced));
+    if (body.auto_backup !== undefined) db.setSetting('auto_backup', bool(body.auto_backup));
     if (body.notify_type !== undefined || body.notify_url !== undefined) {
       const type = body.notify_type === undefined ? db.getSetting('notify_type') || '' : String(body.notify_type || '');
       const url = body.notify_url === undefined ? db.getSetting('notify_url') || '' : str(body.notify_url, 1000);
@@ -335,15 +337,49 @@ export function registerApi(router, ctx) {
     res.end(body);
   });
 
-  router.post('/api/import', async (req, res) => {
-    const data = await readJson(req, IMPORT_LIMIT);
+  const applyImport = (data, label) => {
     // A refresh writing into a source the import is about to delete would fail half-way.
     if (ctx.jobs.running || ctx.jobs.queue.length) throw new HttpError(409, 'A source refresh is running; try again when it finishes');
     const result = importSettings(db, data);
     ctx.bump();
     for (const id of result.sourceIds) ctx.jobs.enqueue(id);
-    ctx.log(`Imported settings: ${result.sources} sources, ${result.outputs} outputs`);
-    sendJson(res, 200, { ok: true, sources: result.sources, outputs: result.outputs });
+    ctx.log(`${label}: ${result.sources} sources, ${result.outputs} outputs`);
+    return { ok: true, sources: result.sources, outputs: result.outputs };
+  };
+
+  router.post('/api/import', async (req, res) => {
+    sendJson(res, 200, applyImport(await readJson(req, IMPORT_LIMIT), 'Imported settings'));
+  });
+
+  // --- automatic backups -------------------------------------------------------
+  router.get('/api/backups', (req, res) => {
+    sendJson(res, 200, { enabled: ctx.autoBackup.enabled, keep: AUTO_BACKUP_KEEP, files: ctx.autoBackup.list() });
+  });
+  router.post('/api/backups', (req, res) => {
+    const name = ctx.autoBackup.run();
+    sendJson(res, 200, { ok: true, name, files: ctx.autoBackup.list() });
+  });
+  router.get('/api/backups/:name', (req, res, { params }) => {
+    const file = ctx.autoBackup.file(params.name);
+    if (!file) throw new HttpError(404, 'No such backup');
+    const body = fs.readFileSync(file);
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'content-disposition': `attachment; filename="iptv-manager-${params.name}"`,
+      'cache-control': 'no-store',
+    });
+    res.end(body);
+  });
+  router.post('/api/backups/:name/restore', (req, res, { params }) => {
+    const file = ctx.autoBackup.file(params.name);
+    if (!file) throw new HttpError(404, 'No such backup');
+    let data;
+    try {
+      data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      throw new HttpError(400, 'That backup file is damaged');
+    }
+    sendJson(res, 200, applyImport(data, `Restored ${params.name}`));
   });
 
   // --- sources ---------------------------------------------------------------

@@ -20,6 +20,7 @@ import { currentVersion } from './version.js';
 import { UpdateChecker, installType, DEFAULT_UPDATE_REPO } from './updates.js';
 import { WebUpdater } from './webupdate.js';
 import { Alerts } from './alerts.js';
+import { AutoBackup } from './autobackup.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = path.join(ROOT, 'public');
@@ -43,7 +44,7 @@ const UI_HEADERS = {
 export function createApp({
   dataDir, adminPassword = '', log = defaultLog, hdhrApiBase = HDHR_API,
   updateApiBase = 'https://api.github.com', updateRepo = process.env.IPTV_UPDATE_REPO || DEFAULT_UPDATE_REPO,
-  updateCheckDelayMs = 60_000, appCommit, webUpdatePathUnit,
+  updateCheckDelayMs = 60_000, appCommit, webUpdatePathUnit, autoBackupDelayMs = 2 * 60_000,
 } = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.rmSync(path.join(dataDir, 'tmp'), { recursive: true, force: true });
@@ -101,6 +102,7 @@ export function createApp({
   };
   ctx.webUpdate = new WebUpdater({ dataDir, pathUnit: webUpdatePathUnit });
   ctx.alerts = new Alerts(ctx);
+  ctx.autoBackup = new AutoBackup(ctx, { firstDelayMs: autoBackupDelayMs });
   ctx.updates = new UpdateChecker({
     db, commit: ctx.build.commit, apiBase: updateApiBase, repo: updateRepo, delayMs: updateCheckDelayMs, log,
   });
@@ -259,12 +261,14 @@ export function createApp({
       ctx.jobs.start();
       ctx.updates.start();
       ctx.alerts.start();
+      ctx.autoBackup.start();
       return new Promise((resolve) => server.listen(port, host, () => resolve(server.address())));
     },
     async close() {
       ctx.jobs.stop();
       ctx.updates.stop();
       ctx.alerts.stop();
+      ctx.autoBackup.stop();
       await new Promise((r) => {
         server.close(() => r());
         server.closeAllConnections();
