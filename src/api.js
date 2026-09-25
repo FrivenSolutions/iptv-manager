@@ -231,6 +231,9 @@ export function registerApi(router, ctx) {
       empty_event_defaults: DEFAULT_EMPTY_EVENT_PATTERNS,
       guide_patterns: guidePatterns(db),
       guide_defaults: DEFAULT_GUIDE_PATTERNS,
+      // "Show advanced options" (UI only) and the advanced features it reveals.
+      advanced: db.getSetting('ui_advanced') === '1',
+      guide_logo_fallback: db.getSetting('guide_logo_fallback') === '1',
     });
   });
 
@@ -243,6 +246,8 @@ export function registerApi(router, ctx) {
       db.setSetting('base_url', b);
     }
     if (body.update_check !== undefined) db.setSetting('update_check', bool(body.update_check));
+    if (body.advanced !== undefined) db.setSetting('ui_advanced', bool(body.advanced));
+    if (body.guide_logo_fallback !== undefined) db.setSetting('guide_logo_fallback', bool(body.guide_logo_fallback));
     if (body.empty_event_patterns !== undefined) {
       // null restores the defaults; a list (possibly empty) replaces them.
       db.setSetting('empty_event_patterns', body.empty_event_patterns === null ? null : JSON.stringify(validatePatterns(body.empty_event_patterns)));

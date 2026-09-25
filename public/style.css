@@ -174,6 +174,8 @@ details[open] > summary { margin-bottom: 8px; }
 .copy-field input { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 .update-badge { font-size: 12.5px; font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
 .update-badge:hover { text-decoration: none; filter: brightness(1.1); }
+.advanced-box { margin-top: 12px; padding: 12px; border: 1px dashed var(--border); border-radius: 8px; display: flex; flex-direction: column; gap: 4px; }
+.advanced-box .hint { margin: 0 0 8px 22px; }
 .update-actions { gap: 10px; margin: 12px 0 10px; }
 .update-actions .meta { margin-left: 4px; }
 .update-progress { border: 1px solid var(--accent); border-radius: 8px; padding: 10px 12px; margin: 8px 0; background: var(--accent-soft); }

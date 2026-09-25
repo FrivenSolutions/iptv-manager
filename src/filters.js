@@ -148,6 +148,27 @@ export function guideHider(db, output, cats, t = Math.floor(Date.now() / 1000)) 
   };
 }
 
+const NO_ICONS = new Map();
+
+/**
+ * Guide-listed channel logos per source, used when a channel has no logo of its own. Off unless
+ * the (advanced) "Use guide logos" setting is on; each source is looked up once, only if needed.
+ */
+export function guideIconLookup(db, srcById) {
+  if (db.getSetting('guide_logo_fallback') !== '1') return () => NO_ICONS;
+  const cache = new Map();
+  return (sourceId) => {
+    if (!cache.has(sourceId)) {
+      const src = srcById.get(sourceId);
+      cache.set(sourceId, new Map(src ? db.all(
+        "SELECT xml_id, icon FROM epg_channels WHERE source_id = ? AND gen = ? AND icon IS NOT NULL AND icon <> ''",
+        [src.id, src.epg_gen],
+      ).map((r) => [r.xml_id, r.icon]) : []));
+    }
+    return cache.get(sourceId);
+  };
+}
+
 /** Why a category's switches hide this channel: 'empty', 'guide', 'unlisted', or null. */
 export function hiddenReason(cat, ch, emptyRegexes, guide) {
   if (cat.hide_empty && isEmptyEvent(ch.name, emptyRegexes)) return 'empty';
@@ -237,6 +258,7 @@ export function selectChannels(db, output) {
   const srcById = new Map(output.sources.map((s) => [s.id, s]));
   const emptyRegexes = compilePatterns(emptyEventPatterns(db));
   const guide = guideHider(db, output, cats);
+  const guideIcons = guideIconLookup(db, srcById);
   const ids = output.sources.map((s) => s.id);
   const rows = db.all(
     `SELECT * FROM channels WHERE active = 1 AND source_id IN (${ids.map(() => '?').join(',')})`,
@@ -278,7 +300,8 @@ export function selectChannels(db, output) {
       source_id: ch.source_id,
       category_id: cat.id,
       name: ch.custom_name || ch.name,
-      logo: ch.custom_logo || ch.logo || '',
+      // No provider logo: borrow the one the guide lists for this channel.
+      logo: ch.custom_logo || ch.logo || (epgId && guideIcons(ch.source_id).get(epgId)) || '',
       group: cat.custom_name || cat.name,
       jellyfin: cat.jellyfin,
       tvg_id: tvgId,

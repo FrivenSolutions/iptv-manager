@@ -42,6 +42,8 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
       // null means "the built-in defaults", so a restore follows future default changes.
       empty_event_patterns: customPatterns ? JSON.parse(customPatterns) : null,
       guide_patterns: customGuide ? JSON.parse(customGuide) : null,
+      advanced: db.getSetting('ui_advanced') === '1',
+      guide_logo_fallback: db.getSetting('guide_logo_fallback') === '1',
     },
     sources: sources.map((s) => {
       const src = { ref: s.id, ...pick(s, SOURCE_FIELDS), live_only: !!s.live_only, enabled: !!s.enabled };
@@ -151,6 +153,9 @@ export function importSettings(db, data) {
       const p = data.settings?.[key];
       db.setSetting(key, p == null ? null : JSON.stringify(p.map((s) => s.trim())));
     }
+    // Missing in older files: off, as it was then.
+    db.setSetting('ui_advanced', data.settings?.advanced ? 1 : 0);
+    db.setSetting('guide_logo_fallback', data.settings?.guide_logo_fallback ? 1 : 0);
 
     const ids = new Map();
     const catIds = new Map(); // "ref|name" -> id

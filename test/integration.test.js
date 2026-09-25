@@ -96,8 +96,8 @@ function startUpstream() {
       const now = Date.now();
       // fromH/toH place the listing in time (default: airing now); channelOnly lists the channel
       // with no programmes at all.
-      const events = eventGuide.map(({ id, title, fromH = -1, toH = 1, channelOnly }) =>
-        `<channel id="${id}"><display-name>${id}</display-name></channel>\n` +
+      const events = eventGuide.map(({ id, title, fromH = -1, toH = 1, channelOnly, icon }) =>
+        `<channel id="${id}"><display-name>${id}</display-name>${icon ? `<icon src="${icon}"/>` : ''}</channel>\n` +
         (channelOnly ? '' : `<programme start="${xmltvTime(new Date(now + fromH * 3600_000))}" stop="${xmltvTime(new Date(now + toH * 3600_000))}" channel="${id}"><title>${title}</title></programme>\n`)).join('');
       return res.end(guide([['cnn.us', 'CNN'], ['sky.uk', 'Sky Sports'], ['foxnews.us', 'Fox News']]).replace('</tv>', `${events}</tv>`));
     }
@@ -929,6 +929,33 @@ test('hide channels with nothing listed now: sub-option of the guide toggle, wit
   // Restore the guide for later tests.
   await api('POST', `/api/sources/${xcId}/refresh`);
   await app.ctx.jobs.idle();
+  await api('DELETE', `/api/outputs/${o.id}`);
+});
+
+test('guide logos fill in missing channel logos, only when the advanced setting is on', async () => {
+  xcCats.push({ category_id: '32', category_name: 'US| LOGOS' });
+  xcStreams.push(
+    { num: 90, name: 'Logo Missing', stream_id: 900, stream_icon: '', epg_channel_id: 'logo1', category_id: '32' },
+    { num: 91, name: 'Logo Own', stream_id: 901, stream_icon: 'http://provider/own.png', epg_channel_id: 'logo2', category_id: '32' },
+  );
+  eventGuide.push({ id: 'logo1', title: 'Show', icon: 'http://guide/logo1.png' }, { id: 'logo2', title: 'Show', icon: 'http://guide/logo2.png' });
+  await api('POST', `/api/sources/${xcId}/refresh`);
+  await app.ctx.jobs.idle();
+  const o = (await api('POST', '/api/outputs', { name: 'Logos' })).data;
+  await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [{ action: 'include', op: 'equals', value: 'us| logos' }] });
+  const logos = async () => Object.fromEntries([...(await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text())
+    .matchAll(/tvg-logo="([^"]*)"[^\n]*,([^\n]+)\n/g)].map((m) => [m[2], m[1]]));
+
+  assert.equal((await api('GET', '/api/settings')).data.guide_logo_fallback, false, 'off by default');
+  assert.deepEqual(await logos(), { 'Logo Missing': '', 'Logo Own': 'http://provider/own.png' });
+  await api('PUT', '/api/settings', { guide_logo_fallback: true, advanced: true });
+  assert.deepEqual(await logos(), { 'Logo Missing': 'http://guide/logo1.png', 'Logo Own': 'http://provider/own.png' }, 'provider logos still win');
+  const xc = await (await fetch(`${base}/player_api.php?username=family&password=pw123&action=get_live_streams`)).json();
+  assert.ok(Array.isArray(xc));
+  const file = (await api('GET', '/api/export')).data;
+  assert.deepEqual([file.settings.advanced, file.settings.guide_logo_fallback], [true, true]);
+  await api('PUT', '/api/settings', { guide_logo_fallback: false, advanced: false });
+  assert.equal((await logos())['Logo Missing'], '');
   await api('DELETE', `/api/outputs/${o.id}`);
 });
 

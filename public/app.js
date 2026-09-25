@@ -1310,7 +1310,43 @@ async function settingsView(main) {
     updatesCard(await api('GET', '/api/updates')),
     emptyEventCard(s),
     guidePatternsCard(s),
-    backupCard());
+    backupCard(),
+    advancedCard(s));
+}
+
+/**
+ * "Show advanced options" keeps rarely needed features out of the way. When it is on, this card
+ * holds the advanced global switches, and outputs show their name cleanup section.
+ */
+function advancedCard(s) {
+  const card = h('section', { class: 'card narrow' });
+  const draw = () => {
+    fill(card,
+      h('label', { class: 'check' },
+        h('input', {
+          type: 'checkbox',
+          checked: s.advanced,
+          onchange: async (e) => {
+            await attempt(() => api('PUT', '/api/settings', { advanced: e.target.checked }));
+            s.advanced = e.target.checked;
+            draw();
+          },
+        }),
+        h('b', null, ' Show advanced options')),
+      h('span', { class: 'hint' }, 'Extra features most setups don\'t need. Turning this off hides them again; anything already set up keeps working.'),
+      s.advanced ? h('div', { class: 'advanced-box' },
+        h('label', { class: 'check' },
+          h('input', {
+            type: 'checkbox',
+            checked: s.guide_logo_fallback,
+            onchange: (e) => attempt(() => api('PUT', '/api/settings', { guide_logo_fallback: e.target.checked }),
+              e.target.checked ? 'Guide logos on' : 'Guide logos off').then(() => { s.guide_logo_fallback = e.target.checked; }),
+          }),
+          ' Use guide logos for channels without one'),
+        h('span', { class: 'hint' }, 'When the provider gives a channel no logo, use the logo its guide lists (if any). Provider logos and your own always win.')) : null);
+  };
+  draw();
+  return card;
 }
 
 // Functions, so each render gets its own nodes.
