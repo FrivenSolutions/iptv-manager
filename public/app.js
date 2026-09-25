@@ -972,12 +972,13 @@ async function outputEditor(main, id) {
 
   const sourceName = (sid) => o.sources.find((s) => s.id === sid)?.name || `#${sid}`;
   const attachedIds = () => draft.sources.filter((s) => s.attached).map((s) => s.id);
-  // Category rows, under a heading per provider when the list holds more than one (rows come in
-  // source order, so each provider's categories are together).
+  // Category rows, under a heading per provider when the output has more than one source, even if
+  // only one of them has rows here (say, the only one with movies). Rows come in source order, so
+  // each provider's categories are together.
   const withGroups = (rows, render) => {
     const counts = new Map();
     for (const c of rows) counts.set(c.source_id, (counts.get(c.source_id) || 0) + 1);
-    if (counts.size < 2) return rows.map(render);
+    if (attachedIds().length < 2) return rows.map(render);
     const out = [];
     let last = null;
     for (const c of rows) {
@@ -1540,8 +1541,8 @@ async function outputEditor(main, id) {
 
   // --- movies & series: one tab each, with their own rules and categories
   const VOD_LABELS = {
-    movie: { title: 'Movie', plural: 'movies', tab: 'Movies' },
-    series: { title: 'Series', plural: 'series', tab: 'Series' },
+    movie: { title: 'Movie', one: 'movie', plural: 'movies', tab: 'Movies' },
+    series: { title: 'Series', one: 'series', plural: 'series', tab: 'Series' },
   };
   const vodPane = (kind) => {
     const L = VOD_LABELS[kind];
@@ -1605,7 +1606,7 @@ async function outputEditor(main, id) {
           titles += c.channel_count;
         }
       }
-      summary.textContent = `${inc} of ${state.cats.length} categories · ${titles.toLocaleString()} ${L.plural}${dirty ? ' (preview)' : ''}`;
+      summary.textContent = `${inc} of ${state.cats.length} categories · ${titles.toLocaleString()} ${titles === 1 ? L.one : L.plural}${dirty ? ' (preview)' : ''}`;
       const rows = visible();
       const LIMIT = 500;
       fill(list,
@@ -1616,7 +1617,7 @@ async function outputEditor(main, id) {
             h('button', { class: 'expander', title: `Show the ${L.plural}`, onclick: () => { state.open.has(c.id) ? state.open.delete(c.id) : state.open.add(c.id); draw(); } }, state.open.has(c.id) ? '▾' : '▸'),
             h('span', { class: 'dot' }),
             h('span', { class: 'cat-name' }, c.custom_name || c.name, c.is_new ? badge('new', 'info') : null,
-              h('span', { class: 'meta' }, `${c.custom_name ? ` (${c.name})` : ''} · ${c.channel_count.toLocaleString()} ${L.plural} · ${reasonText(st)}`)),
+              h('span', { class: 'meta' }, `${c.custom_name ? ` (${c.name})` : ''} · ${c.channel_count.toLocaleString()} ${c.channel_count === 1 ? L.one : L.plural} · ${reasonText(st)}`)),
             h('button', { class: 'icon-btn', title: 'Rename (the name players see)', onclick: () => editCategory(c, draw, { vod: true }) }, '✎'),
             h('span', { class: 'segmented small' }, seg('Auto', null, ''), seg('Include', 'include', 'inc'), seg('Exclude', 'exclude', 'exc')));
           return state.open.has(c.id) ? h('div', null, row, titlesPanel(c)) : row;
