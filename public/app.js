@@ -890,6 +890,7 @@ function newOutput() {
 async function outputEditor(main, id) {
   let o = await api('GET', `/api/outputs/${id}`);
   let cats = await api('GET', `/api/outputs/${id}/categories`);
+  const settings = await api('GET', '/api/settings');
   const draft = {
     name: o.name,
     stream_mode: o.stream_mode,
@@ -901,6 +902,7 @@ async function outputEditor(main, id) {
     xc_password: o.xc_password || '',
     sources: o.sources.map((s) => ({ ...s })),
     rules: o.rules.map((r) => ({ ...r })),
+    name_rules: o.name_rules.map((r) => ({ ...r })),
   };
   let dirty = false;
   // hits: channels matching the search (from the server), per category, for hitsQ.
@@ -994,6 +996,93 @@ async function outputEditor(main, id) {
       'Drag rules (⠿) to arrange them; the order is only for your own organization.'),
     rulesBox,
     h('label', { class: 'check' }, includeAll, ' When a source has no Include rules, include all of its categories'));
+
+  // --- name cleanup (an advanced option; hidden otherwise)
+  const NAME_PRESETS = [
+    ['Country prefix', 'Removes "US| ", "UK: " or "CA - " at the start of a name',
+      { scope: 'channel', find: '^\\|?[A-Z]{2,3}\\s*[|:\\-]\\s*', replace: '' }],
+    ['Quality tags', 'Removes HD, FHD, UHD, 4K, HEVC, [SD], ᴴᴰ and similar',
+      { scope: 'channel', find: '\\s*(?:[\\[(](?:UHD|FHD|HD|SD|4K|HEVC)[\\])]|\\b(?:UHD|FHD|HD|4K|HEVC|H\\.?26[45]|\\d{2,3}FPS)\\b|ᵁᴴᴰ|ᶠᴴᴰ|ᴴᴰ|ᴿᴬᵂ|⁶⁰ᶠᵖˢ|ˢᴰ)', replace: '' }],
+  ];
+  const namesBox = h('div', { class: 'name-rules' });
+  const namePreview = h('div', { class: 'name-preview' });
+  let previewTimer = null;
+  let previewSeq = 0;
+  const previewNames = () => {
+    clearTimeout(previewTimer);
+    const rules = draft.name_rules.filter((r) => r.find !== '');
+    if (!rules.length) {
+      fill(namePreview, h('span', { class: 'meta' }, 'No rules. Names are used as the provider sends them.'));
+      return;
+    }
+    previewTimer = setTimeout(async () => {
+      const seq = ++previewSeq;
+      let r;
+      try {
+        r = await api('POST', `/api/outputs/${id}/name-preview`, { rules });
+      } catch (e) {
+        if (seq === previewSeq) fill(namePreview, h('span', { class: 'error-text' }, e.message));
+        return;
+      }
+      if (seq !== previewSeq) return;
+      const part = (label, t) => (t.total ? `${t.changed} of ${t.total} ${label}` : null);
+      const counts = [part('channel names', r.channels), part('category names', r.categories)].filter(Boolean).join(' and ');
+      fill(namePreview,
+        h('span', { class: 'meta' }, counts ? `Changes ${counts} in this output${dirty ? ' (after saving)' : ''}.` : 'No categories are in this output yet.'),
+        [...r.categories.samples.slice(0, 3), ...r.channels.samples].slice(0, 8).map(([a, b]) =>
+          h('div', { class: 'name-sample' }, h('span', { class: 'before' }, a), h('span', { class: 'meta' }, '→'), h('b', null, b))));
+    }, 300);
+  };
+  const changedNames = () => {
+    markDirty();
+    previewNames();
+  };
+  const drawNames = () => {
+    const move = (i, d) => {
+      [draft.name_rules[i], draft.name_rules[i + d]] = [draft.name_rules[i + d], draft.name_rules[i]];
+      drawNames();
+      changedNames();
+    };
+    const add = (rule) => {
+      draft.name_rules.push({ ...rule });
+      drawNames();
+      changedNames();
+      if (!rule.find) namesBox.querySelectorAll('.name-rule')[draft.name_rules.length - 1]?.querySelector('input')?.focus();
+    };
+    fill(namesBox,
+      draft.name_rules.map((r, i) => h('div', { class: 'name-rule' },
+        h('select', { onchange: (e) => { r.scope = e.target.value; changedNames(); } },
+          [['channel', 'Channel names'], ['category', 'Category names'], ['both', 'Both']].map(([v, l]) => h('option', { value: v, selected: r.scope === v }, l))),
+        h('input', { class: 'mono', value: r.find, placeholder: 'Find (pattern)', spellcheck: 'false', oninput: (e) => { r.find = e.target.value; changedNames(); } }),
+        h('span', { class: 'meta' }, '→'),
+        h('input', { value: r.replace, placeholder: 'Replace with (empty removes)', oninput: (e) => { r.replace = e.target.value; changedNames(); } }),
+        h('span', { class: 'row' },
+          h('button', { class: 'icon-btn', title: 'Move up (rules run top to bottom)', disabled: i === 0, onclick: () => move(i, -1) }, '↑'),
+          h('button', { class: 'icon-btn', title: 'Move down', disabled: i === draft.name_rules.length - 1, onclick: () => move(i, 1) }, '↓'),
+          h('button', { class: 'icon-btn', title: 'Remove', onclick: () => { draft.name_rules.splice(i, 1); drawNames(); changedNames(); } }, '✕')))),
+      h('div', { class: 'row' },
+        NAME_PRESETS.map(([label, title, rule]) => h('button', {
+          class: 'btn small', title, disabled: draft.name_rules.some((r) => r.find === rule.find), onclick: () => add(rule),
+        }, `+ ${label}`)),
+        h('button', { class: 'btn small', onclick: () => add({ scope: 'channel', find: '', replace: '' }) }, '+ Custom rule')));
+  };
+  const nameCount = o.name_rules.length;
+  const namesCard = settings.advanced
+    ? h('section', { class: 'card' },
+      h('h2', null, 'Name cleanup'),
+      h('p', { class: 'hint' },
+        'Tidy the names players show, like "US: CNN ᴴᴰ" into "CNN". Each rule\'s pattern is a regular expression (case-sensitive) ',
+        'and every match is replaced; rules run top to bottom, then leftover spaces are tidied. Names you set by hand are never changed.'),
+      namesBox, namePreview)
+    : nameCount
+      ? h('p', { class: 'hint quiet-line' },
+        `${nameCount} name cleanup rule${nameCount === 1 ? '' : 's'} tid${nameCount === 1 ? 'ies' : 'y'} the names in this output. To see or change them, turn on "Show advanced options" in `,
+        h('a', { href: '#/settings' }, 'Settings'), '.')
+      : null;
+  if (settings.advanced) {
+    drawNames();
+    previewNames();
+  }
 
   // --- categories
   const catBox = h('div', { class: 'cat-table' });
@@ -1336,14 +1425,21 @@ async function outputEditor(main, id) {
       xc_password: draft.xc_password,
       source_ids: attachedIds(),
       rules: draft.rules.filter((r) => r.value !== ''),
+      // Only sent when shown, so an output's rules are never touched with advanced options off.
+      name_rules: settings.advanced ? draft.name_rules.filter((r) => r.find !== '') : undefined,
     };
     o = await attempt(() => api('PUT', `/api/outputs/${id}`, payload), 'Output saved');
     cats = await api('GET', `/api/outputs/${id}/categories`);
     draft.rules = o.rules.map((r) => ({ ...r }));
+    draft.name_rules = o.name_rules.map((r) => ({ ...r }));
     dirty = false;
     saveBar.hidden = true;
     title.textContent = o.name;
     drawRules();
+    if (settings.advanced) {
+      drawNames();
+      previewNames();
+    }
     drawCats();
     drawUrls();
   };
@@ -1352,7 +1448,7 @@ async function outputEditor(main, id) {
   fill(main, 
     h('div', { class: 'page-head' }, h('div', null, h('a', { href: '#/outputs', class: 'crumb' }, '‹ Outputs'), title)),
     h('div', { class: 'editor' },
-      h('div', { class: 'editor-main' }, rulesCard, catsCard),
+      h('div', { class: 'editor-main' }, rulesCard, namesCard, catsCard),
       h('div', { class: 'editor-side' }, urlsCard, settingsCard, sourcesCard)),
     saveBar);
   drawCats();
@@ -1455,7 +1551,8 @@ function advancedCard(s) {
               e.target.checked ? 'Guide logos on' : 'Guide logos off').then(() => { s.guide_logo_fallback = e.target.checked; }),
           }),
           ' Use guide logos for channels without one'),
-        h('span', { class: 'hint' }, 'When the provider gives a channel no logo, use the logo its guide lists (if any). Provider logos and your own always win.')) : null);
+        h('span', { class: 'hint' }, 'When the provider gives a channel no logo, use the logo its guide lists (if any). Provider logos and your own always win.'),
+        h('p', { class: 'hint' }, h('b', null, 'Name cleanup'), ' also appears on the page of each output, to tidy names like "US: CNN ᴴᴰ" into "CNN".')) : null);
   };
   draw();
   return card;

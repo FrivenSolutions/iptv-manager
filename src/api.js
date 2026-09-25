@@ -8,6 +8,7 @@ import {
   OPS, loadOutput, evaluateCategories, isNewCategory, channelState,
   DEFAULT_EMPTY_EVENT_PATTERNS, emptyEventPatterns, compilePatterns, isEmptyEvent,
   DEFAULT_GUIDE_PATTERNS, guidePatterns, guideHider, hiddenReason,
+  checkNameRules, parseNameRules, nameCleaner,
 } from './filters.js';
 import { rematchSource } from './ingest.js';
 import { JELLYFIN_CATEGORIES, parseJellyfin } from './outputs/epg.js';
@@ -166,6 +167,7 @@ function outputView(req, ctx, o, withDetail = false) {
       .map((s) => ({ ...s, attached: attached.has(s.id), sort: attached.get(s.id) ?? 999 }))
       .sort((a, b) => a.sort - b.sort || a.id - b.id);
     view.rules = ctx.db.all('SELECT id, source_id, action, op, value FROM output_rules WHERE output_id = ? ORDER BY sort, id', [o.id]);
+    view.name_rules = parseNameRules(o.name_rules);
   }
   return view;
 }
@@ -612,6 +614,8 @@ export function registerApi(router, ctx) {
     if (!['direct', 'redirect', 'proxy'].includes(mode)) throw new HttpError(400, 'Unknown stream mode');
 
     const rules = Array.isArray(body.rules) ? validateRules(body.rules) : null;
+    const nameRules = body.name_rules === undefined ? null : checkNameRules(body.name_rules);
+    if (nameRules?.error) throw new HttpError(400, nameRules.error);
 
     db.tx(() => {
       db.run(
@@ -626,6 +630,7 @@ export function registerApi(router, ctx) {
           xcEnabled, xcUser, xcPass, now(), o.id,
         ],
       );
+      if (nameRules) db.run('UPDATE outputs SET name_rules = ? WHERE id = ?', [JSON.stringify(nameRules.rules), o.id]);
       if (Array.isArray(body.source_ids)) {
         db.run('DELETE FROM output_sources WHERE output_id = ?', [o.id]);
         body.source_ids.forEach((sid, i) => {
@@ -727,6 +732,39 @@ export function registerApi(router, ctx) {
           ...channelState(r.name, cat.included, cat.channel_rules, override, hiddenReason(cat, ch, emptyRegexes, guide)),
         };
       }),
+    });
+  });
+
+  // What (unsaved) name cleanup rules would do: counts and a few before/after examples, over the
+  // channels of categories currently in the output, with custom names left alone as on output.
+  router.post('/api/outputs/:id/name-preview', async (req, res, { params }) => {
+    const o = loadOutput(db, Number(params.id));
+    if (!o) throw new HttpError(404, 'Not found');
+    const checked = checkNameRules((await readJson(req)).rules);
+    if (checked.error) throw new HttpError(400, checked.error);
+    const clean = nameCleaner(checked.rules);
+    const cats = evaluateCategories(db, o).filter((c) => c.included);
+    const SAMPLES = 8;
+    const tally = (names, fn) => {
+      const out = { changed: 0, total: names.length, samples: [] };
+      for (const name of names) {
+        const after = fn(name);
+        if (after === name) continue;
+        out.changed++;
+        if (out.samples.length < SAMPLES) out.samples.push([name, after]);
+      }
+      return out;
+    };
+    const chNames = cats.length
+      ? db.all(
+        `SELECT name FROM channels WHERE active = 1 AND custom_name IS NULL AND category_id IN (${cats.map(() => '?').join(',')})
+          ORDER BY category_id, sort`,
+        cats.map((c) => c.id),
+      ).map((r) => r.name)
+      : [];
+    sendJson(res, 200, {
+      channels: tally(chNames, clean.channel),
+      categories: tally(cats.filter((c) => !c.custom_name).map((c) => c.name), clean.category),
     });
   });
 

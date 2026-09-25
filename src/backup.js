@@ -1,7 +1,7 @@
 // Settings export/import. Categories and channels are referenced by source-relative
 // names/keys rather than database ids, so an export restores onto a fresh install.
 import { HttpError } from './http.js';
-import { OPS, compilePatterns } from './filters.js';
+import { OPS, compilePatterns, checkNameRules, parseNameRules } from './filters.js';
 import { parseJellyfin } from './outputs/epg.js';
 import { now } from './db.js';
 
@@ -74,6 +74,7 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
       sources: db.all('SELECT source_id FROM output_sources WHERE output_id = ? ORDER BY sort', [o.id]).map((r) => r.source_id),
       rules: db.all('SELECT source_id, action, op, value FROM output_rules WHERE output_id = ? ORDER BY sort, id', [o.id])
         .map((r) => ({ source: r.source_id, action: r.action, op: r.op, value: r.value })),
+      name_rules: parseNameRules(o.name_rules),
       category_overrides: catOverrides.filter((r) => r.output_id === o.id && catRef.has(r.category_id)).map((r) => {
         const c = catRef.get(r.category_id);
         return { source: c.source_id, category: c.name, state: r.state };
@@ -130,6 +131,8 @@ function validate(data) {
     }
     check(['direct', 'redirect', 'proxy'].includes(o.stream_mode), `output "${o.name}" has an unknown stream mode`);
     check((o.rules || []).every(rule) && (o.channel_rules || []).every(rule), `output "${o.name}" has an invalid rule`);
+    const names = checkNameRules(o.name_rules ?? []);
+    check(!names.error, `output "${o.name}": ${names.error}`);
     const used = [...(o.sources || []), ...[...(o.category_overrides || []), ...(o.channel_rules || []), ...(o.category_options || []),
       ...(o.channel_overrides || [])].map((x) => x.source)];
     for (const r of used) {
@@ -212,10 +215,11 @@ export function importSettings(db, data) {
     for (const o of data.outputs) {
       const r = db.get(
         `INSERT INTO outputs (name, token, stream_mode, include_all, number_start, epg_days, xc_enabled, xc_username,
-                              xc_password, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+                              xc_password, name_rules, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         [String(o.name || 'Output'), o.token, o.stream_mode, !!o.include_all, o.number_start ?? null, Number(o.epg_days) || 7,
-          !!o.xc_enabled && !!o.xc_username && !!o.xc_password, o.xc_username || null, o.xc_password || null, t, t],
+          !!o.xc_enabled && !!o.xc_username && !!o.xc_password, o.xc_username || null, o.xc_password || null,
+          JSON.stringify(checkNameRules(o.name_rules ?? []).rules), t, t],
       );
       summary.outputs++;
       (o.sources || []).forEach((ref, i) => {

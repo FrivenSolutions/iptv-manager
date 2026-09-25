@@ -148,6 +148,62 @@ export function guideHider(db, output, cats, t = Math.floor(Date.now() / 1000)) 
   };
 }
 
+// --- name cleanup (advanced): per-output find/replace on the names players see
+
+export const NAME_SCOPES = ['channel', 'category', 'both'];
+const MAX_NAME_RULES = 50;
+
+export function parseNameRules(raw) {
+  try {
+    const list = JSON.parse(raw || '[]');
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Check and normalize a list of {scope, find, replace}; returns { rules } or { error }. */
+export function checkNameRules(list) {
+  if (!Array.isArray(list)) return { error: 'name_rules must be a list' };
+  if (list.length > MAX_NAME_RULES) return { error: `At most ${MAX_NAME_RULES} name cleanup rules` };
+  const rules = [];
+  for (const r of list) {
+    const scope = r?.scope ?? 'channel';
+    const find = typeof r?.find === 'string' ? r.find : '';
+    const replace = typeof r?.replace === 'string' ? r.replace : '';
+    if (!NAME_SCOPES.includes(scope)) return { error: `Unknown name rule scope: ${scope}` };
+    if (!find) return { error: 'Every name cleanup rule needs something to find' };
+    if (find.length > 300 || replace.length > 300) return { error: 'Name cleanup rules are limited to 300 characters' };
+    try {
+      new RegExp(find, 'g');
+    } catch (e) {
+      return { error: `Not a valid pattern: ${find} (${e.message.split(': ').pop()})` };
+    }
+    rules.push({ scope, find, replace });
+  }
+  return { rules };
+}
+
+/**
+ * Name cleaners for channel and category names. Each rule's pattern is a case-sensitive regular
+ * expression and every match is replaced ($1 works). Once any rule applies to a kind of name,
+ * leftover runs of spaces are collapsed and the ends trimmed; a name that would end up empty
+ * stays as it was.
+ */
+export function nameCleaner(rules) {
+  const compiled = rules.map((r) => ({ ...r, re: new RegExp(r.find, 'g') }));
+  const make = (scope) => {
+    const list = compiled.filter((r) => r.scope === scope || r.scope === 'both');
+    if (!list.length) return (name) => name;
+    return (name) => {
+      let out = name;
+      for (const r of list) out = out.replace(r.re, r.replace);
+      return out.replace(/s{2,}/g, ' ').trim() || name;
+    };
+  };
+  return { channel: make('channel'), category: make('category') };
+}
+
 const NO_ICONS = new Map();
 
 /**
@@ -259,6 +315,8 @@ export function selectChannels(db, output) {
   const emptyRegexes = compilePatterns(emptyEventPatterns(db));
   const guide = guideHider(db, output, cats);
   const guideIcons = guideIconLookup(db, srcById);
+  const clean = nameCleaner(checkNameRules(parseNameRules(output.name_rules)).rules || []);
+  const groupName = new Map(cats.map((c) => [c.id, c.custom_name || clean.category(c.name)]));
   const ids = output.sources.map((s) => s.id);
   const rows = db.all(
     `SELECT * FROM channels WHERE active = 1 AND source_id IN (${ids.map(() => '?').join(',')})`,
@@ -299,10 +357,10 @@ export function selectChannels(db, output) {
       id: ch.id,
       source_id: ch.source_id,
       category_id: cat.id,
-      name: ch.custom_name || ch.name,
+      name: ch.custom_name || clean.channel(ch.name),
       // No provider logo: borrow the one the guide lists for this channel.
       logo: ch.custom_logo || ch.logo || (epgId && guideIcons(ch.source_id).get(epgId)) || '',
-      group: cat.custom_name || cat.name,
+      group: groupName.get(cat.id),
       jellyfin: cat.jellyfin,
       tvg_id: tvgId,
       epg_id: epgId,

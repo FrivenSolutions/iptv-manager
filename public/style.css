@@ -347,3 +347,17 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
   .grid { grid-template-columns: 1fr; }
   .table th:nth-child(n+4), .table td:nth-child(n+4):not(.actions) { display: none; }
 }
+
+/* --- name cleanup (advanced) */
+.name-rules { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.name-rule { display: grid; grid-template-columns: 140px minmax(0, 1.4fr) auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; background: var(--panel-2); }
+.name-rule select { width: auto; }
+@media (max-width: 640px) {
+  .name-rule { grid-template-columns: minmax(0, 1fr) auto; }
+  .name-rule > .meta { display: none; }
+}
+.name-preview { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.name-sample { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.name-sample .before { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.error-text { color: var(--error); }
+.quiet-line { margin: 0 4px; }

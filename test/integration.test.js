@@ -991,6 +991,65 @@ test('guide logos fill in missing channel logos, only when the advanced setting 
   await api('DELETE', `/api/outputs/${o.id}`);
 });
 
+test('name cleanup: per-output find/replace on channel and category names, in every format', async () => {
+  const o = (await api('POST', '/api/outputs', { name: 'Tidy' })).data;
+  await api('PUT', `/api/outputs/${o.id}`, {
+    source_ids: [xcId], rules: [{ action: 'include', op: 'equals', value: 'us| news' }],
+    xc_enabled: true, xc_username: 'tidy', xc_password: 'pw',
+  });
+  const m3u = async () => [...(await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text())
+    .matchAll(/tvg-name="([^"]*)".*group-title="([^"]*)",([^\n]+)\n/g)].map((m) => [m[1], m[2], m[3]]);
+  const before = await m3u();
+  assert.deepEqual(before.map((r) => r[2]).sort(), ['US: CNN HD', 'US: Fox News']);
+
+  const rules = [
+    { scope: 'both', find: '^\\|?[A-Z]{2,3}\\s*[|:\\-]\\s*', replace: '' },
+    { scope: 'channel', find: '\\s*\\b(?:HD|FHD)\\b', replace: '' },
+    { scope: 'category', find: '^NEWS$', replace: 'News & Talk' },
+  ];
+  // Preview first: nothing is saved yet.
+  let r = await api('POST', `/api/outputs/${o.id}/name-preview`, { rules });
+  assert.deepEqual([r.data.channels.changed, r.data.channels.total, r.data.categories.changed, r.data.categories.total], [2, 2, 1, 1]);
+  assert.deepEqual(r.data.categories.samples, [['US| NEWS', 'News & Talk']]);
+  assert.deepEqual(r.data.channels.samples.find((s) => s[0] === 'US: CNN HD'), ['US: CNN HD', 'CNN']);
+  assert.deepEqual(await m3u(), before);
+  r = await api('POST', `/api/outputs/${o.id}/name-preview`, { rules: [{ scope: 'channel', find: '(', replace: '' }] });
+  assert.equal(r.status, 400);
+  assert.match(r.data.error, /Not a valid pattern: \( \(Unterminated group\)/);
+  assert.equal((await api('PUT', `/api/outputs/${o.id}`, { name_rules: [{ scope: 'nope', find: 'x' }] })).status, 400);
+
+  r = await api('PUT', `/api/outputs/${o.id}`, { name_rules: rules });
+  assert.deepEqual(r.data.name_rules, rules);
+  assert.deepEqual((await m3u()).sort(), [['CNN', 'News & Talk', 'CNN'], ['Fox News', 'News & Talk', 'Fox News']]);
+  const xc = (action) => fetch(`${base}/player_api.php?username=tidy&password=pw&action=${action}`).then((x) => x.json());
+  assert.deepEqual((await xc('get_live_categories')).map((c) => c.category_name), ['News & Talk']);
+  assert.deepEqual((await xc('get_live_streams')).map((s) => s.name).sort(), ['CNN', 'Fox News']);
+  assert.match(await (await fetch(`${base}/o/${o.token}/epg.xml`)).text(), /<display-name>CNN<\/display-name>/);
+
+  // A name set by hand wins; saving other settings leaves the rules alone.
+  const cnn = (await api('GET', `/api/sources/${xcId}/channels?q=cnn`)).data.items.find((c) => c.name === 'US: CNN HD');
+  const edits = { custom_logo: cnn.custom_logo, custom_epg_id: cnn.custom_epg_id, custom_chno: cnn.custom_chno };
+  await api('PUT', `/api/channels/${cnn.id}`, { ...edits, custom_name: 'US: CNN HD (mine)' });
+  await api('PUT', `/api/outputs/${o.id}`, { name: 'Tidy 2' });
+  assert.ok((await m3u()).some((x) => x[2] === 'US: CNN HD (mine)'));
+  assert.equal((await api('GET', `/api/outputs/${o.id}`)).data.name_rules.length, 3);
+  await api('PUT', `/api/channels/${cnn.id}`, { ...edits, custom_name: cnn.custom_name });
+
+  // Backed up with the output, and checked on import.
+  const file = (await api('GET', '/api/export')).data;
+  const saved = file.outputs.find((x) => x.token === o.token);
+  assert.deepEqual(saved.name_rules, rules);
+  saved.name_rules = [{ scope: 'channel', find: '[', replace: '' }];
+  r = await api('POST', '/api/import', file);
+  assert.equal(r.status, 400);
+  assert.match(r.data.error, /output "Tidy 2": Not a valid pattern/);
+  assert.equal((await api('GET', `/api/outputs/${o.id}`)).status, 200, 'a rejected import changes nothing');
+
+  await api('PUT', `/api/outputs/${o.id}`, { name_rules: [] });
+  assert.deepEqual((await m3u()).map((x) => x[2]).sort(), ['US: CNN HD', 'US: Fox News']);
+  await api('DELETE', `/api/outputs/${o.id}`);
+});
+
 test('rule order is saved and returned as given, for category and channel rules', async () => {
   const o = (await api('POST', '/api/outputs', { name: 'Order' })).data;
   const rules = [

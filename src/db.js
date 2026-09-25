@@ -222,6 +222,10 @@ const MIGRATIONS = [
   -- Consecutive failed refreshes, for the "source keeps failing" alert.
   ALTER TABLE sources ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- Per-output name cleanup (find/replace on channel and category names), as a JSON list.
+  ALTER TABLE outputs ADD COLUMN name_rules TEXT NOT NULL DEFAULT '[]';
+  `,
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.
