@@ -334,8 +334,13 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 .toast { padding: 10px 14px; border-radius: 8px; background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--ok); box-shadow: 0 6px 20px rgb(0 0 0 / 15%); max-width: 380px; }
 .toast.error { border-left-color: var(--error); }
 
+.pane-switch { display: none; }
 @media (max-width: 1100px) {
   .editor { grid-template-columns: 1fr; }
+  /* One column at a time, picked with the switch at the top of the output page. */
+  .pane-switch { display: flex; width: 100%; margin-bottom: 14px; }
+  .pane-switch button { flex: 1 1 0; padding: 8px 10px; }
+  .editor.show-main > .editor-side, .editor.show-side > .editor-main { display: none; }
   .split { grid-template-columns: 1fr; }
   .side { position: static; max-height: 320px; }
 }

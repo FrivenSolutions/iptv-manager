@@ -945,6 +945,10 @@ function newOutput() {
   };
 }
 
+// On narrow screens the output page shows one column at a time; which one is remembered while
+// moving between outputs.
+let outputPane = 'main';
+
 async function outputEditor(main, id) {
   let o = await api('GET', `/api/outputs/${id}`);
   let cats = await api('GET', `/api/outputs/${id}/categories`);
@@ -1920,14 +1924,25 @@ async function outputEditor(main, id) {
   };
   drawTabs();
 
+  // One column at a time when the page is narrow (the switch is hidden otherwise).
+  const editorEl = h('div', { class: `editor show-${outputPane}` },
+    h('div', { class: 'editor-main' }, tabsBar, livePane, vodPanes.movie.el, vodPanes.series.el),
+    h('div', { class: 'editor-side' }, urlsCard, settingsCard, sourcesCard));
+  const paneSwitch = h('div', { class: 'segmented pane-switch' });
+  const drawPaneSwitch = () => {
+    editorEl.className = `editor show-${outputPane}`;
+    fill(paneSwitch, [['main', 'Lineup'], ['side', 'Connect & settings']].map(([k, label]) =>
+      h('button', { class: outputPane === k ? 'on' : '', onclick: () => { outputPane = k; drawPaneSwitch(); window.scrollTo(0, 0); } }, label)));
+  };
+  drawPaneSwitch();
+
   const title = h('h1');
   const drawTitle = () => fill(title, o.name, o.paused ? badge('paused', 'warn') : null);
   drawTitle();
   fill(main, 
     h('div', { class: 'page-head' }, h('div', null, h('a', { href: '#/outputs', class: 'crumb' }, '‹ Outputs'), title)),
-    h('div', { class: 'editor' },
-      h('div', { class: 'editor-main' }, tabsBar, livePane, vodPanes.movie.el, vodPanes.series.el),
-      h('div', { class: 'editor-side' }, urlsCard, settingsCard, sourcesCard)),
+    paneSwitch,
+    editorEl,
     saveBar);
   drawCats();
 }
