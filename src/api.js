@@ -169,6 +169,7 @@ function outputView(req, ctx, o, withDetail = false) {
     epg_days: o.epg_days,
     xc_enabled: !!o.xc_enabled,
     vod_enabled: !!o.vod_enabled,
+    paused: !!o.paused,
     xc_username: o.xc_username,
     xc_password: o.xc_password,
     updated_at: o.updated_at,
@@ -694,9 +695,9 @@ export function registerApi(router, ctx) {
     const id = db.tx(() => {
       const copyId = db.get(
         `INSERT INTO outputs (name, token, stream_mode, include_all, include_all_movie, include_all_series, number_start, epg_days,
-                              xc_enabled, xc_username, xc_password, name_rules, vod_enabled, created_at, updated_at)
+                              xc_enabled, xc_username, xc_password, name_rules, vod_enabled, paused, created_at, updated_at)
          SELECT ?, ?, stream_mode, include_all, include_all_movie, include_all_series, number_start, epg_days,
-                0, NULL, NULL, name_rules, vod_enabled, ?, ?
+                0, NULL, NULL, name_rules, vod_enabled, paused, ?, ?
            FROM outputs WHERE id = ? RETURNING id`,
         [`${o.name} (copy)`.slice(0, 200), randomToken(), t, t, o.id],
       ).id;
@@ -759,6 +760,26 @@ export function registerApi(router, ctx) {
     const l = loginOf(params.id, params.loginId);
     db.run('DELETE FROM output_xc_logins WHERE id = ?', [l.id]);
     sendJson(res, 200, { ok: true });
+  });
+
+  // Pause (or resume) an output: its URLs and every login stop answering; nothing is deleted.
+  router.post('/api/outputs/:id/pause', async (req, res, { params }) => {
+    const o = mustGet(db, 'outputs', params.id);
+    const { paused } = await readJson(req);
+    db.run('UPDATE outputs SET paused = ?, updated_at = ? WHERE id = ?', [bool(paused), now(), o.id]);
+    touch();
+    sendJson(res, 200, outputView(req, ctx, mustGet(db, 'outputs', o.id), true));
+  });
+
+  // Refresh every source this output uses (movies and series included).
+  router.post('/api/outputs/:id/refresh', (req, res, { params }) => {
+    const o = mustGet(db, 'outputs', params.id);
+    const ids = db.all(
+      'SELECT s.id FROM output_sources os JOIN sources s ON s.id = os.source_id WHERE os.output_id = ? AND s.enabled = 1 ORDER BY os.sort',
+      [o.id],
+    ).map((r) => r.id);
+    for (const sid of ids) ctx.jobs.enqueue(sid, { forceVod: true });
+    sendJson(res, 202, { sources: ids.length });
   });
 
   router.post('/api/outputs/:id/token', (req, res, { params }) => {

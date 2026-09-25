@@ -151,8 +151,9 @@ export function createApp({
 
   // --- published outputs ---------------------------------------------------
   const byToken = (token) => {
-    const row = db.get('SELECT id FROM outputs WHERE token = ?', [String(token)]);
+    const row = db.get('SELECT id, paused FROM outputs WHERE token = ?', [String(token)]);
     if (!row) throw new HttpError(404, 'Unknown output');
+    if (row.paused) throw new HttpError(503, 'This output is paused');
     return ctx.selection(row.id);
   };
   const base = (req) => baseUrl(req, db.getSetting('base_url'));

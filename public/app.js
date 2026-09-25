@@ -515,7 +515,8 @@ function sourceCard(s) {
 
 function outputCard(o) {
   return h('div', { class: 'card' },
-    h('div', { class: 'card-head' }, h('h3', null, h('a', { href: `#/outputs/${o.id}` }, o.name)), badge(o.stream_mode, 'muted')),
+    h('div', { class: 'card-head' }, h('h3', null, h('a', { href: `#/outputs/${o.id}` }, o.name)),
+      h('span', { class: 'row' }, o.paused ? badge('paused', 'warn') : null, badge(o.stream_mode, 'muted'))),
     h('div', { class: 'stats' }, stat(o.channel_count, 'channels'), stat(o.category_count, 'categories')),
     copyField('M3U playlist', o.urls.m3u),
     copyField('XMLTV guide', o.urls.epg));
@@ -1490,35 +1491,61 @@ async function outputEditor(main, id) {
         h('h3', null, 'Xtream Codes login'),
         copyField('Server', o.urls.xc_server), h('div', { class: 'two' }, copyField('Username', o.xc_username), copyField('Password', o.xc_password))) : null,
       o.xc_enabled ? loginsBox() : null,
-      h('div', { class: 'xc-box' }, h('h3', null, 'Manage output'), h('div', { class: 'row' },
-        h('a', { class: 'btn small', href: o.urls.m3u, target: '_blank', rel: 'noopener' }, 'Open playlist'),
-        h('button', {
-          class: 'btn small danger-text',
-          onclick: async () => {
-            if (!(await confirmBox('Make new URLs for this output? Apps using the current URLs will stop working until you update them.', 'Regenerate'))) return;
-            o = await attempt(() => api('POST', `/api/outputs/${id}/token`), 'New URLs created');
-            drawUrls();
-          },
-        }, 'Regenerate URLs'),
-        h('button', {
-          class: 'btn small',
-          title: 'A copy with the same sources, rules, picks and settings, and its own URLs',
-          onclick: async () => {
-            if (dirty) return toast('Save or discard your changes first; the copy is made from the saved output.', 'error');
-            const copy = await attempt(() => api('POST', `/api/outputs/${id}/clone`),
-              o.xc_enabled ? 'Output duplicated. Its Xtream Codes login is off until you give it a username.' : 'Output duplicated');
-            location.hash = `#/outputs/${copy.id}`;
-          },
-        }, 'Duplicate'),
-        h('button', {
-          class: 'btn small danger-text',
-          onclick: async () => {
-            if (!(await confirmBox(`Delete the output "${o.name}"? Its URLs will stop working.`))) return;
-            await attempt(() => api('DELETE', `/api/outputs/${id}`), 'Output deleted');
-            dirty = false;
-            location.hash = '#/outputs';
-          },
-        }, 'Delete output'))));
+      // Three rows: look, keep up to date, then the ones that affect people using it.
+      h('div', { class: 'xc-box' }, h('h3', null, 'Manage output'),
+        o.paused ? h('div', { class: 'ch-warning manage-note' },
+          h('span', null, h('b', null, 'Paused. '), 'Its URLs and every login are switched off until you resume it.')) : null,
+        h('div', { class: 'manage-rows' },
+          h('div', { class: 'row' },
+            h('a', { class: 'btn small', href: o.urls.m3u, target: '_blank', rel: 'noopener' }, 'Open playlist'),
+            h('a', { class: 'btn small', href: o.urls.epg, target: '_blank', rel: 'noopener' }, 'Open guide')),
+          h('div', { class: 'row' },
+            h('button', {
+              class: 'btn small',
+              title: 'Reload every source this output uses, movies and series included',
+              onclick: async () => {
+                const r = await attempt(() => api('POST', `/api/outputs/${id}/refresh`));
+                toast(r.sources ? `Refreshing ${r.sources} source${r.sources === 1 ? '' : 's'}` : 'This output has no sources to refresh');
+              },
+            }, 'Refresh sources'),
+            h('button', {
+              class: 'btn small',
+              title: 'A copy with the same sources, rules, picks and settings, and its own URLs',
+              onclick: async () => {
+                if (dirty) return toast('Save or discard your changes first; the copy is made from the saved output.', 'error');
+                const copy = await attempt(() => api('POST', `/api/outputs/${id}/clone`),
+                  o.xc_enabled ? 'Output duplicated. Its Xtream Codes login is off until you give it a username.' : 'Output duplicated');
+                location.hash = `#/outputs/${copy.id}`;
+              },
+            }, 'Duplicate')),
+          h('div', { class: 'row' },
+            h('button', {
+              class: `btn small ${o.paused ? 'primary' : ''}`,
+              title: o.paused ? 'Switch its URLs and logins back on' : 'Switch off its URLs and every login for now, without deleting anything',
+              onclick: async () => {
+                if (!o.paused && !(await confirmBox(`Pause "${o.name}"? Players using its URLs or any of its logins stop working until you resume it.`, 'Pause'))) return;
+                o = { ...o, ...(await attempt(() => api('POST', `/api/outputs/${id}/pause`, { paused: !o.paused }), o.paused ? 'Output resumed' : 'Output paused')) };
+                drawUrls();
+                drawTitle();
+              },
+            }, o.paused ? 'Resume output' : 'Pause output'),
+            h('button', {
+              class: 'btn small danger-text',
+              onclick: async () => {
+                if (!(await confirmBox('Make new URLs for this output? Apps using the current URLs will stop working until you update them.', 'Regenerate'))) return;
+                o = await attempt(() => api('POST', `/api/outputs/${id}/token`), 'New URLs created');
+                drawUrls();
+              },
+            }, 'Regenerate URLs'),
+            h('button', {
+              class: 'btn small danger-text',
+              onclick: async () => {
+                if (!(await confirmBox(`Delete the output "${o.name}"? Its URLs will stop working.`))) return;
+                await attempt(() => api('DELETE', `/api/outputs/${id}`), 'Output deleted');
+                dirty = false;
+                location.hash = '#/outputs';
+              },
+            }, 'Delete output')))));
   };
   // Other people's logins to this output: each with its own username and password, paused or
   // removed on its own. Saved right away (not with the output's Save).
@@ -1623,7 +1650,7 @@ async function outputEditor(main, id) {
     draft.name_rules = o.name_rules.map((r) => ({ ...r }));
     dirty = false;
     saveBar.hidden = true;
-    title.textContent = o.name;
+    drawTitle();
     liveRules.draw();
     if (settings.advanced) {
       drawNames();
@@ -1893,7 +1920,9 @@ async function outputEditor(main, id) {
   };
   drawTabs();
 
-  const title = h('h1', null, o.name);
+  const title = h('h1');
+  const drawTitle = () => fill(title, o.name, o.paused ? badge('paused', 'warn') : null);
+  drawTitle();
   fill(main, 
     h('div', { class: 'page-head' }, h('div', null, h('a', { href: '#/outputs', class: 'crumb' }, '‹ Outputs'), title)),
     h('div', { class: 'editor' },

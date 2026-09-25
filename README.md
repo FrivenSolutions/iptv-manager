@@ -220,9 +220,13 @@ when they are built, from the `.git` folder in the build context. An image built
    that hold a match show it as a chip, marked ✓ (in the output) or ✕ (with the reason). Click a
    chip to open its category at that channel.
 
-   To start a similar lineup from an existing one, use **Duplicate** (under **Connect your
-   apps**). The copy has the same sources, rules, hand picks and settings, and its own URLs. Its
-   Xtream Codes login starts off, because a username belongs to one output; give it a new one.
+   **Manage output** (at the bottom of **Connect your apps**) has, in order:
+   - **Open playlist** and **Open guide**, to see what the output publishes.
+   - **Refresh sources**, which reloads every source the output uses. **Duplicate** makes a copy
+     with the same sources, rules, hand picks and settings, and its own URLs. The copy's Xtream
+     Codes login starts off, because a username belongs to one output, so give it a new one.
+   - **Pause output**, which switches off its URLs and every login until you **Resume** it, with
+     nothing deleted; **Regenerate URLs**; and **Delete output**.
 3. Copy the URLs from **Connect your apps** into your player:
    - **M3U:** `http://<host>:8080/o/<token>/playlist.m3u`
    - **EPG:** `http://<host>:8080/o/<token>/epg.xml` (or `epg.xml.gz`)

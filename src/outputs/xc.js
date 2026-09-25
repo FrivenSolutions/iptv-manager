@@ -21,15 +21,15 @@ function safeEqual(a, b) {
 
 /**
  * The output an Xtream Codes login belongs to: the output's own login, or one of its extra logins
- * (switched on). Only while the output publishes its Xtream Codes login at all.
+ * (switched on). Only while the output publishes its Xtream Codes login at all, and isn't paused.
  */
 export function findXcOutput(db, username, password) {
   if (!username) return null;
-  const row = db.get('SELECT id, xc_password FROM outputs WHERE xc_enabled = 1 AND xc_username = ?', [String(username)]);
-  if (row) return safeEqual(row.xc_password, password) ? row.id : null;
+  const row = db.get('SELECT id, xc_password, paused FROM outputs WHERE xc_enabled = 1 AND xc_username = ?', [String(username)]);
+  if (row) return !row.paused && safeEqual(row.xc_password, password) ? row.id : null;
   const login = db.get(
     `SELECT l.id, l.output_id, l.password, l.last_used_at FROM output_xc_logins l JOIN outputs o ON o.id = l.output_id
-      WHERE o.xc_enabled = 1 AND l.enabled = 1 AND l.username = ?`,
+      WHERE o.xc_enabled = 1 AND o.paused = 0 AND l.enabled = 1 AND l.username = ?`,
     [String(username)],
   );
   if (!login || !safeEqual(login.password, password)) return null;

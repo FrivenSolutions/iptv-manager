@@ -1513,6 +1513,39 @@ test('extra Xtream Codes logins share an output, and come and go without touchin
   assert.equal((await api('DELETE', `/api/outputs/${outputId}/logins/${mom.id}`)).status, 404);
 });
 
+test('pausing an output stops its URLs and every login until it is resumed; refreshing its sources', async () => {
+  const pa = (u, p) => fetch(`${base}/player_api.php?username=${u}&password=${p}`).then((r) => r.json());
+  const extra = (await api('POST', `/api/outputs/${outputId}/logins`, { username: 'guest', password: 'g' })).data;
+  const playlist = () => fetch(`${base}/o/${token}/playlist.m3u`);
+  const streamUrl = (await (await playlist()).text()).split('\n').find((l) => l.startsWith('http'));
+  assert.ok(streamUrl);
+
+  let r = await api('POST', `/api/outputs/${outputId}/pause`, { paused: true });
+  assert.equal(r.data.paused, true);
+  r = await playlist();
+  assert.equal(r.status, 503);
+  assert.match((await r.json()).error, /paused/);
+  assert.equal((await fetch(`${base}/o/${token}/epg.xml`)).status, 503);
+  assert.equal((await fetch(streamUrl, { redirect: 'manual' })).status, 503);
+  assert.equal((await pa('family', 'pw123')).user_info.auth, 0);
+  assert.equal((await pa('guest', 'g')).user_info.auth, 0);
+  assert.equal((await fetch(`${base}/get.php?username=family&password=pw123`)).status, 401);
+  assert.equal((await api('GET', '/api/outputs')).data.find((o) => o.id === outputId).paused, true);
+  assert.equal((await api('GET', '/api/export')).data.outputs.find((o) => o.token === token).paused, true);
+
+  await api('POST', `/api/outputs/${outputId}/pause`, { paused: false });
+  assert.equal((await playlist()).status, 200);
+  assert.equal((await pa('family', 'pw123')).user_info.auth, 1);
+  assert.equal((await pa('guest', 'g')).user_info.auth, 1);
+  await api('DELETE', `/api/outputs/${outputId}/logins/${extra.id}`);
+
+  // Refresh sources: every enabled source the output uses.
+  r = await api('POST', `/api/outputs/${outputId}/refresh`);
+  assert.equal(r.status, 202);
+  assert.equal(r.data.sources, 2);
+  await app.ctx.jobs.idle();
+});
+
 test('rule order is saved and returned as given, for category and channel rules', async () => {
   const o = (await api('POST', '/api/outputs', { name: 'Order' })).data;
   const rules = [
