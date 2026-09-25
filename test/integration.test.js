@@ -1262,6 +1262,14 @@ test('movies and series: loaded when a source includes them, filtered per output
   const info = await xc('get_vod_info', `&vod_id=${dieHard.stream_id}`);
   assert.deepEqual([info.info.plot, info.movie_data.stream_id, info.movie_data.container_extension], ['A cop in a tower', dieHard.stream_id, 'mkv']);
 
+  // Renaming a VOD category changes what players see; rules still match the provider's name.
+  await api('PUT', `/api/categories/${vodCats[0].category_id}`, { custom_name: 'Action' });
+  assert.deepEqual((await xc('get_vod_categories')).map((c) => c.category_name), ['Action', 'EN| KIDS']);
+  const renamed = (await api('GET', '/api/export')).data.sources.find((x) => x.ref === xcId).categories.find((c) => c.custom_name === 'Action');
+  assert.deepEqual([renamed.name, renamed.kind], ['EN| ACTION', 'movie'], 'backed up with its kind');
+  await api('PUT', `/api/categories/${vodCats[0].category_id}`, { custom_name: '' });
+  assert.deepEqual((await xc('get_vod_categories')).map((c) => c.category_name), ['EN| ACTION', 'EN| KIDS']);
+
   assert.deepEqual((await xc('get_series_categories')).map((c) => c.category_name), ['EN| DRAMA']);
   const shows = await xc('get_series');
   assert.deepEqual(shows.map((x) => [x.name, x.plot]), [['Breaking Bad', 'Chemistry']]);

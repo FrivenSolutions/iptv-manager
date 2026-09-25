@@ -820,15 +820,16 @@ function jellyfinBadges(cat) {
 }
 
 /** Group-level settings shared by every channel in it: display name and Jellyfin guide categories. */
-function editCategory(cat, onSaved) {
+// vod: a movie or series category, which has a display name but no guide (so no Jellyfin tags).
+function editCategory(cat, onSaved, { vod = false } = {}) {
   const name = h('input', { value: cat.custom_name || '', placeholder: cat.name });
   const boxes = JELLYFIN_CATEGORIES.map(([value, label]) => {
     const box = h('input', { type: 'checkbox', value, checked: (cat.jellyfin || []).includes(value) });
     return h('label', { class: 'check' }, box, ` ${label}`);
   });
-  const close = modal(`Edit group: ${cat.custom_name || cat.name}`, h('div', { class: 'form' },
+  const close = modal(`${vod ? 'Rename category' : 'Edit group'}: ${cat.custom_name || cat.name}`, h('div', { class: 'form' },
     field('Display name in outputs', name, 'Leave empty to use the provider\'s name. Filter rules still match the provider\'s name.'),
-    h('div', { class: 'field' },
+    vod ? null : h('div', { class: 'field' },
       h('span', { class: 'field-label' }, 'Jellyfin category'),
       h('span', { class: 'hint' },
         `Tags every programme on all ${cat.channel_count ?? ''} channels in this group, so Jellyfin lists them under Movies, Sports, News or Kids. `,
@@ -839,7 +840,8 @@ function editCategory(cat, onSaved) {
       class: 'btn primary',
       onclick: async () => {
         const jellyfin = boxes.map((l) => l.querySelector('input')).filter((b) => b.checked).map((b) => b.value);
-        const r = await attempt(() => api('PUT', `/api/categories/${cat.id}`, { custom_name: name.value, jellyfin }), 'Group saved');
+        const r = await attempt(() => api('PUT', `/api/categories/${cat.id}`, vod ? { custom_name: name.value } : { custom_name: name.value, jellyfin }),
+          vod ? 'Category renamed' : 'Group saved');
         cat.custom_name = r.custom_name;
         cat.jellyfin = r.jellyfin;
         close();
@@ -1528,7 +1530,7 @@ async function outputEditor(main, id) {
       const q = state.q.toLowerCase();
       return (state.cats || []).filter((c) => {
         const st = evalVod(c);
-        if (q && !(c.custom_name || c.name).toLowerCase().includes(q)) return false;
+        if (q && !(c.custom_name || c.name).toLowerCase().includes(q) && !c.name.toLowerCase().includes(q)) return false;
         if (state.show === 'included') return st.included;
         if (state.show === 'excluded') return !st.included;
         if (state.show === 'new') return c.is_new;
@@ -1586,7 +1588,8 @@ async function outputEditor(main, id) {
             h('button', { class: 'expander', title: `Show the ${L.plural}`, onclick: () => { state.open.has(c.id) ? state.open.delete(c.id) : state.open.add(c.id); draw(); } }, state.open.has(c.id) ? '▾' : '▸'),
             h('span', { class: 'dot' }),
             h('span', { class: 'cat-name' }, c.custom_name || c.name, c.is_new ? badge('new', 'info') : null,
-              h('span', { class: 'meta' }, ` ${sourceName(c.source_id)} · ${c.channel_count.toLocaleString()} ${L.plural} · ${reasonText(st)}`)),
+              h('span', { class: 'meta' }, ` ${c.custom_name ? `(${c.name}) ` : ''}${sourceName(c.source_id)} · ${c.channel_count.toLocaleString()} ${L.plural} · ${reasonText(st)}`)),
+            h('button', { class: 'icon-btn', title: 'Rename (the name players see)', onclick: () => editCategory(c, draw, { vod: true }) }, '✎'),
             h('span', { class: 'segmented small' }, seg('Auto', null, ''), seg('Include', 'include', 'inc'), seg('Exclude', 'exclude', 'exc')));
           return state.open.has(c.id) ? h('div', null, row, titlesPanel(c)) : row;
         }),
