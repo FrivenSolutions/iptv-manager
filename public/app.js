@@ -544,7 +544,7 @@ function stat(v, label) {
 
 async function sourcesView(main) {
   const tbody = h('tbody');
-  const table = h('div', { class: 'card flush' }, h('table', { class: 'table' },
+  const table = h('div', { class: 'card flush' }, h('table', { class: 'table stack' },
     h('thead', null, h('tr', null, ['Source', 'Status', 'Channels', 'Categories', 'EPG matched', 'Last refresh', ''].map((t) => h('th', null, t)))),
     tbody));
   const empty = h('div', { class: 'card empty' }, h('p', null, 'No sources yet. Add an M3U playlist or an Xtream Codes account.'));
@@ -563,14 +563,14 @@ async function sourcesView(main) {
 
 function sourceRow(s, update) {
   return h('tr', null,
-    h('td', null, h('a', { href: `#/sources/${s.id}`, class: 'strong' }, s.name), h('div', { class: 'meta' }, TYPE_LABELS[s.type])),
-    h('td', null, statusBadge(s), s.last_error ? h('div', { class: 'meta clip', title: s.last_error }, s.last_error) : null,
+    h('td', { class: 'wide' }, h('a', { href: `#/sources/${s.id}`, class: 'strong' }, s.name), h('div', { class: 'meta' }, TYPE_LABELS[s.type])),
+    h('td', { class: 'wide' }, statusBadge(s), s.last_error ? h('div', { class: 'meta clip', title: s.last_error }, s.last_error) : null,
       streamsText(s) ? h('div', { class: 'meta' }, `▶ ${streamsText(s)}`) : null),
-    h('td', { class: 'num' }, s.counts.channels,
+    h('td', { class: 'num', 'data-label': 'Channels' }, s.counts.channels,
       s.counts.movies || s.counts.series ? h('div', { class: 'meta' }, vodCounts(s)) : null),
-    h('td', { class: 'num' }, s.counts.categories),
-    h('td', { class: 'num' }, s.counts.epg_matched),
-    h('td', null, ago(s.last_refresh_at), h('div', { class: 'meta' }, s.next_refresh_at ? `next ${ago(s.next_refresh_at)}` : 'manual only')),
+    h('td', { class: 'num', 'data-label': 'Categories' }, s.counts.categories),
+    h('td', { class: 'num', 'data-label': 'Guide matched' }, s.counts.epg_matched),
+    h('td', { class: 'wide', 'data-label': 'Last refresh' }, ago(s.last_refresh_at), h('div', { class: 'meta' }, s.next_refresh_at ? `next ${ago(s.next_refresh_at)}` : 'manual only')),
     h('td', { class: 'actions' },
       h('button', { class: 'btn', disabled: !!s.job, onclick: () => attempt(() => api('POST', `/api/sources/${s.id}/refresh`), 'Refresh started').then(update) }, 'Refresh'),
       h('button', { class: 'btn', onclick: () => sourceForm(s, update) }, 'Edit'),
@@ -735,14 +735,14 @@ async function sourceDetail(main, id) {
         cat.custom_name ? h('span', { class: 'meta' }, ` (provider name: ${cat.name})`) : null,
         jellyfinBadges(cat),
         h('button', { class: 'btn small', onclick: () => editCategory(cat, () => { drawCats(); load(); }) }, 'Edit group')) : null,
-      h('table', { class: 'table' },
+      h('table', { class: 'table stack ch-table' },
         h('thead', null, h('tr', null, ['', 'Channel', 'Category', 'tvg-id', 'Guide', ''].map((t) => h('th', null, t)))),
         h('tbody', null, data.items.map((ch) => h('tr', null,
           h('td', { class: 'logo-cell' }, (ch.custom_logo || ch.logo) ? h('img', { src: ch.custom_logo || ch.logo, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : null),
           h('td', null, h('span', { class: 'strong' }, ch.custom_name || ch.name), ch.custom_name ? h('div', { class: 'meta' }, ch.name) : null),
-          h('td', { class: 'meta' }, ch.category),
-          h('td', { class: 'mono' }, ch.tvg_id || '–'),
-          h('td', null, epgBadge(ch), ch.epg_id ? h('div', { class: 'meta mono' }, ch.custom_epg_id || ch.epg_id) : null),
+          h('td', { class: 'meta', 'data-label': 'Category' }, ch.category),
+          h('td', { class: 'mono tvg' }, ch.tvg_id || '–'),
+          h('td', { 'data-label': 'Guide' }, epgBadge(ch), ch.epg_id ? h('div', { class: 'meta mono' }, ch.custom_epg_id || ch.epg_id) : null),
           h('td', { class: 'actions' }, h('button', { class: 'btn small', onclick: () => editChannel(src, ch, load) }, 'Edit')))))),
       data.items.length ? null : h('p', { class: 'empty pad' }, 'No channels match.'),
       h('div', { class: 'pager' },
