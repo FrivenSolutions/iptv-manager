@@ -1513,6 +1513,64 @@ test('extra Xtream Codes logins share an output, and come and go without touchin
   assert.equal((await api('DELETE', `/api/outputs/${outputId}/logins/${mom.id}`)).status, 404);
 });
 
+test('who is watching what: proxy streams start to stop, redirected ones by their start', async () => {
+  const mk = async (name, fields) => {
+    const o = (await api('POST', '/api/outputs', { name })).data;
+    await api('PUT', `/api/outputs/${o.id}`, { xc_enabled: true, ...fields });
+    return o;
+  };
+  const p = await mk('Proxy room', { stream_mode: 'proxy', xc_username: 'watcher', xc_password: 'w', source_ids: [xcId], rules: [{ action: 'include', op: 'equals', value: 'us| live' }] });
+  const rd = await mk('Redirect room', { stream_mode: 'redirect', xc_username: 'redir', xc_password: 'r', source_ids: [xcId], rules: [{ action: 'include', op: 'equals', value: 'us| live' }] });
+  await api('POST', `/api/outputs/${p.id}/logins`, { name: 'Mom', username: 'mom2', password: 'm' });
+  const ids = async (u, pw) => (await (await fetch(`${base}/player_api.php?username=${u}&password=${pw}&action=get_live_streams`)).json()).map((s) => [s.name, s.stream_id]);
+  const [[name1, id1], [name2, id2]] = await ids('watcher', 'w');
+  const viewers = async () => (await api('GET', '/api/viewers')).data;
+  const watch = async (url) => {
+    const ac = new AbortController();
+    const r = await fetch(url, { signal: ac.signal });
+    const reader = r.body.getReader();
+    await reader.read();
+    return () => { ac.abort(); reader.cancel().catch(() => {}); };
+  };
+
+  // Proxy: listed while the stream is open, with who (login name, else username), what and where.
+  const stop1 = await watch(`${base}/live/watcher/w/${id1}.ts`);
+  const stop2 = await watch(`${base}/live/mom2/m/${id2}.ts`);
+  let v = await viewers();
+  const byWho = (who) => v.find((x) => x.who === who);
+  assert.deepEqual(
+    [byWho('watcher')?.what, byWho('watcher')?.mode, byWho('watcher')?.output, byWho('watcher')?.source, byWho('watcher')?.kind],
+    [name1, 'proxy', 'Proxy room', 'XC', 'live'],
+  );
+  assert.deepEqual([byWho('Mom')?.what, byWho('Mom')?.username, byWho('Mom')?.ending], [name2, 'mom2', false]);
+  assert.match(byWho('Mom').ip, /127\.0\.0\.1|::1/);
+  stop1();
+  await new Promise((r) => setTimeout(r, 100));
+  v = await viewers();
+  assert.equal(byWho('watcher')?.ending, true, 'stopped: shown as ending for a few seconds, in case the player reconnects');
+  stop2();
+
+  // Redirect: only the start is seen; the device's next start replaces it.
+  await fetch(`${base}/live/redir/r/${id1}.ts`, { redirect: 'manual' });
+  v = await viewers();
+  assert.deepEqual([byWho('redir')?.what, byWho('redir')?.mode], [name1, 'redirect']);
+  await fetch(`${base}/live/redir/r/${id2}.ts`, { redirect: 'manual' });
+  v = await viewers();
+  assert.deepEqual(v.filter((x) => x.who === 'redir').map((x) => x.what), [name2]);
+
+  // HLS through a proxy: the playlist says who; the segments (by token URL) keep it.
+  const hls = await mk('HLS room', { stream_mode: 'proxy', xc_username: 'hlsu', xc_password: 'h', source_ids: [m3uId], rules: [{ action: 'include', op: 'equals', value: 'uk| general' }] });
+  const bbc = (await ids('hlsu', 'h')).find(([n]) => /BBC/.test(n));
+  const playlist = await (await fetch(`${base}/live/hlsu/h/${bbc[1]}.m3u8`)).text();
+  await (await fetch(base + playlist.split('\n').find((l) => l.startsWith('/s/')))).text();
+  v = await viewers();
+  assert.deepEqual([byWho('hlsu')?.what, byWho('hlsu')?.mode], [bbc[0], 'proxy']);
+  assert.equal(v.filter((x) => x.output === 'HLS room').length, 1);
+
+  for (const o of [p, rd, hls]) await api('DELETE', `/api/outputs/${o.id}`);
+  app.ctx.viewers.entries.clear();
+});
+
 test('pausing an output stops its URLs and every login until it is resumed; refreshing its sources', async () => {
   const pa = (u, p) => fetch(`${base}/player_api.php?username=${u}&password=${p}`).then((r) => r.json());
   const extra = (await api('POST', `/api/outputs/${outputId}/logins`, { username: 'guest', password: 'g' })).data;

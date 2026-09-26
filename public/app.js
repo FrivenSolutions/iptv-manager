@@ -479,9 +479,25 @@ async function dashboard(main) {
   const outSection = h('section', null, h('h2', null, 'Outputs'), outGrid, noOutputs);
 
   const alertBox = h('div', { class: 'alerts' });
+  // Who is watching what: proxied streams from start to stop, redirected ones by their start.
+  const watchList = h('div', { class: 'watch-list' });
+  const watchCount = h('span', { class: 'meta' });
+  const watchEmpty = h('p', { class: 'meta pad' }, 'Nobody is watching right now.');
+  const watchSection = h('section', null,
+    h('div', { class: 'section-head' }, h('h2', null, 'Watching now'), watchCount),
+    h('div', { class: 'card flush' }, watchList, watchEmpty),
+    h('p', { class: 'hint' },
+      'Outputs set to Proxy show each stream from start to stop. Redirect (and Direct over an Xtream Codes login) only shows what each ',
+      'device last started, since the player talks to the provider after that. Direct M3U playlists never reach this server.'));
   let alertSig = '';
   const update = async () => {
-    const [sources, outputs, alerts] = await Promise.all([api('GET', '/api/sources'), api('GET', '/api/outputs'), api('GET', '/api/alerts')]);
+    const [sources, outputs, alerts, viewers] = await Promise.all([
+      api('GET', '/api/sources'), api('GET', '/api/outputs'), api('GET', '/api/alerts'), api('GET', '/api/viewers'),
+    ]);
+    watchSection.hidden = !sources.length;
+    watchEmpty.hidden = viewers.length > 0;
+    watchCount.textContent = viewers.length ? `${viewers.length} stream${viewers.length === 1 ? '' : 's'}` : '';
+    syncList(watchList, viewers, (v) => v.key, watchRow, minuteTick);
     // Only redraw the alert strip when it changed, so polling never makes it flicker.
     const sig = JSON.stringify(alerts);
     if (sig !== alertSig) {
@@ -497,7 +513,7 @@ async function dashboard(main) {
     syncList(outGrid, outputs, (o) => o.id, outputCard);
   };
   await update();
-  fill(main, h('div', { class: 'page-head' }, h('h1', null, 'Dashboard')), alertBox, getStarted, srcSection, outSection);
+  fill(main, h('div', { class: 'page-head' }, h('h1', null, 'Dashboard')), alertBox, getStarted, watchSection, srcSection, outSection);
   poll(update, 3000);
 }
 
@@ -511,6 +527,22 @@ function sourceCard(s) {
       stat(s.counts.channels ? `${Math.round((s.counts.epg_matched / s.counts.channels) * 100)}%` : '–', 'EPG matched')),
     st.newCategories ? h('p', { class: 'note' }, `${st.newCategories} new categor${st.newCategories === 1 ? 'y' : 'ies'} in the last refresh`) : null,
     s.last_error ? h('p', { class: s.last_status === 'error' ? 'form-error' : 'note warn' }, s.last_error) : null);
+}
+
+const KIND_LABELS = { live: 'Live', movie: 'Movie', episode: 'Episode' };
+
+// One stream on the dashboard: who (and which device), what, where from, since when.
+function watchRow(v) {
+  return h('div', { class: `watch-row ${v.ending ? 'ending' : ''}` },
+    h('div', { class: 'watch-who' },
+      h('b', { title: v.username && v.username !== v.who ? `Username: ${v.username}` : '' }, v.who),
+      h('span', { class: 'meta' }, v.ip)),
+    h('div', { class: 'watch-what' },
+      badge(KIND_LABELS[v.kind] || v.kind, 'muted'), ' ', h('span', { class: 'strong' }, v.what),
+      h('div', { class: 'meta' },
+        h('a', { href: `#/outputs/${v.output_id}` }, v.output), v.source ? ` · ${v.source}` : '',
+        ` · ${v.mode === 'redirect' ? 'started' : 'since'} ${ago(v.started)}`)),
+    v.mode === 'redirect' ? badge('start only', 'warn') : v.ending ? badge('stopping', 'muted') : badge('watching', 'ok'));
 }
 
 function outputCard(o) {

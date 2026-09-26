@@ -295,6 +295,8 @@ export function registerApi(router, ctx) {
 
   // --- alerts ------------------------------------------------------------------
   router.get('/api/alerts', (req, res) => sendJson(res, 200, computeAlerts(db)));
+  // Who is watching what right now (see viewers.js for what each stream mode lets us see).
+  router.get('/api/viewers', (req, res) => sendJson(res, 200, ctx.viewers.list()));
   router.post('/api/alerts/test', async (req, res) => {
     const { type, url } = ctx.alerts.target;
     if (!type || !url) throw new HttpError(400, 'Save a notification address first');

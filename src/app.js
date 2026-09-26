@@ -17,6 +17,7 @@ import { findXcOutput, playerApi } from './outputs/xc.js';
 import { serveChannel, serveSegment, serveVod } from './stream.js';
 import { vodTarget } from './outputs/xcvod.js';
 import { Streams } from './streams.js';
+import { Viewers, clientIp } from './viewers.js';
 import { HDHR_API } from './hdhomerun.js';
 import { currentVersion } from './version.js';
 import { UpdateChecker, installType, DEFAULT_UPDATE_REPO } from './updates.js';
@@ -135,6 +136,7 @@ export function createApp({
   ctx.alerts = new Alerts(ctx);
   ctx.autoBackup = new AutoBackup(ctx, { firstDelayMs: autoBackupDelayMs });
   ctx.streams = new Streams(ctx);
+  ctx.viewers = new Viewers();
   ctx.updates = new UpdateChecker({
     db, commit: ctx.build.commit, apiBase: updateApiBase, repo: updateRepo, delayMs: updateCheckDelayMs, log,
   });
@@ -207,13 +209,26 @@ export function createApp({
     if (!ch) throw new HttpError(404, 'Channel is not in this output');
     return ch;
   };
+  // Who is watching (for the dashboard): the login's name when it has one, else its username;
+  // the output's token URLs don't say who is using them.
+  const whoOf = (username) => (username
+    ? db.get('SELECT name FROM output_xc_logins WHERE username = ?', [String(username)])?.name || String(username)
+    : 'Playlist link');
+  const viewerOf = (req, sel, username, what, kind, sourceId) => ({
+    outputId: sel.output.id, output: sel.output.name, who: whoOf(username), username: username || null,
+    ip: clientIp(req), what, kind, source: sel.output.sources.find((s) => s.id === sourceId)?.name || null,
+  });
+  const liveViewer = (req, sel, ch, username = null) => viewerOf(req, sel, username, ch.name, 'live', ch.source_id);
+
   router.get('/s/:token/seg/:id', (req, res, { params, query }) => {
     const sel = byToken(params.token);
-    return serveSegment(ctx, res, sel.output, channelOf(sel, params.id), query.get('u'), query.get('sig'));
+    const ch = channelOf(sel, params.id);
+    return serveSegment(ctx, res, sel.output, ch, query.get('u'), query.get('sig'), liveViewer(req, sel, ch));
   });
   router.get('/s/:token/:id.:ext', (req, res, { params }) => {
     const sel = byToken(params.token);
-    return serveChannel(ctx, res, sel.output, channelOf(sel, params.id), params.ext);
+    const ch = channelOf(sel, params.id);
+    return serveChannel(ctx, res, sel.output, ch, params.ext, liveViewer(req, sel, ch));
   });
 
   // --- Xtream Codes compatible endpoints -----------------------------------
@@ -248,7 +263,8 @@ export function createApp({
     const sel = xcAuth(params.u, params.p);
     if (!sel) throw new HttpError(401, 'Invalid credentials');
     const [id, ext = 'ts'] = params.file.split('.');
-    return serveChannel(ctx, res, sel.output, channelOf(sel, id), ext);
+    const ch = channelOf(sel, id);
+    return serveChannel(ctx, res, sel.output, ch, ext, liveViewer(req, sel, ch, params.u));
   };
   router.get('/live/:u/:p/:file', xcStream);
   // Movies and series episodes: ids are this server's, checked against the output's categories.
@@ -259,7 +275,8 @@ export function createApp({
       const vod = ctx.vod(sel.output.id);
       const target = vod && vodTarget(db, vod, kind, params.file.split('.')[0]);
       if (!target) throw new HttpError(404, `${kind === 'movie' ? 'Movie' : 'Episode'} is not in this output`);
-      return serveVod(ctx, req, res, sel.output, target);
+      return serveVod(ctx, req, res, sel.output, target,
+        viewerOf(req, sel, params.u, target.title, kind === 'movie' ? 'movie' : 'episode', target.src.id));
     });
   }
   router.get('/:u/:p/:file', xcStream);

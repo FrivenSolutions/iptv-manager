@@ -438,6 +438,14 @@ source's **Streams at once** limit.
 
 Xtream Codes clients always build URLs on this server, so Direct behaves like Redirect for them.
 
+**Watching now.** The dashboard lists who is watching what: the login's name (or the username,
+or "Playlist link" for the output's own URLs), the device's address, the channel, movie or
+episode, the output and source, and since when. What can be seen depends on the mode. Proxy shows
+each stream from start to stop. Redirect, and Direct over an Xtream Codes login, only shows what
+each device last started, marked "start only", because the player talks to the provider after
+that. A Direct M3U playlist never reaches this server. Nothing of this is stored; it lives in
+memory.
+
 **Connection limits (Proxy only).** Everyone watching the same channel shares one connection to
 the provider, which opens with the first viewer and closes with the last. Each source can be held
 to a number of channels playing at once: the source's **Advanced → Streams at once**. Blank means

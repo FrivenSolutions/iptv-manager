@@ -168,12 +168,13 @@ export function vodTarget(db, vc, kind, id) {
     if (!it) return null;
     const api = it.src.type === 'xc' ? providerApi(it.src) : null;
     const url = api ? `${api.base}/movie/${api.u}/${api.p}/${it.key}.${it.ext || 'mp4'}` : it.url;
-    return url ? { key: `movie:${it.id}`, url, src: it.src } : null;
+    return url ? { key: `movie:${it.id}`, url, src: it.src, title: it.custom_name || it.name } : null;
   }
   const ep = db.get('SELECT * FROM vod_episodes WHERE id = ?', [Number(id)]);
   const it = ep && vodItem(db, vc.series, ep.series_id, 'series');
   if (!it) return null;
   const api = it.src.type === 'xc' ? providerApi(it.src) : null;
   const url = api ? `${api.base}/series/${api.u}/${api.p}/${ep.key}.${ep.ext || 'mp4'}` : ep.url;
-  return url ? { key: `episode:${ep.id}`, url, src: it.src } : null;
+  const title = `${it.custom_name || it.name} · S${ep.season ?? 1} E${ep.episode ?? '?'}${ep.title && !ep.title.includes(it.name) ? ` ${ep.title}` : ''}`;
+  return url ? { key: `episode:${ep.id}`, url, src: it.src, title } : null;
 }

@@ -74,7 +74,7 @@ async function relay(ctx, res, url, output, ch) {
 }
 
 /** A channel through this server: HLS playlists are rewritten, TS streams shared between viewers. */
-async function proxy(ctx, res, url, output, ch) {
+async function proxy(ctx, res, url, output, ch, viewer) {
   const admit = ctx.streams.admit(ch);
   if (!admit.ok) return busy(res, admit.limit);
   const hub = ctx.streams.hub(ch, url);
@@ -87,12 +87,14 @@ async function proxy(ctx, res, url, output, ch) {
   if (r.status) return res.writeHead(r.status).end();
   if (r.hls) {
     ctx.streams.touchHls(ch);
+    if (viewer) ctx.viewers.touch(viewer);
     return res.writeHead(200, hlsHeaders).end(rewriteHls(r.hls, r.url, (abs) => segmentUrl(ctx.secret, output, ch.id, abs)));
   }
   // Live TS has no length; a late joiner starts wherever the shared stream is.
   res.writeHead(200, { 'content-type': r.ts, 'cache-control': 'no-cache' });
-  if (hub.closed) res.end();
-  else hub.add(res);
+  if (hub.closed) return res.end();
+  hub.add(res);
+  if (viewer) res.on('close', ctx.viewers.open(viewer));
 }
 
 // Headers passed back from the provider for a movie or episode, so players can seek.
@@ -102,8 +104,9 @@ const VOD_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-
  * A movie or series episode. Direct and Redirect send the player to the provider; Proxy relays
  * it, passing Range requests through for seeking, and counts it against the source's limit.
  */
-export async function serveVod(ctx, req, res, output, target) {
+export async function serveVod(ctx, req, res, output, target, viewer = null) {
   if (output.stream_mode !== 'proxy') {
+    if (viewer) ctx.viewers.redirect(viewer);
     res.writeHead(302, { location: target.url, 'cache-control': 'no-cache' }).end();
     return;
   }
@@ -111,10 +114,12 @@ export async function serveVod(ctx, req, res, output, target) {
   const admit = ctx.streams.admit(item);
   if (!admit.ok) return busy(res, admit.limit);
   const release = ctx.streams.hold(item);
+  const unview = viewer ? ctx.viewers.open(viewer) : () => {};
   const ac = new AbortController();
   res.on('close', () => {
     ac.abort();
     release();
+    unview();
   });
   const headers = { 'user-agent': target.src.user_agent || DEFAULT_UA };
   if (req.headers.range) headers.range = req.headers.range;
@@ -144,13 +149,14 @@ export async function serveVod(ctx, req, res, output, target) {
 }
 
 /** Serve a channel according to the output's stream mode. */
-export async function serveChannel(ctx, res, output, ch, ext) {
+export async function serveChannel(ctx, res, output, ch, ext, viewer = null) {
   const url = upstreamUrl(ch, ext);
-  if (output.stream_mode === 'proxy') return proxy(ctx, res, url, output, ch);
+  if (output.stream_mode === 'proxy') return proxy(ctx, res, url, output, ch, viewer);
+  if (viewer) ctx.viewers.redirect(viewer);
   res.writeHead(302, { location: url, 'cache-control': 'no-cache' }).end();
 }
 
-export async function serveSegment(ctx, res, output, ch, u, sig) {
+export async function serveSegment(ctx, res, output, ch, u, sig, viewer = null) {
   let abs;
   try {
     abs = Buffer.from(String(u || ''), 'base64url').toString();
@@ -165,5 +171,6 @@ export async function serveSegment(ctx, res, output, ch, u, sig) {
   const admit = ctx.streams.admit(ch);
   if (!admit.ok) return busy(res, admit.limit);
   ctx.streams.touchHls(ch);
+  if (viewer) ctx.viewers.touch(viewer);
   return relay(ctx, res, abs, output, ch);
 }

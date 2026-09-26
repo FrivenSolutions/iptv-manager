@@ -423,6 +423,20 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 .login-toggle { width: auto; text-align: left; color: var(--text); display: inline-flex; align-items: baseline; gap: 2px; }
 .login-toggle b { font-weight: 600; }
 .login-body { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 4px 18px; }
+/* Dashboard: who is watching what. */
+.section-head { display: flex; align-items: baseline; gap: 10px; }
+.watch-row { display: grid; grid-template-columns: 180px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.watch-row:last-child { border-bottom: 0; }
+.watch-row.ending { opacity: .6; }
+.watch-who { display: flex; flex-direction: column; min-width: 0; }
+.watch-who b, .watch-what .strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.watch-what { min-width: 0; }
+.watch-list:empty { display: none; }
+@media (max-width: 640px) {
+  .watch-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .watch-row .watch-what { grid-column: 1 / -1; grid-row: 2; }
+}
+
 /* "Manage output": look, keep up to date, then the disruptive ones, a row each. */
 .manage-rows { display: flex; flex-direction: column; gap: 8px; }
 /* Each row fills the width: its buttons share it equally (halves, then thirds). */
