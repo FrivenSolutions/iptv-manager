@@ -597,7 +597,7 @@ function sourceRow(s, update) {
   return h('tr', null,
     h('td', { class: 'wide' }, h('a', { href: `#/sources/${s.id}`, class: 'strong' }, s.name), h('div', { class: 'meta' }, TYPE_LABELS[s.type])),
     h('td', { class: 'wide' }, statusBadge(s), s.last_error ? h('div', { class: 'meta clip', title: s.last_error }, s.last_error) : null,
-      streamsText(s) ? h('div', { class: 'meta' }, `▶ ${streamsText(s)}`) : null),
+      streamsText(s) ? h('div', { class: 'meta' }, streamsText(s)) : null),
     h('td', { class: 'num', 'data-label': 'Channels' }, s.counts.channels,
       s.counts.movies || s.counts.series ? h('div', { class: 'meta' }, vodCounts(s)) : null),
     h('td', { class: 'num', 'data-label': 'Categories' }, s.counts.categories),

@@ -234,6 +234,8 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 
 /* --- output editor --- */
 .editor { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 16px; align-items: start; }
+/* Columns may shrink below their content, so one wide element can't widen the whole page. */
+.editor > * { min-width: 0; }
 .editor-side .card { margin-bottom: 16px; }
 .rules { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .rule-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: var(--panel-2); padding: 8px; border-radius: 8px; }
@@ -362,6 +364,13 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
   .stats.wide { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 12px; }
   .stats.wide .stat b { font-size: 17px; }
   .toolbar input[type="search"] { max-width: none; flex: 1 1 100%; }
+  /* Category rows: Auto / Include / Exclude on a line of their own, under the name. */
+  .cat-row { flex-wrap: wrap; row-gap: 6px; }
+  .cat-row .segmented { flex: 1 0 calc(100% - 46px); margin-left: 46px; }
+  .cat-row .segmented button { flex: 1 1 0; }
+  /* An expanded category: no indent, one column of channels or titles. */
+  .ch-panel { padding: 10px 12px 12px; }
+  .ch-box { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 1100px) {
   .editor { grid-template-columns: 1fr; }
