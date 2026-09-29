@@ -333,6 +333,11 @@ const MIGRATIONS = [
   -- A paused output answers nothing (URLs and every login) until it is resumed.
   ALTER TABLE outputs ADD COLUMN paused INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- "Nothing listed" looks ahead this many hours: a channel with anything airing now or starting
+  -- within them is kept (players reload playlists only now and then).
+  ALTER TABLE output_category_settings ADD COLUMN unlisted_hours INTEGER NOT NULL DEFAULT 24;
+  `,
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.

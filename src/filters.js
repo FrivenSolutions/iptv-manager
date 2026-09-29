@@ -98,6 +98,27 @@ export const guidePatterns = (db) => patternSetting(db, 'guide_patterns', DEFAUL
  * Title of the programme airing at time t, per "sourceId|guide channel id", for the given
  * sources. One indexed query per source; only called when a category hides by guide.
  */
+// How far ahead "nothing listed" looks by default, in hours.
+export const DEFAULT_UNLISTED_HOURS = 24;
+
+/** The first listing (with a title) starting after t and before until, per "sourceId|channel". */
+export function nextListings(db, sources, t, until) {
+  const map = new Map();
+  for (const s of sources) {
+    const rows = db.all(
+      'SELECT channel, start_ts, xml FROM programmes WHERE source_id = ? AND gen = ? AND start_ts > ? AND start_ts < ? ORDER BY start_ts',
+      [s.id, s.epg_gen, t, until],
+    );
+    for (const r of rows) {
+      const key = `${s.id}|${r.channel}`;
+      if (map.has(key)) continue;
+      const title = firstText(r.xml, 'title');
+      if (title) map.set(key, { start: r.start_ts, title });
+    }
+  }
+  return map;
+}
+
 export function nowTitles(db, sources, t = Math.floor(Date.now() / 1000)) {
   const map = new Map();
   for (const s of sources) {
@@ -130,6 +151,11 @@ export function guideHider(db, output, cats, t = Math.floor(Date.now() / 1000)) 
   const wanted = new Set(cats.filter((c) => c.hide_by_guide).map((c) => c.source_id));
   const titles = wanted.size ? nowTitles(db, output.sources.filter((s) => wanted.has(s.id)), t) : new Map();
   const regexes = wanted.size ? compilePatterns(guidePatterns(db)) : [];
+  // Listings coming up, as far ahead as the longest "nothing listed" look-ahead in use.
+  const aheadH = Math.max(0, ...cats.filter((c) => c.hide_by_guide).map((c) => c.unlisted_hours || DEFAULT_UNLISTED_HOURS));
+  const upcoming = wanted.size && aheadH
+    ? nextListings(db, output.sources.filter((s) => wanted.has(s.id)), t, t + aheadH * 3600)
+    : new Map();
   // Sources whose guide has anything airing now. If a source has nothing at all, its guide has
   // run out or failed to refresh, and "nothing listed" says nothing about its channels.
   const current = new Set([...titles.keys()].map((k) => Number(k.slice(0, k.indexOf('|')))));
@@ -137,14 +163,25 @@ export function guideHider(db, output, cats, t = Math.floor(Date.now() / 1000)) 
     const epgId = ch.custom_epg_id || ch.epg_id;
     return epgId ? titles.get(`${ch.source_id}|${epgId}`) ?? null : null;
   };
+  const nextOf = (ch) => {
+    const epgId = ch.custom_epg_id || ch.epg_id;
+    return epgId ? upcoming.get(`${ch.source_id}|${epgId}`) ?? null : null;
+  };
   return {
     titleOf,
     guideCurrent: (ch) => current.has(ch.source_id),
     // A placeholder title airing now ("No Game Today").
     isPlaceholder: (ch) => { const tt = titleOf(ch); return !!tt && isEmptyEvent(tt, regexes); },
-    // Has a guide id but nothing (or a blank title) airing now, while its source's guide is current.
-    // Channels without any guide id are never counted: there is nothing to go on.
-    isUnlisted: (ch) => !!(ch.custom_epg_id || ch.epg_id || ch.tvg_id) && current.has(ch.source_id) && !titleOf(ch),
+    // The next listing within the look-ahead, if nothing is on now: { start, title }.
+    nextOf,
+    // Has a guide id, but nothing (or a blank title) airing now and nothing starting within the next
+    // `hours`, while its source's guide is current. Channels without any guide id are never
+    // counted: there is nothing to go on.
+    isUnlisted: (ch, hours = DEFAULT_UNLISTED_HOURS) => {
+      if (!(ch.custom_epg_id || ch.epg_id || ch.tvg_id) || !current.has(ch.source_id) || titleOf(ch)) return false;
+      const next = nextOf(ch);
+      return !(next && next.start < t + hours * 3600);
+    },
   };
 }
 
@@ -236,7 +273,7 @@ export function hiddenReason(cat, ch, emptyRegexes, guide) {
   if (cat.hide_empty && isEmptyEvent(ch.name, emptyRegexes)) return 'empty';
   if (!cat.hide_by_guide) return null;
   if (guide.isPlaceholder(ch)) return 'guide';
-  if (cat.hide_unlisted && guide.isUnlisted(ch)) return 'unlisted';
+  if (cat.hide_unlisted && guide.isUnlisted(ch, cat.unlisted_hours)) return 'unlisted';
   return null;
 }
 
@@ -295,7 +332,7 @@ export function evaluateCategories(db, output, kind = 'live') {
   cats.sort((a, b) => order.get(a.source_id) - order.get(b.source_id) || a.sort - b.sort);
   const chRules = loadChannelRules(db, output.id);
   const catSettings = new Map(
-    db.all('SELECT category_id, hide_empty, hide_by_guide, hide_unlisted FROM output_category_settings WHERE output_id = ?', [output.id])
+    db.all('SELECT category_id, hide_empty, hide_by_guide, hide_unlisted, unlisted_hours FROM output_category_settings WHERE output_id = ?', [output.id])
       .map((r) => [r.category_id, r]),
   );
   for (const c of cats) {
@@ -305,6 +342,7 @@ export function evaluateCategories(db, output, kind = 'live') {
     c.hide_empty = !!catSettings.get(c.id)?.hide_empty;
     c.hide_by_guide = !!catSettings.get(c.id)?.hide_by_guide;
     c.hide_unlisted = !!catSettings.get(c.id)?.hide_unlisted;
+    c.unlisted_hours = catSettings.get(c.id)?.unlisted_hours ?? DEFAULT_UNLISTED_HOURS;
     c.is_new = isNewCategory(c);
     c.jellyfin = parseJellyfin(c.jellyfin);
   }
