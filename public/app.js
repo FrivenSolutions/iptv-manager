@@ -988,7 +988,7 @@ function newOutput() {
 // moving between outputs.
 let outputPane = 'main';
 
-// "Hide excluded" on the output page's category lists: remembered in this browser.
+// "Hide excluded" on the output page's category lists (categories only): remembered in this browser.
 let hideExcluded = (() => {
   try {
     return localStorage.getItem('iptvm.hideExcluded') === '1';
@@ -1043,7 +1043,8 @@ async function outputEditor(main, id) {
   cleanups.push(() => window.removeEventListener('beforeunload', onLeave));
 
   const sourceName = (sid) => o.sources.find((s) => s.id === sid)?.name || `#${sid}`;
-  // One switch for all three lists (Live TV, Movies, Series), and the channels or titles inside them.
+  // One switch for all three category lists (Live TV, Movies, Series). Inside an expanded category,
+  // a switch of its own hides that category's excluded channels or titles.
   const hideBoxes = [];
   const setHideExcluded = (on) => {
     hideExcluded = on;
@@ -1051,15 +1052,13 @@ async function outputEditor(main, id) {
       localStorage.setItem('iptvm.hideExcluded', on ? '1' : '0');
     } catch {}
     for (const b of hideBoxes) b.checked = on;
-    for (const p of panels.values()) p.rerender?.();
-    for (const pane of Object.values(vodPanes)) pane.redrawTitles();
     drawCats();
     redrawVod();
   };
   const hideToggle = () => {
     const box = h('input', { type: 'checkbox', checked: hideExcluded, onchange: (e) => setHideExcluded(e.target.checked) });
     hideBoxes.push(box);
-    return h('label', { class: 'check hide-excluded', title: 'Show only what is in the output: categories, and the channels or titles inside them' },
+    return h('label', { class: 'check hide-excluded', title: 'Show only the categories that are in the output' },
       box, ' Hide excluded');
   };
   const attachedIds = () => draft.sources.filter((s) => s.attached).map((s) => s.id);
@@ -1519,13 +1518,16 @@ async function outputEditor(main, id) {
         ruleBox),
       h('div', { class: 'ch-toolbar' },
         h('span', { class: 'meta' }, `${included} of ${chans.length} channels included`),
+        h('label', { class: 'check hide-excluded', title: 'Show only the channels of this category that are in the output' },
+          h('input', { type: 'checkbox', checked: !!p.hideOut, onchange: (e) => { p.hideOut = e.target.checked; renderPanel(c, p, data); } }),
+          ' Hide excluded'),
         h('span', { class: 'row' },
           h('button', { class: 'btn small', disabled: off, title: 'Include every channel in this category by hand', onclick: () => setChannels(chans.map((ch) => ch.id), 'include') }, 'Select all'),
           h('button', { class: 'btn small', disabled: off, title: 'Exclude every channel in this category by hand', onclick: () => setChannels(chans.map((ch) => ch.id), 'exclude') }, 'Deselect all'),
           h('button', { class: 'btn small', disabled: off || !overridden.length, title: 'Clear hand picks so the category and channel rules decide', onclick: () => setChannels(overridden, null) }, 'Reset to rules'))),
       h('div', { class: 'ch-box' },
         // Two lines per channel: the name gets the full width; details go underneath.
-        chans.filter((ch) => !hideExcluded || ch.included).map((ch) => {
+        chans.filter((ch) => !p.hideOut || ch.included).map((ch) => {
           const name = ch.custom_name || ch.name;
           const why = !off && ch.reason !== 'category' ? reason(ch) : '';
           const now = ch.now_title ? h('span', { class: `now-title ${ch.is_guide_placeholder ? 'placeholder' : ''}`, title: `On now: ${ch.now_title}` }, `▸ ${ch.now_title}`)
@@ -1542,7 +1544,7 @@ async function outputEditor(main, id) {
               : null);
         }),
         chans.length ? null : h('p', { class: 'meta' }, 'No channels.'),
-        chans.length && hideExcluded && !chans.some((ch) => ch.included) ? h('p', { class: 'meta' }, 'Every channel here is excluded (Hide excluded is on).') : null));
+        chans.length && p.hideOut && !chans.some((ch) => ch.included) ? h('p', { class: 'meta' }, 'Every channel here is excluded (Hide excluded is on).') : null));
     markHits(p.el);
     scrollToHit(c.id);
   };
@@ -1858,7 +1860,7 @@ async function outputEditor(main, id) {
       const box = h('div', { class: 'ch-box' });
       const drawBox = () => {
         const q = p.q.toLowerCase();
-        const list = data.titles.filter((t) => (!hideExcluded || t.included)
+        const list = data.titles.filter((t) => (!p.hideOut || t.included)
           && (!q || (t.custom_name || t.name).toLowerCase().includes(q) || t.name.toLowerCase().includes(q)));
         const LIMIT = 500;
         fill(box,
@@ -1875,7 +1877,7 @@ async function outputEditor(main, id) {
               t.override && !off ? h('button', { class: 'link', onclick: (e) => { e.preventDefault(); set({ ids: [t.id], state: null }); } }, 'reset') : null)
             : null)),
           list.length > LIMIT ? h('p', { class: 'meta' }, `Showing the first ${LIMIT} of ${list.length}. Type in the filter to narrow it down.`) : null,
-          list.length ? null : h('p', { class: 'meta' }, !data.titles.length ? 'No titles.' : hideExcluded && !q ? 'Every title here is excluded (Hide excluded is on).' : 'No titles match.'));
+          list.length ? null : h('p', { class: 'meta' }, !data.titles.length ? 'No titles.' : p.hideOut && !q ? 'Every title here is excluded (Hide excluded is on).' : 'No titles match.'));
       };
       drawBox();
       p.el.classList.toggle('locked', off);
@@ -1887,6 +1889,9 @@ async function outputEditor(main, id) {
           h('button', { class: 'btn small primary', onclick: () => setOverride([c.id], 'include') }, 'Include category')) : null,
         h('div', { class: 'ch-toolbar' },
           h('span', { class: 'meta' }, `${inCount.toLocaleString()} of ${data.total.toLocaleString()} ${data.total === 1 ? L.one : L.plural} included`),
+          h('label', { class: 'check hide-excluded', title: `Show only the ${L.plural} of this category that are in the output` },
+            h('input', { type: 'checkbox', checked: !!p.hideOut, onchange: (e) => { p.hideOut = e.target.checked; drawBox(); } }),
+            ' Hide excluded'),
           data.titles.length > 20 || p.q
             ? h('input', { type: 'search', class: 'title-filter', placeholder: `Filter ${L.plural}`, value: p.q, oninput: (e) => { p.q = e.target.value; drawBox(); } })
             : null,
@@ -1970,8 +1975,7 @@ async function outputEditor(main, id) {
             h('button', { class: 'btn small', onclick: bulk(null) }, 'Reset shown to Auto'))),
         hitNote,
         list));
-    const redrawTitles = () => { for (const p of titlePanels.values()) p.rerender?.(); };
-    return { el, draw, load, rules, redrawTitles, get loaded() { return !!state.cats; } };
+    return { el, draw, load, rules, get loaded() { return !!state.cats; } };
   };
   const vodPanes = { movie: vodPane('movie'), series: vodPane('series') };
   const livePane = h('div', null, rulesCard, namesCard, catsCard);
