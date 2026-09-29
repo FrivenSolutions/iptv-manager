@@ -711,8 +711,8 @@ export function registerApi(router, ctx) {
       db.run('INSERT INTO output_category_overrides (output_id, category_id, state) SELECT ?, category_id, state FROM output_category_overrides WHERE output_id = ?', [copyId, o.id]);
       db.run('INSERT INTO output_channel_overrides (output_id, channel_id, state) SELECT ?, channel_id, state FROM output_channel_overrides WHERE output_id = ?', [copyId, o.id]);
       db.run('INSERT INTO output_vod_overrides (output_id, item_id, state) SELECT ?, item_id, state FROM output_vod_overrides WHERE output_id = ?', [copyId, o.id]);
-      db.run(`INSERT INTO output_category_settings (output_id, category_id, hide_empty, hide_by_guide, hide_unlisted)
-              SELECT ?, category_id, hide_empty, hide_by_guide, hide_unlisted FROM output_category_settings WHERE output_id = ?`, [copyId, o.id]);
+      db.run(`INSERT INTO output_category_settings (output_id, category_id, hide_empty, hide_by_guide, hide_unlisted, unlisted_hours)
+              SELECT ?, category_id, hide_empty, hide_by_guide, hide_unlisted, unlisted_hours FROM output_category_settings WHERE output_id = ?`, [copyId, o.id]);
       return copyId;
     });
     touch();
@@ -900,6 +900,7 @@ export function registerApi(router, ctx) {
       hide_empty: cat.hide_empty,
       hide_by_guide: cat.hide_by_guide,
       hide_unlisted: cat.hide_unlisted,
+      unlisted_hours: cat.unlisted_hours,
       // False when the source's guide has nothing airing now at all (stale or failed refresh).
       guide_current: guide.guideCurrent({ source_id: cat.source_id }),
       rules: cat.channel_rules.map(({ id, action, op, value }) => ({ id, action, op, value })),
@@ -911,7 +912,9 @@ export function registerApi(router, ctx) {
           is_empty_event: isEmptyEvent(r.name, emptyRegexes),
           now_title: guide.titleOf(ch),
           is_guide_placeholder: guide.isPlaceholder(ch),
-          is_unlisted: guide.isUnlisted(ch),
+          is_unlisted: guide.isUnlisted(ch, cat.unlisted_hours),
+          // Nothing on now: the next listing within the look-ahead, if any.
+          next: guide.titleOf(ch) ? null : guide.nextOf(ch),
           ...channelState(r.name, cat.included, cat.channel_rules, override, hiddenReason(cat, ch, emptyRegexes, guide)),
         };
       }),
@@ -1027,14 +1030,17 @@ export function registerApi(router, ctx) {
     const o = mustGet(db, 'outputs', params.id);
     const cat = mustGet(db, 'categories', params.catId);
     const body = await readJson(req);
-    const cur = db.get('SELECT hide_empty, hide_by_guide, hide_unlisted FROM output_category_settings WHERE output_id = ? AND category_id = ?', [o.id, cat.id])
-      || { hide_empty: 0, hide_by_guide: 0, hide_unlisted: 0 };
+    const cur = db.get('SELECT hide_empty, hide_by_guide, hide_unlisted, unlisted_hours FROM output_category_settings WHERE output_id = ? AND category_id = ?', [o.id, cat.id])
+      || { hide_empty: 0, hide_by_guide: 0, hide_unlisted: 0, unlisted_hours: 24 };
     const val = (k) => (body[k] === undefined ? cur[k] : bool(body[k]));
+    // Look-ahead for "nothing listed": 1 hour to a week.
+    const hours = body.unlisted_hours === undefined ? cur.unlisted_hours : int(body.unlisted_hours, 24, 1, 168);
     db.run(
-      `INSERT INTO output_category_settings (output_id, category_id, hide_empty, hide_by_guide, hide_unlisted) VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO output_category_settings (output_id, category_id, hide_empty, hide_by_guide, hide_unlisted, unlisted_hours) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT (output_id, category_id) DO UPDATE SET
-         hide_empty = excluded.hide_empty, hide_by_guide = excluded.hide_by_guide, hide_unlisted = excluded.hide_unlisted`,
-      [o.id, cat.id, val('hide_empty'), val('hide_by_guide'), val('hide_unlisted')],
+         hide_empty = excluded.hide_empty, hide_by_guide = excluded.hide_by_guide, hide_unlisted = excluded.hide_unlisted,
+         unlisted_hours = excluded.unlisted_hours`,
+      [o.id, cat.id, val('hide_empty'), val('hide_by_guide'), val('hide_unlisted'), hours],
     );
     touch();
     sendJson(res, 200, { ok: true });

@@ -69,6 +69,13 @@ async function attempt(fn, okMsg) {
   }
 }
 
+// "7:30 PM" today, "Sat 7:30 PM" on another day.
+function whenLocal(ts) {
+  const d = new Date(ts * 1000);
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`;
+}
+
 function ago(ts) {
   if (!ts) return 'never';
   const s = Math.round(Date.now() / 1000 - ts);
@@ -198,7 +205,7 @@ const minuteTick = () => String(Math.floor(Date.now() / 60000));
 // Why a channel is in or out (besides its category), as shown in lists and search hits.
 const CH_REASONS = {
   manual: 'picked by hand', rule: 'by rule', nomatch: 'no include rule matched', empty: 'empty event',
-  guide: 'nothing on now', unlisted: 'nothing listed now',
+  guide: 'nothing on now', unlisted: 'nothing listed soon',
 };
 
 const OP_LABELS = {
@@ -1459,12 +1466,19 @@ async function outputEditor(main, id) {
           '. Players only notice when they reload the playlist.'),
         h('label', { class: 'check sub' },
           h('input', { type: 'checkbox', disabled: off || !data.hide_by_guide, checked: data.hide_unlisted, onchange: (e) => setOption('hide_unlisted', e.target.checked) }),
-          ' Also hide channels with nothing listed right now',
+          ' Also hide channels with nothing listed in the next ',
+          h('input', {
+            type: 'number', class: 'hours-input', min: 1, max: 168, value: data.unlisted_hours, disabled: off || !data.hide_by_guide,
+            title: 'Hours to look ahead (1 to 168)',
+            onchange: (e) => setOption('unlisted_hours', Math.min(168, Math.max(1, Math.round(Number(e.target.value)) || 24))),
+          }),
+          ' hours',
           h('span', { class: 'meta' }, ` · ${unlistedCount} of ${chans.length}`)),
         h('span', { class: 'hint sub' },
-          'For event channels whose guide stays empty until a game is scheduled. Counts channels that have a guide id but no programme ',
-          '(or a blank title) airing now. Channels without any guide id are never hidden, and if this source\'s guide has nothing airing ',
-          'now on any channel (it ran out or failed to refresh), nothing is hidden this way.'),
+          'For event channels whose guide stays empty until a game is scheduled. A channel stays while anything is airing or starts ',
+          'within that many hours, so players that reload the playlist only now and then still get it in time; it goes when its ',
+          'guide is empty for the whole stretch. Channels without any guide id are never hidden, and if this source\'s guide has ',
+          'nothing airing now on any channel (it ran out or failed to refresh), nothing is hidden this way.'),
         data.hide_unlisted && !data.guide_current
           ? h('span', { class: 'hint sub warn-text' }, 'This source\'s guide has nothing airing now on any channel, so no channels are being hidden as "nothing listed". Check the source\'s guide refresh.')
           : null),
@@ -1485,7 +1499,8 @@ async function outputEditor(main, id) {
           const name = ch.custom_name || ch.name;
           const why = !off && ch.reason !== 'category' ? reason(ch) : '';
           const now = ch.now_title ? h('span', { class: `now-title ${ch.is_guide_placeholder ? 'placeholder' : ''}`, title: `On now: ${ch.now_title}` }, `▸ ${ch.now_title}`)
-            : ch.is_unlisted ? h('span', { class: 'now-title placeholder', title: 'Nothing airing now in the guide' }, '▸ nothing listed') : null;
+            : ch.next ? h('span', { class: 'now-title', title: `Next: ${ch.next.title}, ${whenLocal(ch.next.start)}` }, `next ${whenLocal(ch.next.start)}: ${ch.next.title}`)
+            : ch.is_unlisted ? h('span', { class: 'now-title placeholder', title: `Nothing in the guide for the next ${data.unlisted_hours} hours` }, `▸ nothing in the next ${data.unlisted_hours} h`) : null;
           return h('label', { class: `ch-row ${ch.override && !off ? 'overridden' : ''} ${ch.included ? '' : 'out'}`, 'data-name': `${ch.name}\n${ch.custom_name || ''}`, title: off ? 'Include the category first' : [name, why].filter(Boolean).join('\n') },
             h('input', { type: 'checkbox', disabled: off, checked: ch.included, onchange: (e) => setChannels([ch.id], e.target.checked ? 'include' : 'exclude') }),
             h('span', { class: 'ch-name' }, name),

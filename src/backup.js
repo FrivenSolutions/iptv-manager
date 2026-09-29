@@ -103,6 +103,7 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
         return {
           source: c.source_id, category: c.name,
           hide_empty: !!r.hide_empty, hide_by_guide: !!r.hide_by_guide, hide_unlisted: !!r.hide_unlisted,
+          unlisted_hours: r.unlisted_hours,
         };
       }),
       channel_overrides: chOverrides.filter((r) => r.output_id === o.id && chRef.has(r.channel_id)).map((r) => {
@@ -282,9 +283,10 @@ export function importSettings(db, data) {
         ]);
       }
       for (const x of o.category_options || []) {
-        db.run(`INSERT OR REPLACE INTO output_category_settings (output_id, category_id, hide_empty, hide_by_guide, hide_unlisted)
-                VALUES (?, ?, ?, ?, ?)`, [
+        db.run(`INSERT OR REPLACE INTO output_category_settings (output_id, category_id, hide_empty, hide_by_guide, hide_unlisted, unlisted_hours)
+                VALUES (?, ?, ?, ?, ?, ?)`, [
           r.id, ensureCat(x.source, x.category), !!x.hide_empty, !!x.hide_by_guide, !!x.hide_unlisted,
+          Number.isInteger(x.unlisted_hours) && x.unlisted_hours >= 1 && x.unlisted_hours <= 168 ? x.unlisted_hours : 24,
         ]);
       }
       (o.channel_rules || []).forEach((x, i) => {

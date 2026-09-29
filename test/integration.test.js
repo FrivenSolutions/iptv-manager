@@ -787,7 +787,7 @@ test('hide empty event channels: per-category toggle, editable patterns, backup 
   // Export keeps both the custom patterns and the toggle; a fresh instance reproduces the output.
   const exported = (await api('GET', '/api/export')).data;
   assert.deepEqual(exported.settings.empty_event_patterns, [':\\s*$', '-\\s*$', 'no event\\s*$']);
-  assert.deepEqual(exported.outputs.find((x) => x.token === o.token).category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true, hide_by_guide: false, hide_unlisted: false }]);
+  assert.deepEqual(exported.outputs.find((x) => x.token === o.token).category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true, hide_by_guide: false, hide_unlisted: false, unlisted_hours: 24 }]);
   const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-import2-'));
   const app2 = createApp({ dataDir: dir2, adminPassword: PASSWORD, log: () => {} });
   const base2 = `http://127.0.0.1:${(await app2.start(0, '127.0.0.1')).port}`;
@@ -830,7 +830,7 @@ test('export/import of empty-event settings: defaults, empty list, old files, ba
   let file = (await api('GET', '/api/export')).data;
   assert.equal(file.settings.empty_event_patterns, null);
   const events = file.outputs.find((o) => o.name === 'Events');
-  assert.deepEqual(events.category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true, hide_by_guide: false, hide_unlisted: false }]);
+  assert.deepEqual(events.category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true, hide_by_guide: false, hide_unlisted: false, unlisted_hours: 24 }]);
 
   // 2. The toggle's category does not exist on the new instance until its first refresh;
   //    the import creates it as a placeholder and the toggle applies once channels arrive.
@@ -952,7 +952,7 @@ test('hide channels by guide: title airing now, separate from the name toggle, c
   const file = (await api('GET', '/api/export')).data;
   assert.deepEqual(file.settings.guide_patterns, ['^bills']);
   assert.deepEqual(file.outputs.find((x) => x.token === o.token).category_options,
-    [{ source: xcId, category: 'US| NFL SUNDAY', hide_empty: false, hide_by_guide: true, hide_unlisted: false }]);
+    [{ source: xcId, category: 'US| NFL SUNDAY', hide_empty: false, hide_by_guide: true, hide_unlisted: false, unlisted_hours: 24 }]);
   const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-guide-'));
   const app2 = createApp({ dataDir: dir2, adminPassword: PASSWORD, log: () => {} });
   const base2 = `http://127.0.0.1:${(await app2.start(0, '127.0.0.1')).port}`;
@@ -973,7 +973,7 @@ test('hide channels by guide: title airing now, separate from the name toggle, c
   await api('DELETE', `/api/outputs/${o.id}`);
 });
 
-test('hide channels with nothing listed now: sub-option of the guide toggle, with a stale-guide safety net', async () => {
+test('hide channels with nothing listed in the next N hours: sub-option of the guide toggle, with a stale-guide safety net', async () => {
   xcCats.push({ category_id: '31', category_name: 'US| NBA LEAGUE PASS' });
   xcStreams.push(
     { num: 80, name: 'NBA 01', stream_id: 800, epg_channel_id: 'nba1', category_id: '31' }, // game on now
@@ -982,12 +982,14 @@ test('hide channels with nothing listed now: sub-option of the guide toggle, wit
     { num: 83, name: 'NBA 04', stream_id: 803, epg_channel_id: 'nba4', category_id: '31' }, // guide id unknown to the guide
     { num: 84, name: 'NBA 05', stream_id: 804, epg_channel_id: '', category_id: '31' }, // no guide id at all
     { num: 85, name: 'NBA 06', stream_id: 805, epg_channel_id: 'nba6', category_id: '31' }, // blank title now
+    { num: 86, name: 'NBA 07', stream_id: 806, epg_channel_id: 'nba7', category_id: '31' }, // game the day after tomorrow
   );
   eventGuide.push(
     { id: 'nba1', title: 'Lakers at Celtics' },
     { id: 'nba2', title: 'Knicks at Heat', fromH: 2, toH: 4 },
     { id: 'nba3', channelOnly: true },
     { id: 'nba6', title: '' },
+    { id: 'nba7', title: 'Bulls at Suns', fromH: 30, toH: 33 },
   );
   await api('POST', `/api/sources/${xcId}/refresh`);
   await app.ctx.jobs.idle();
@@ -996,7 +998,7 @@ test('hide channels with nothing listed now: sub-option of the guide toggle, wit
   await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [{ action: 'include', op: 'contains', value: 'nba' }] });
   const cat = (await api('GET', `/api/outputs/${o.id}/categories`)).data.find((c) => c.name === 'US| NBA LEAGUE PASS');
   const names = async () => [...(await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
-  const all = ['NBA 01', 'NBA 02', 'NBA 03', 'NBA 04', 'NBA 05', 'NBA 06'];
+  const all = ['NBA 01', 'NBA 02', 'NBA 03', 'NBA 04', 'NBA 05', 'NBA 06', 'NBA 07'];
 
   // The sub-option does nothing without the guide toggle, and the guide toggle alone hides nothing here.
   await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_unlisted: true });
@@ -1004,20 +1006,37 @@ test('hide channels with nothing listed now: sub-option of the guide toggle, wit
   await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_by_guide: true, hide_unlisted: false });
   assert.deepEqual(await names(), all);
 
+  // Looking 24 hours ahead by default: the game on now, the one tonight, and the channel with no
+  // guide id stay; empty guides, a blank title and the game in 30 hours go.
   await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_unlisted: true });
-  assert.deepEqual(await names(), ['NBA 01', 'NBA 05'], 'only the game on now and the channel with no guide id stay');
-  const view = (await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data;
-  assert.deepEqual([view.hide_by_guide, view.hide_unlisted, view.guide_current], [true, true, true]);
+  assert.deepEqual(await names(), ['NBA 01', 'NBA 02', 'NBA 05']);
+  let view = (await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data;
+  assert.deepEqual([view.hide_by_guide, view.hide_unlisted, view.unlisted_hours, view.guide_current], [true, true, 24, true]);
   assert.deepEqual(view.channels.map((c) => [c.name, c.is_unlisted, c.reason]), [
-    ['NBA 01', false, 'category'], ['NBA 02', true, 'unlisted'], ['NBA 03', true, 'unlisted'],
-    ['NBA 04', true, 'unlisted'], ['NBA 05', false, 'category'], ['NBA 06', true, 'unlisted'],
+    ['NBA 01', false, 'category'], ['NBA 02', false, 'category'], ['NBA 03', true, 'unlisted'],
+    ['NBA 04', true, 'unlisted'], ['NBA 05', false, 'category'], ['NBA 06', true, 'unlisted'], ['NBA 07', true, 'unlisted'],
   ]);
+  // Nothing on now: the next listing within the look-ahead is reported (so it's clear why it stays).
+  const nba2 = view.channels.find((c) => c.name === 'NBA 02');
+  assert.equal(nba2.next.title, 'Knicks at Heat');
+  assert.ok(Math.abs(nba2.next.start - (Date.now() / 1000 + 2 * 3600)) < 120);
+  assert.equal(view.channels.find((c) => c.name === 'NBA 01').next, null, 'on now: no "next"');
+
+  // The look-ahead is per category and changeable: 1 hour drops tonight's game, 48 brings in the later one.
+  await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { unlisted_hours: 1 });
+  assert.deepEqual(await names(), ['NBA 01', 'NBA 05']);
+  await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { unlisted_hours: 48 });
+  assert.deepEqual(await names(), ['NBA 01', 'NBA 02', 'NBA 05', 'NBA 07']);
+  await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { unlisted_hours: 9999 });
+  view = (await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data;
+  assert.equal(view.unlisted_hours, 168, 'at most a week');
+  await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { unlisted_hours: 24 });
 
   // Hand picks still win.
-  const nba2 = view.channels.find((c) => c.name === 'NBA 02');
-  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [nba2.id], state: 'include' });
-  assert.ok((await names()).includes('NBA 02'));
-  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [nba2.id], state: null });
+  const nba3 = view.channels.find((c) => c.name === 'NBA 03');
+  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [nba3.id], state: 'include' });
+  assert.ok((await names()).includes('NBA 03'));
+  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [nba3.id], state: null });
 
   // Safety net: if the source's guide has nothing airing now for any channel (it ran out or
   // failed to refresh), nothing is hidden as "unlisted".
@@ -1031,7 +1050,7 @@ test('hide channels with nothing listed now: sub-option of the guide toggle, wit
   // Backed up with the other switches.
   const file = (await api('GET', '/api/export')).data;
   assert.deepEqual(file.outputs.find((x) => x.token === o.token).category_options,
-    [{ source: xcId, category: 'US| NBA LEAGUE PASS', hide_empty: false, hide_by_guide: true, hide_unlisted: true }]);
+    [{ source: xcId, category: 'US| NBA LEAGUE PASS', hide_empty: false, hide_by_guide: true, hide_unlisted: true, unlisted_hours: 24 }]);
   // Restore the guide for later tests.
   await api('POST', `/api/sources/${xcId}/refresh`);
   await app.ctx.jobs.idle();

@@ -303,11 +303,15 @@ needed, because the output is re-evaluated at least once a minute. A few things 
 - Players only see the change when they reload the playlist (TiviMate on start or its update
   interval, Jellyfin on its guide/tuner refresh).
 - A channel with no listing airing now is not hidden, unless you tick the sub-option **Also hide
-  channels with nothing listed right now**. That option is for providers whose event channels have
-  an empty guide until a game is scheduled. It hides channels that have a guide id but nothing (or
-  a blank title) airing now. Channels without any guide id are never hidden this way. As a safety
-  net, if a source's guide has nothing airing now on any channel (it ran out or failed to refresh),
-  nothing is hidden as "nothing listed" for that source.
+  channels with nothing listed in the next [24] hours**. That option is for providers whose event
+  channels have an empty guide until a game is scheduled. It hides channels that have a guide id
+  but nothing (or a blank title) airing now and nothing starting within that many hours. The hours
+  (1 to 168, 24 by default) are set per category. Looking ahead matters because players only
+  reload the playlist now and then: a game tonight is already in the playlist when the player
+  reloads this morning. Channels without any guide id are never hidden this way. As a safety net,
+  if a source's guide has nothing airing now on any channel (it ran out or failed to refresh),
+  nothing is hidden as "nothing listed" for that source. The expanded category shows each
+  channel's next listing when nothing is on.
 - The expanded category shows what is on now for every channel, even with the toggle off, so you
   can judge the effect first.
 
