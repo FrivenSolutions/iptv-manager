@@ -216,6 +216,7 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 .toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
 .toolbar input[type="search"] { max-width: 320px; }
 .toolbar select { width: auto; }
+.toolbar .hide-excluded { white-space: nowrap; }
 .pager { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); }
 .list-head { padding: 12px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
 .list-head .btn { margin-left: auto; }

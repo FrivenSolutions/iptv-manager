@@ -185,7 +185,12 @@ function outputView(req, ctx, o, withDetail = false) {
       .sort((a, b) => a.sort - b.sort || a.id - b.id);
     view.rules = ctx.db.all('SELECT id, source_id, kind, action, op, value FROM output_rules WHERE output_id = ? ORDER BY sort, id', [o.id]);
     view.name_rules = parseNameRules(o.name_rules);
-    view.xc_logins = ctx.db.all('SELECT id, name, username, password, enabled, created_at, last_used_at FROM output_xc_logins WHERE output_id = ? ORDER BY id', [o.id])
+    // Sorted by name (or username when unnamed), ignoring case.
+    view.xc_logins = ctx.db.all(
+      `SELECT id, name, username, password, enabled, created_at, last_used_at FROM output_xc_logins WHERE output_id = ?
+        ORDER BY LOWER(CASE WHEN name <> '' THEN name ELSE username END), id`,
+      [o.id],
+    )
       .map((l) => ({ ...l, enabled: !!l.enabled }));
   }
   return view;
