@@ -218,7 +218,9 @@ when they are built, from the `.git` folder in the build context. An image built
    **Exclude** on a category to override the rules for it. Expand a category (▸) to filter or
    pick its channels. To find a channel, type part of its name in the search box: categories
    that hold a match show it as a chip, marked ✓ (in the output) or ✕ (with the reason). Click a
-   chip to open its category at that channel.
+   chip to open its category at that channel. Tick **Hide excluded** to see only what is in the
+   output: categories, and the channels or titles inside them. It applies to the Live TV, Movies
+   and Series lists, and your browser remembers it.
 
    **Manage output** (at the bottom of **Connect your apps**) has, in order:
    - **Open playlist** and **Open guide**, to see what the output publishes.

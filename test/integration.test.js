@@ -1514,6 +1514,11 @@ test('extra Xtream Codes logins share an output, and come and go without touchin
   await api('DELETE', `/api/outputs/${other.id}`);
   // Listed with the output, in backups (password only with secrets), not copied by Duplicate.
   assert.deepEqual((await api('GET', `/api/outputs/${outputId}`)).data.xc_logins.map((l) => [l.name, l.username, l.enabled]), [['Mom', 'mom', true]]);
+  // Listed by name (or username when unnamed), ignoring case.
+  const zoe = (await api('POST', `/api/outputs/${outputId}/logins`, { name: 'zoe', username: 'z', password: 'z' })).data;
+  const bob = (await api('POST', `/api/outputs/${outputId}/logins`, { name: '', username: 'Bob', password: 'b' })).data;
+  assert.deepEqual((await api('GET', `/api/outputs/${outputId}`)).data.xc_logins.map((l) => l.name || l.username), ['Bob', 'Mom', 'zoe']);
+  for (const l of [zoe, bob]) await api('DELETE', `/api/outputs/${outputId}/logins/${l.id}`);
   const file = (await api('GET', '/api/export')).data;
   assert.deepEqual(file.outputs.find((x) => x.token === token).xc_logins, [{ name: 'Mom', username: 'mom', password: 'm0m', enabled: true }]);
   assert.equal((await api('GET', '/api/export?secrets=0')).data.outputs.find((x) => x.token === token).xc_logins[0].password, null);
