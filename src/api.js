@@ -8,7 +8,7 @@ import {
   OPS, loadOutput, evaluateCategories, isNewCategory, channelState,
   DEFAULT_EMPTY_EVENT_PATTERNS, emptyEventPatterns, compilePatterns, isEmptyEvent,
   DEFAULT_GUIDE_PATTERNS, guidePatterns, guideHider, hiddenReason,
-  checkNameRules, parseNameRules, nameCleaner,
+  checkNameRules, parseNameRules, nameCleaner, nowTitles,
 } from './filters.js';
 import { rematchSource } from './ingest.js';
 import { JELLYFIN_CATEGORIES, parseJellyfin } from './outputs/epg.js';
@@ -17,6 +17,8 @@ import { computeAlerts } from './alerts.js';
 import { KEEP as AUTO_BACKUP_KEEP } from './autobackup.js';
 import { autoLimit } from './streams.js';
 import { now } from './db.js';
+import { serveWatch } from './stream.js';
+import { clientIp } from './viewers.js';
 
 const UPLOAD_LIMIT = 1024 * 1024 * 1024;
 const IMPORT_LIMIT = 50 * 1024 * 1024;
@@ -302,6 +304,38 @@ export function registerApi(router, ctx) {
   router.get('/api/alerts', (req, res) => sendJson(res, 200, computeAlerts(db)));
   // Who is watching what right now (see viewers.js for what each stream mode lets us see).
   router.get('/api/viewers', (req, res) => sendJson(res, 200, ctx.viewers.list()));
+
+  // --- Watch page: an output's channels, and playing one in the browser.
+  // The format a browser player should ask for: HLS where the provider gives HLS, else MPEG-TS.
+  const watchFormat = (sel, ch) => {
+    if (ch.source_type === 'xc') return sel.output.sources.find((s) => s.id === ch.source_id)?.xc_stream_ext === 'm3u8' ? 'm3u8' : 'ts';
+    return /\.m3u8(\?|$)/i.test(ch.url) ? 'm3u8' : 'ts';
+  };
+  router.get('/api/outputs/:id/lineup', (req, res, { params }) => {
+    const sel = ctx.selection(Number(params.id));
+    if (!sel) throw new HttpError(404, 'Not found');
+    const onNow = nowTitles(db, sel.output.sources);
+    sendJson(res, 200, {
+      paused: !!sel.output.paused,
+      channels: sel.channels.map((ch) => ({
+        id: ch.id, name: ch.name, logo: ch.logo, group: ch.group, chno: ch.chno, source_type: ch.source_type,
+        format: watchFormat(sel, ch),
+        // Xtream Codes accounts serve both; Safari plays HLS by itself.
+        hls_available: ch.source_type === 'xc' || watchFormat(sel, ch) === 'm3u8',
+        now: ch.epg_id ? onNow.get(`${ch.source_id}|${ch.epg_id}`) || null : null,
+      })),
+    });
+  });
+  router.get('/api/outputs/:id/watch/:chId', (req, res, { params, query }) => {
+    const sel = ctx.selection(Number(params.id));
+    const ch = sel?.byId.get(Number(params.chId));
+    if (!ch) throw new HttpError(404, 'Channel is not in this output');
+    const ext = ['ts', 'm3u8'].includes(query.get('format')) ? query.get('format') : watchFormat(sel, ch);
+    return serveWatch(ctx, res, sel.output, ch, ext, {
+      outputId: sel.output.id, output: sel.output.name, who: 'Web player', username: null, ip: clientIp(req),
+      what: ch.name, kind: 'live', source: sel.output.sources.find((s) => s.id === ch.source_id)?.name || null,
+    });
+  });
   router.post('/api/alerts/test', async (req, res) => {
     const { type, url } = ctx.alerts.target;
     if (!type || !url) throw new HttpError(400, 'Save a notification address first');

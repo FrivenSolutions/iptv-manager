@@ -405,6 +405,21 @@ off hides them again; anything already set up keeps working.
   before that apply to live TV. With advanced options off, an output with rules shows one line
   saying so.
 
+### Watch
+
+**Watch** in the top bar plays an output's channels in the browser. Pick the output, then a
+channel from the list, which is grouped by category with what's on now and searchable. Use
+**Full screen** (or double-click the picture), and **‹ Prev** / **Next ›** to flip channels. The
+address of the page names the output and channel, so it can be bookmarked.
+
+Streams always pass through this server here, whatever the output's stream mode, because a
+browser can't play a provider's URLs itself. They count toward the source's stream limit and show
+on the dashboard as "Web player". MPEG-TS plays through [mpegts.js](https://github.com/xqq/mpegts.js),
+HLS through [hls.js](https://github.com/video-dev/hls.js), and on iPhone through Safari's own
+player. Browsers play H.264 or H.265 video with AAC audio, which is what most providers send.
+Channels in MPEG-2 video or with Dolby (AC-3) audio, common on HDHomeRun, need a player app; the
+page says so when a channel can't play.
+
 ### Movies and series
 
 Off by default, in two places:
@@ -524,6 +539,9 @@ Issues and pull requests are welcome. Please run `npm test` before opening a pul
 a test for any behavior you change.
 
 ## Credits
+
+The Watch page plays streams with [mpegts.js](https://github.com/xqq/mpegts.js) and
+[hls.js](https://github.com/video-dev/hls.js), both Apache-2.0 licensed.
 
 The HDHomeRun guide support follows the approach of
 [HDHomeRunEPG-to-XmlTv](https://github.com/IncubusVictim/HDHomeRunEPG-to-XmlTv), reimplemented here

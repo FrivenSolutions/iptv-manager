@@ -41,7 +41,8 @@ const UI_HEADERS = {
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'no-referrer',
   'content-security-policy':
-    "default-src 'self'; img-src * data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+    // media-src/worker-src blob: for the Watch page's player (Media Source Extensions).
+    "default-src 'self'; img-src * data:; style-src 'self'; script-src 'self'; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'none'",
 };
 
 export function createApp({
@@ -150,6 +151,11 @@ export function createApp({
     if (type) statics.set(`/${f}`, { body: fs.readFileSync(path.join(PUBLIC, f)), type });
   }
   statics.set('/', statics.get('/index.html'));
+  // Player libraries for the Watch page, served from the installed packages (loaded only there).
+  for (const [url, file] of [['/vendor/mpegts.js', 'mpegts.js/dist/mpegts.js'], ['/vendor/hls.js', 'hls.js/dist/hls.light.min.js']]) {
+    const p = path.join(ROOT, 'node_modules', file);
+    if (fs.existsSync(p)) statics.set(url, { body: fs.readFileSync(p), type: STATIC_TYPES['.js'] });
+  }
 
   // --- published outputs ---------------------------------------------------
   const byToken = (token) => {
