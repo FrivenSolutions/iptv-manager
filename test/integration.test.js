@@ -1598,7 +1598,14 @@ test('who is watching what: proxy streams start to stop, redirected ones by thei
 test('Watch page: an output\'s lineup, played through this server whatever the output\'s mode', async () => {
   const o = (await api('POST', '/api/outputs', { name: 'Watch me' })).data;
   await api('PUT', `/api/outputs/${o.id}`, { stream_mode: 'redirect', source_ids: [xcId, m3uId], rules: [
-    { action: 'include', op: 'equals', value: 'us| live' }, { action: 'include', op: 'equals', value: 'uk| general' }] });
+    { action: 'include', op: 'equals', value: 'us| live' }, { action: 'include', op: 'equals', value: 'uk| general' },
+    { action: 'include', op: 'equals', value: 'us| news', source_id: xcId }] });
+  // The dashboard's list says what the guide has on now for a live channel.
+  const cnn = (await api('GET', `/api/outputs/${o.id}/lineup`)).data.channels.find((c) => c.name === 'US: CNN HD');
+  await (await fetch(`${base}/api/outputs/${o.id}/watch/${cnn.id}`, { headers: { cookie } })).text();
+  const cnnViewer = (await api('GET', '/api/viewers')).data.find((x) => x.what === 'US: CNN HD');
+  assert.deepEqual([cnnViewer?.program, cnnViewer?.source, cnnViewer?.mode], ['CNN show 0', 'XC', 'proxy']);
+  app.ctx.viewers.entries.clear();
   const lineup = (await api('GET', `/api/outputs/${o.id}/lineup`)).data;
   const live1 = lineup.channels.find((c) => c.name === 'Live 1');
   const bbc = lineup.channels.find((c) => /BBC/.test(c.name));

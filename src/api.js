@@ -303,7 +303,15 @@ export function registerApi(router, ctx) {
   // --- alerts ------------------------------------------------------------------
   router.get('/api/alerts', (req, res) => sendJson(res, 200, computeAlerts(db)));
   // Who is watching what right now (see viewers.js for what each stream mode lets us see).
-  router.get('/api/viewers', (req, res) => sendJson(res, 200, ctx.viewers.list()));
+  // Each live stream also gets what its guide says is on now.
+  router.get('/api/viewers', (req, res) => {
+    const list = ctx.viewers.list();
+    const ids = [...new Set(list.filter((v) => v.epg_id && v.source_id).map((v) => v.source_id))];
+    const onNow = ids.length
+      ? nowTitles(db, db.all(`SELECT id, epg_gen FROM sources WHERE id IN (${ids.map(() => '?').join(',')})`, ids))
+      : new Map();
+    sendJson(res, 200, list.map(({ source_id: sid, epg_id: epg, ...v }) => ({ ...v, program: epg ? onNow.get(`${sid}|${epg}`) || null : null })));
+  });
 
   // --- Watch page: an output's channels, and playing one in the browser.
   // The format a browser player should ask for: HLS where the provider gives HLS, else MPEG-TS.
@@ -334,6 +342,7 @@ export function registerApi(router, ctx) {
     return serveWatch(ctx, res, sel.output, ch, ext, {
       outputId: sel.output.id, output: sel.output.name, who: 'Web player', username: null, ip: clientIp(req),
       what: ch.name, kind: 'live', source: sel.output.sources.find((s) => s.id === ch.source_id)?.name || null,
+      sourceId: ch.source_id, epgId: ch.epg_id,
     });
   });
   router.post('/api/alerts/test', async (req, res) => {

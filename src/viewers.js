@@ -4,12 +4,13 @@
 // - Proxy: every stream passes through, so a viewer is listed from start to stop (TS and movies
 //   while their connection is open; HLS while its playlist or segments keep being fetched).
 // - Redirect (and Direct over the Xtream Codes login, which works the same way): only the start.
-//   The last thing each device started is listed, marked as such, until it starts something else.
+//   The last thing each device started is listed apart, as "recently started", for an hour or
+//   until it starts something else.
 // - Direct through the M3U playlist: players never contact this server, so nothing is seen.
 
-const ENDED_GRACE_MS = 15_000; // players reopen connections when seeking or switching quality
+const ENDED_GRACE_MS = 10_000; // players reopen connections when seeking or switching quality
 const HLS_IDLE_MS = 30_000;
-const REDIRECT_KEEP_MS = 4 * 3600_000;
+const REDIRECT_KEEP_MS = 3600_000;
 
 /** The address a request came from (the first proxy hop's client, when behind a reverse proxy). */
 export function clientIp(req) {
@@ -90,6 +91,9 @@ export class Viewers {
       kind: e.kind,
       what: e.what,
       source: e.source || null,
+      // For live channels: where the guide's "on now" comes from.
+      source_id: e.sourceId ?? null,
+      epg_id: e.epgId ?? null,
       started: Math.floor(e.started / 1000),
       ending: e.mode === 'proxy' && e.open === 0,
     }));

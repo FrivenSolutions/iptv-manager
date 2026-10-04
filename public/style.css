@@ -446,6 +446,10 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 .watch-who b, .watch-what .strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .watch-what { min-width: 0; }
 .watch-list:empty { display: none; }
+.watch-program { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.started { margin-top: 14px; }
+.started .section-head { flex-wrap: wrap; margin-bottom: 6px; }
+.started h3 { margin: 0; }
 @media (max-width: 640px) {
   .watch-row { grid-template-columns: minmax(0, 1fr) auto; }
   .watch-row .watch-what { grid-column: 1 / -1; grid-row: 2; }
