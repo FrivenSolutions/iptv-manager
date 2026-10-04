@@ -162,8 +162,7 @@ let routeSeq = 0;
 function poll(fn, ms) {
   const seq = routeSeq;
   let busy = false;
-  const t = setInterval(async () => {
-    if (seq !== routeSeq) return clearInterval(t);
+  const tick = async () => {
     if (document.hidden || busy || document.querySelector('.modal-bg')) return;
     busy = true;
     try {
@@ -173,6 +172,17 @@ function poll(fn, ms) {
     } finally {
       busy = false;
     }
+  };
+  // Paused while the tab is hidden; caught up as soon as it is shown again.
+  const onShow = () => { if (seq === routeSeq && !document.hidden) tick(); };
+  document.addEventListener('visibilitychange', onShow);
+  const t = setInterval(() => {
+    if (seq !== routeSeq) {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onShow);
+      return;
+    }
+    tick();
   }, ms);
 }
 
@@ -492,25 +502,36 @@ async function dashboard(main) {
   const outSection = h('section', null, h('h2', null, 'Outputs'), outGrid, noOutputs);
 
   const alertBox = h('div', { class: 'alerts' });
-  // Who is watching what: proxied streams from start to stop, redirected ones by their start.
+  // Who is watching what: proxied streams from start to stop (Watching now), and what redirected
+  // ones started (Recently started: the player talks to the provider after that). Refreshed on its
+  // own, every 2 seconds, apart from the rest of the dashboard.
   const watchList = h('div', { class: 'watch-list' });
   const watchCount = h('span', { class: 'meta' });
-  const watchEmpty = h('p', { class: 'meta pad' }, 'Nobody is watching right now.');
+  const watchEmpty = h('p', { class: 'meta pad' }, 'Nobody is watching through a Proxy output right now.');
+  const startedList = h('div', { class: 'watch-list' });
+  const startedSection = h('div', { class: 'started' },
+    h('div', { class: 'section-head' }, h('h3', null, 'Recently started'),
+      h('span', { class: 'meta' }, 'through Redirect or Direct outputs: only the start is seen; dropped after an hour or when that device starts something else')),
+    h('div', { class: 'card flush' }, startedList));
   const watchSection = h('section', null,
     h('div', { class: 'section-head' }, h('h2', null, 'Watching now'), watchCount),
     h('div', { class: 'card flush' }, watchList, watchEmpty),
-    h('p', { class: 'hint' },
-      'Outputs set to Proxy show each stream from start to stop. Redirect (and Direct over an Xtream Codes login) only shows what each ',
-      'device last started, since the player talks to the provider after that. Direct M3U playlists never reach this server.'));
+    startedSection,
+    h('p', { class: 'hint' }, 'Only outputs set to Proxy show each stream from start to stop. Direct M3U playlists never reach this server.'));
+  const updateViewers = async () => {
+    const viewers = await api('GET', '/api/viewers');
+    const watching = viewers.filter((v) => v.mode === 'proxy');
+    const started = viewers.filter((v) => v.mode !== 'proxy');
+    watchEmpty.hidden = watching.length > 0;
+    watchCount.textContent = watching.length ? `${watching.length} stream${watching.length === 1 ? '' : 's'}` : '';
+    syncList(watchList, watching, (v) => v.key, watchRow, minuteTick);
+    startedSection.hidden = !started.length;
+    syncList(startedList, started, (v) => v.key, watchRow, minuteTick);
+  };
   let alertSig = '';
   const update = async () => {
-    const [sources, outputs, alerts, viewers] = await Promise.all([
-      api('GET', '/api/sources'), api('GET', '/api/outputs'), api('GET', '/api/alerts'), api('GET', '/api/viewers'),
-    ]);
+    const [sources, outputs, alerts] = await Promise.all([api('GET', '/api/sources'), api('GET', '/api/outputs'), api('GET', '/api/alerts')]);
     watchSection.hidden = !sources.length;
-    watchEmpty.hidden = viewers.length > 0;
-    watchCount.textContent = viewers.length ? `${viewers.length} stream${viewers.length === 1 ? '' : 's'}` : '';
-    syncList(watchList, viewers, (v) => v.key, watchRow, minuteTick);
     // Only redraw the alert strip when it changed, so polling never makes it flicker.
     const sig = JSON.stringify(alerts);
     if (sig !== alertSig) {
@@ -525,9 +546,10 @@ async function dashboard(main) {
     syncList(srcGrid, sources, (s) => s.id, sourceCard, minuteTick);
     syncList(outGrid, outputs, (o) => o.id, outputCard);
   };
-  await update();
+  await Promise.all([update(), updateViewers()]);
   fill(main, h('div', { class: 'page-head' }, h('h1', null, 'Dashboard')), alertBox, getStarted, watchSection, srcSection, outSection);
   poll(update, 3000);
+  poll(updateViewers, 2000);
 }
 
 function sourceCard(s) {
@@ -552,6 +574,7 @@ function watchRow(v) {
       h('span', { class: 'meta' }, v.ip)),
     h('div', { class: 'watch-what' },
       badge(KIND_LABELS[v.kind] || v.kind, 'muted'), ' ', h('span', { class: 'strong' }, v.what),
+      v.program ? h('div', { class: 'watch-program', title: `On now: ${v.program}` }, `▸ ${v.program}`) : null,
       h('div', { class: 'meta' },
         h('a', { href: `#/outputs/${v.output_id}` }, v.output), v.source ? ` · ${v.source}` : '',
         ` · ${v.mode === 'redirect' ? 'started' : 'since'} ${ago(v.started)}`)),

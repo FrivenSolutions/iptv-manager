@@ -220,11 +220,12 @@ export function createApp({
   const whoOf = (username) => (username
     ? db.get('SELECT name FROM output_xc_logins WHERE username = ?', [String(username)])?.name || String(username)
     : 'Playlist link');
-  const viewerOf = (req, sel, username, what, kind, sourceId) => ({
+  const viewerOf = (req, sel, username, what, kind, sourceId, epgId = null) => ({
     outputId: sel.output.id, output: sel.output.name, who: whoOf(username), username: username || null,
     ip: clientIp(req), what, kind, source: sel.output.sources.find((s) => s.id === sourceId)?.name || null,
+    sourceId, epgId,
   });
-  const liveViewer = (req, sel, ch, username = null) => viewerOf(req, sel, username, ch.name, 'live', ch.source_id);
+  const liveViewer = (req, sel, ch, username = null) => viewerOf(req, sel, username, ch.name, 'live', ch.source_id, ch.epg_id);
 
   router.get('/s/:token/seg/:id', (req, res, { params, query }) => {
     const sel = byToken(params.token);
