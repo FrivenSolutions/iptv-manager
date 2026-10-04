@@ -402,6 +402,9 @@ function ensureShell(view) {
 
 // Views render into a detached <main> and are swapped in only when complete,
 // so navigating never shows a blank page in between.
+// The page last shown: a new page starts at the top, a redraw of the same one keeps its place.
+let shownHash = null;
+
 async function route() {
   const seq = ++routeSeq;
   for (const c of cleanups.splice(0)) c();
@@ -439,6 +442,8 @@ async function route() {
   ensureShell(view);
   shell.main.replaceWith(main);
   shell.main = main;
+  if (location.hash !== shownHash) window.scrollTo(0, 0);
+  shownHash = location.hash;
   refreshUpdateBadge();
 }
 
