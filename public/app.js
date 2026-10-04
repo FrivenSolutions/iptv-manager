@@ -386,7 +386,7 @@ let shell = null; // { header, main, links } while logged in
 
 function ensureShell(view) {
   if (!shell || !shell.header.isConnected) {
-    const links = [['dashboard', 'Dashboard'], ['sources', 'Sources'], ['outputs', 'Outputs'], ['settings', 'Settings']]
+    const links = [['dashboard', 'Dashboard'], ['sources', 'Sources'], ['outputs', 'Outputs'], ['watch', 'Watch'], ['settings', 'Settings']]
       .map(([v, label]) => h('a', { href: `#/${v}`, 'data-view': v }, label));
     const header = h('header', { class: 'topbar' },
       h('a', { class: 'brand', href: '#/' }, h('img', { src: '/favicon.svg', alt: '' }), 'IPTV Manager'),
@@ -428,6 +428,7 @@ async function route() {
     else if (view === 'sources') await sourcesView(main);
     else if (view === 'outputs' && parts[1]) await outputEditor(main, Number(parts[1]));
     else if (view === 'outputs') await outputsView(main);
+    else if (view === 'watch') await watchView(main, Number(parts[1]) || null, Number(parts[2]) || null);
     else if (view === 'settings') await settingsView(main);
     else await dashboard(main);
   } catch (e) {
@@ -2031,6 +2032,193 @@ async function outputEditor(main, id) {
     editorEl,
     saveBar);
   drawCats();
+}
+
+// ----------------------------------------------------------------- watch --
+
+// Player libraries, loaded on first use (only this page needs them).
+function loadScript(src, global) {
+  if (window[global]) return Promise.resolve(window[global]);
+  return new Promise((resolve, reject) => {
+    const s = h('script', { src });
+    s.onload = () => (window[global] ? resolve(window[global]) : reject(new Error('The player did not load')));
+    s.onerror = () => reject(new Error('The player could not be loaded'));
+    document.head.append(s);
+  });
+}
+
+const CODEC_HINT = 'Browsers play H.264 or H.265 video with AAC audio. Channels in MPEG-2 video or with Dolby (AC-3) audio, '
+  + 'common on HDHomeRun, need a player app such as VLC, TiviMate or Jellyfin.';
+
+async function watchView(main, outputId, channelId) {
+  const outputs = await api('GET', '/api/outputs');
+  if (!outputs.length) {
+    fill(main, h('div', { class: 'page-head' }, h('h1', null, 'Watch')),
+      h('div', { class: 'card empty' }, h('p', null, 'Create an output first; its channels play here.'), h('a', { class: 'btn primary', href: '#/outputs' }, 'Outputs')));
+    return;
+  }
+  let remembered = null;
+  try {
+    remembered = Number(localStorage.getItem('iptvm.watchOutput')) || null;
+  } catch {}
+  let oid = [outputId, remembered, outputs[0].id].find((x) => x && outputs.some((o) => o.id === x));
+  let lineup = { channels: [] };
+  let current = null;
+  let player = null;
+  let q = '';
+
+  const video = h('video', { class: 'watch-video', controls: true, playsinline: true, preload: 'none' });
+  const stage = h('div', { class: 'watch-stage' }, video);
+  const nowLine = h('div', { class: 'watch-now' }, h('span', { class: 'meta' }, 'Pick a channel to start watching.'));
+  const message = h('div', { class: 'watch-message', hidden: true });
+  const list = h('div', { class: 'watch-list-body' });
+
+  const showMessage = (text, kind = 'error') => {
+    message.className = `watch-message ${kind}`;
+    fill(message, ...[].concat(text));
+    message.hidden = !text;
+  };
+  const stop = () => {
+    if (player) {
+      try {
+        player.destroy();
+      } catch {}
+      player = null;
+    }
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+  };
+  cleanups.push(stop);
+
+  // Why a stream failed, from the server's answer where there is one.
+  const explain = async (url) => {
+    try {
+      const r = await fetch(url, { method: 'GET', headers: { range: 'bytes=0-0' } });
+      if (r.status === 503) return (await r.text()) || 'All streams for this source are in use.';
+      if (r.status === 404) return 'This channel is no longer in the output.';
+      if (!r.ok) return `The provider did not send the stream (HTTP ${r.status}).`;
+      r.body?.cancel().catch(() => {});
+    } catch {}
+    return null;
+  };
+  const failed = async (url, detail) => {
+    const why = await explain(url);
+    showMessage(why ? [why] : [h('b', null, 'This channel could not play in the browser. '), CODEC_HINT, detail ? h('div', { class: 'meta' }, detail) : null]);
+  };
+
+  const play = async (ch) => {
+    stop();
+    current = ch;
+    showMessage(null);
+    try {
+      history.replaceState(null, '', `#/watch/${oid}/${ch.id}`);
+    } catch {}
+    fill(nowLine, h('b', null, ch.chno ? `${ch.chno} · ${ch.name}` : ch.name), ch.now ? h('span', { class: 'meta' }, ` · on now: ${ch.now}`) : null);
+    drawList();
+    const base = `/api/outputs/${oid}/watch/${ch.id}`;
+    // The browser's own HLS player only where the libraries can't run (iPhone: no Media Source).
+    const nativeHls = !window.MediaSource && !!video.canPlayType('application/vnd.apple.mpegurl');
+    try {
+      if (nativeHls && ch.hls_available) {
+        // Safari and iPhone: their own HLS player.
+        video.src = `${base}?format=m3u8`;
+        video.onerror = () => failed(video.src, video.error?.message);
+      } else if (ch.format === 'm3u8') {
+        const Hls = await loadScript('/vendor/hls.js', 'Hls');
+        if (current !== ch) return;
+        if (!Hls.isSupported()) throw new Error('This browser cannot play HLS streams.');
+        const hls = new Hls({ enableWorker: true });
+        hls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) failed(`${base}?format=m3u8`, d.details); });
+        hls.loadSource(`${base}?format=m3u8`);
+        hls.attachMedia(video);
+        player = { destroy: () => hls.destroy() };
+      } else {
+        const mpegts = await loadScript('/vendor/mpegts.js', 'mpegts');
+        if (current !== ch) return;
+        if (!mpegts.getFeatureList().mseLivePlayback) throw new Error('This browser cannot play live MPEG-TS streams.');
+        const p = mpegts.createPlayer({ type: 'mpegts', isLive: true, url: `${base}?format=ts` },
+          { enableWorker: false, lazyLoad: false, liveBufferLatencyChasing: true });
+        p.on(mpegts.Events.ERROR, (type, detail, info) => failed(`${base}?format=ts`, [type, detail, info?.msg].filter(Boolean).join(': ')));
+        p.attachMediaElement(video);
+        p.load();
+        player = { destroy: () => { p.pause(); p.unload(); p.detachMediaElement(); p.destroy(); } };
+      }
+      await video.play().catch(() => {});
+    } catch (e) {
+      showMessage([h('b', null, e.message), ' ', CODEC_HINT]);
+    }
+  };
+
+  const step = (d) => {
+    const shown = filtered();
+    if (!shown.length) return;
+    const i = current ? shown.findIndex((c) => c.id === current.id) : -1;
+    play(shown[(i + d + shown.length) % shown.length]);
+  };
+  const fullscreen = () => {
+    if (document.fullscreenElement) return document.exitFullscreen();
+    if (stage.requestFullscreen) return stage.requestFullscreen().catch(() => {});
+    if (video.webkitEnterFullscreen) video.webkitEnterFullscreen(); // iPhone
+  };
+  video.addEventListener('dblclick', fullscreen);
+
+  const filtered = () => {
+    const t = q.trim().toLowerCase();
+    return lineup.channels.filter((c) => !t || c.name.toLowerCase().includes(t) || (c.group || '').toLowerCase().includes(t) || (c.now || '').toLowerCase().includes(t));
+  };
+  const drawList = () => {
+    const rows = filtered();
+    const out = [];
+    let group = null;
+    for (const c of rows) {
+      if (c.group !== group) {
+        group = c.group;
+        out.push(h('div', { class: 'watch-group' }, group || 'Other'));
+      }
+      out.push(h('button', { class: `watch-ch ${current?.id === c.id ? 'on' : ''}`, onclick: () => play(c) },
+        c.logo ? h('img', { src: c.logo, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }) : h('span', { class: 'watch-logo' }),
+        h('span', { class: 'watch-ch-text' },
+          h('span', { class: 'watch-ch-name' }, c.chno ? h('span', { class: 'meta' }, `${c.chno} `) : null, c.name),
+          c.now ? h('span', { class: 'meta watch-ch-now' }, c.now) : null)));
+    }
+    fill(list, ...out, rows.length ? null : h('p', { class: 'meta pad' }, lineup.channels.length ? 'No channels match.' : 'This output has no channels.'));
+  };
+
+  const loadOutput = async () => {
+    stop();
+    current = null;
+    showMessage(null);
+    fill(nowLine, h('span', { class: 'meta' }, 'Pick a channel to start watching.'));
+    try {
+      localStorage.setItem('iptvm.watchOutput', String(oid));
+    } catch {}
+    lineup = await api('GET', `/api/outputs/${oid}/lineup`);
+    drawList();
+    if (lineup.paused) showMessage('This output is paused; resume it under Manage output to watch.', 'warn');
+  };
+
+  const select = h('select', { class: 'watch-output', title: 'Output', onchange: async (e) => { oid = Number(e.target.value); try { history.replaceState(null, '', `#/watch/${oid}`); } catch {} await loadOutput(); } },
+    outputs.map((o) => h('option', { value: o.id, selected: o.id === oid }, o.name)));
+  const search = h('input', { type: 'search', placeholder: 'Search channels or what\'s on', oninput: (e) => { q = e.target.value; drawList(); } });
+
+  await loadOutput();
+  fill(main,
+    h('div', { class: 'page-head' }, h('h1', null, 'Watch'), select),
+    h('div', { class: 'watch' },
+      h('section', { class: 'card watch-player' },
+        stage,
+        h('div', { class: 'watch-bar' },
+          nowLine,
+          h('span', { class: 'row' },
+            h('button', { class: 'btn small', title: 'Previous channel', onclick: () => step(-1) }, '‹ Prev'),
+            h('button', { class: 'btn small', title: 'Next channel', onclick: () => step(1) }, 'Next ›'),
+            h('button', { class: 'btn small', title: 'Full screen (or double-click the picture)', onclick: fullscreen }, 'Full screen'),
+            h('button', { class: 'btn small', onclick: () => { stop(); current = null; drawList(); fill(nowLine, h('span', { class: 'meta' }, 'Stopped.')); } }, 'Stop'))),
+        message),
+      h('section', { class: 'card flush watch-channels' }, h('div', { class: 'pad' }, search), list)));
+  const start = channelId && lineup.channels.find((c) => c.id === channelId);
+  if (start) play(start);
 }
 
 // --------------------------------------------------------------- settings --

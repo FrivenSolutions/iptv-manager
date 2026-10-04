@@ -451,6 +451,34 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
   .watch-row .watch-what { grid-column: 1 / -1; grid-row: 2; }
 }
 
+/* Watch: the player beside the channel list (stacked on narrow screens). */
+.watch-output { width: auto; max-width: 320px; }
+.watch { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+.watch > * { min-width: 0; }
+.watch-player { padding: 0; overflow: hidden; }
+.watch-stage { background: #000; aspect-ratio: 16 / 9; display: flex; }
+.watch-stage:fullscreen { aspect-ratio: auto; }
+.watch-video { width: 100%; height: 100%; background: #000; }
+.watch-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 12px 16px; }
+.watch-now { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 200px; }
+.watch-message { margin: 0 16px 14px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--error); background: var(--error-soft); color: var(--text); font-size: 13.5px; }
+.watch-message.warn { border-color: var(--warn); background: var(--warn-soft); }
+.watch-channels { position: sticky; top: 72px; max-height: calc(100vh - 90px); display: flex; flex-direction: column; }
+.watch-channels .pad input { width: 100%; }
+.watch-list-body { overflow-y: auto; }
+.watch-group { position: sticky; top: 0; padding: 6px 14px; font-size: 12px; font-weight: 600; color: var(--muted); background: var(--panel-2); border-bottom: 1px solid var(--border); }
+.watch-ch { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 14px; border: 0; border-bottom: 1px solid var(--border); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.watch-ch:hover { background: var(--panel-2); }
+.watch-ch.on { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.watch-ch img, .watch-logo { width: 40px; height: 28px; object-fit: contain; flex: none; }
+.watch-ch-text { display: flex; flex-direction: column; min-width: 0; }
+.watch-ch-name, .watch-ch-now { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.watch-ch-now { font-size: 12px; }
+@media (max-width: 1100px) {
+  .watch { grid-template-columns: 1fr; }
+  .watch-channels { position: static; max-height: 60vh; }
+}
+
 /* "Manage output": look, keep up to date, then the disruptive ones, a row each. */
 .manage-rows { display: flex; flex-direction: column; gap: 8px; }
 /* Each row fills the width: its buttons share it equally (halves, then thirds). */

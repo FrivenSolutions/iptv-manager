@@ -148,6 +148,14 @@ export async function serveVod(ctx, req, res, output, target, viewer = null) {
   }
 }
 
+/**
+ * The admin's Watch page. Always through this server, whatever the output's mode: a browser can't
+ * play the provider's URLs itself (no CORS, often plain http). Counts like any proxied stream.
+ */
+export function serveWatch(ctx, res, output, ch, ext, viewer) {
+  return proxy(ctx, res, upstreamUrl(ch, ext), output, ch, viewer);
+}
+
 /** Serve a channel according to the output's stream mode. */
 export async function serveChannel(ctx, res, output, ch, ext, viewer = null) {
   const url = upstreamUrl(ch, ext);

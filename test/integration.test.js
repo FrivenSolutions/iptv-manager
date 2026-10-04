@@ -1595,6 +1595,40 @@ test('who is watching what: proxy streams start to stop, redirected ones by thei
   app.ctx.viewers.entries.clear();
 });
 
+test('Watch page: an output\'s lineup, played through this server whatever the output\'s mode', async () => {
+  const o = (await api('POST', '/api/outputs', { name: 'Watch me' })).data;
+  await api('PUT', `/api/outputs/${o.id}`, { stream_mode: 'redirect', source_ids: [xcId, m3uId], rules: [
+    { action: 'include', op: 'equals', value: 'us| live' }, { action: 'include', op: 'equals', value: 'uk| general' }] });
+  const lineup = (await api('GET', `/api/outputs/${o.id}/lineup`)).data;
+  const live1 = lineup.channels.find((c) => c.name === 'Live 1');
+  const bbc = lineup.channels.find((c) => /BBC/.test(c.name));
+  assert.deepEqual([live1.format, live1.hls_available, live1.group], ['ts', true, 'US| LIVE']);
+  assert.deepEqual([bbc.format, bbc.hls_available], ['m3u8', true]);
+  assert.equal(lineup.paused, false);
+
+  // A redirect output still streams through this server here, and the player shows as a viewer.
+  const ac = new AbortController();
+  const r = await fetch(`${base}/api/outputs/${o.id}/watch/${live1.id}`, { headers: { cookie }, signal: ac.signal });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('content-type'), 'video/mp2t');
+  const reader = r.body.getReader();
+  assert.match(new TextDecoder().decode((await reader.read()).value), /chunk-950;/);
+  const v = (await api('GET', '/api/viewers')).data.find((x) => x.who === 'Web player');
+  assert.deepEqual([v?.what, v?.mode, v?.output], ['Live 1', 'proxy', 'Watch me']);
+  ac.abort();
+  reader.cancel().catch(() => {});
+
+  // HLS channels come back as a playlist pointing at this server.
+  const pl = await (await fetch(`${base}/api/outputs/${o.id}/watch/${bbc.id}?format=m3u8`, { headers: { cookie } })).text();
+  assert.match(pl, /^#EXTM3U/);
+  assert.ok(pl.split('\n').some((l) => l.startsWith('/s/')));
+  // Only for the logged-in admin.
+  assert.equal((await fetch(`${base}/api/outputs/${o.id}/watch/${live1.id}`)).status, 401);
+  assert.equal((await fetch(`${base}/api/outputs/${o.id}/watch/999999`, { headers: { cookie } })).status, 404);
+  await api('DELETE', `/api/outputs/${o.id}`);
+  app.ctx.viewers.entries.clear();
+});
+
 test('pausing an output stops its URLs and every login until it is resumed; refreshing its sources', async () => {
   const pa = (u, p) => fetch(`${base}/player_api.php?username=${u}&password=${p}`).then((r) => r.json());
   const extra = (await api('POST', `/api/outputs/${outputId}/logins`, { username: 'guest', password: 'g' })).data;
