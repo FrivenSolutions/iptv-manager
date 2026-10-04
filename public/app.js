@@ -2130,9 +2130,15 @@ async function watchView(main, outputId, channelId) {
     } catch {}
     return null;
   };
-  const failed = async (url, detail) => {
-    const why = await explain(url);
-    showMessage(why ? [why] : [h('b', null, 'This channel could not play in the browser. '), CODEC_HINT, detail ? h('div', { class: 'meta' }, detail) : null]);
+  // kind: 'media' (the browser can't decode it), 'network' (the stream didn't arrive), or other.
+  // The player's own words go underneath, to tell what happened.
+  const failed = async (url, kind, detail) => {
+    const why = kind === 'media' ? null : await explain(url);
+    const more = detail ? h('div', { class: 'meta' }, `Details: ${detail}`) : null;
+    if (why) return showMessage([why, more]);
+    if (kind === 'media') return showMessage([h('b', null, 'This browser can\'t decode this channel. '), CODEC_HINT, more]);
+    if (kind === 'network') return showMessage([h('b', null, 'The stream stopped arriving. '), 'Try again, or check the source on the Sources page.', more]);
+    showMessage([h('b', null, 'Playback failed. '), 'If it keeps happening, the details below say why.', more]);
   };
 
   const play = async (ch) => {
@@ -2151,13 +2157,22 @@ async function watchView(main, outputId, channelId) {
       if (nativeHls && ch.hls_available) {
         // Safari and iPhone: their own HLS player.
         video.src = `${base}?format=m3u8`;
-        video.onerror = () => failed(video.src, video.error?.message);
+        video.onerror = () => {
+          const code = video.error?.code;
+          if (code === 1) return; // aborted (switching channels)
+          // 3: couldn't decode; 4: format not supported (or the address failed, which explain() tells apart).
+          failed(video.src, code === 2 ? 'network' : code === 3 ? 'media' : 'other', [`MediaError ${code}`, video.error?.message].filter(Boolean).join(': '));
+        };
       } else if (ch.format === 'm3u8') {
         const Hls = await loadScript('/vendor/hls.js', 'Hls');
         if (current !== ch) return;
         if (!Hls.isSupported()) throw new Error('This browser cannot play HLS streams.');
         const hls = new Hls({ enableWorker: true });
-        hls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) failed(`${base}?format=m3u8`, d.details); });
+        hls.on(Hls.Events.ERROR, (e, d) => {
+          if (!d.fatal) return;
+          const kind = d.type === Hls.ErrorTypes.MEDIA_ERROR ? 'media' : d.type === Hls.ErrorTypes.NETWORK_ERROR ? 'network' : 'other';
+          failed(`${base}?format=m3u8`, kind, [d.type, d.details, d.reason].filter(Boolean).join(': '));
+        });
         hls.loadSource(`${base}?format=m3u8`);
         hls.attachMedia(video);
         player = { destroy: () => hls.destroy() };
@@ -2167,14 +2182,17 @@ async function watchView(main, outputId, channelId) {
         if (!mpegts.getFeatureList().mseLivePlayback) throw new Error('This browser cannot play live MPEG-TS streams.');
         const p = mpegts.createPlayer({ type: 'mpegts', isLive: true, url: `${base}?format=ts` },
           { enableWorker: false, lazyLoad: false, liveBufferLatencyChasing: true });
-        p.on(mpegts.Events.ERROR, (type, detail, info) => failed(`${base}?format=ts`, [type, detail, info?.msg].filter(Boolean).join(': ')));
+        p.on(mpegts.Events.ERROR, (type, detail, info) => {
+          const kind = type === mpegts.ErrorTypes.MEDIA_ERROR ? 'media' : type === mpegts.ErrorTypes.NETWORK_ERROR ? 'network' : 'other';
+          failed(`${base}?format=ts`, kind, [type, detail, info?.msg].filter(Boolean).join(': '));
+        });
         p.attachMediaElement(video);
         p.load();
         player = { destroy: () => { p.pause(); p.unload(); p.detachMediaElement(); p.destroy(); } };
       }
       await video.play().catch(() => {});
     } catch (e) {
-      showMessage([h('b', null, e.message), ' ', CODEC_HINT]);
+      showMessage([h('b', null, e.message), ' Try another browser, or a player app such as VLC or TiviMate.']);
     }
   };
 
