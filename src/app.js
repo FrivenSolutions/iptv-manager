@@ -49,6 +49,7 @@ export function createApp({
   dataDir, adminPassword = '', log = defaultLog, hdhrApiBase = HDHR_API,
   updateApiBase = 'https://api.github.com', updateRepo = process.env.IPTV_UPDATE_REPO || DEFAULT_UPDATE_REPO,
   updateCheckDelayMs = 60_000, appCommit, webUpdatePathUnit, autoBackupDelayMs = 2 * 60_000,
+  disableTwoFactor = false,
 } = {}) {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.rmSync(path.join(dataDir, 'tmp'), { recursive: true, force: true });
@@ -57,6 +58,11 @@ export function createApp({
   if (!db.getSetting('secret')) db.setSetting('secret', randomToken(32));
   // ADMIN_PASSWORD is applied on every start, which doubles as password recovery.
   if (adminPassword) db.setSetting('admin_hash', hashPassword(adminPassword));
+  // DISABLE_2FA=1: the way back in after losing the authenticator and the recovery codes.
+  if (disableTwoFactor && db.getSetting('totp_secret')) {
+    for (const k of ['totp_secret', 'totp_last_step', 'totp_recovery', 'totp_pending']) db.setSetting(k, null);
+    log('Two-factor sign-in turned off (DISABLE_2FA is set; remove it again)');
+  }
 
   let version = 1;
   const selections = new Map();

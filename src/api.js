@@ -18,6 +18,7 @@ import { KEEP as AUTO_BACKUP_KEEP } from './autobackup.js';
 import { autoLimit } from './streams.js';
 import { now } from './db.js';
 import { serveWatch } from './stream.js';
+import { newSecret, checkCode, otpauthUri, qrSvg, newRecoveryCodes, useRecoveryCode } from './totp.js';
 import { clientIp } from './viewers.js';
 
 const UPLOAD_LIMIT = 1024 * 1024 * 1024;
@@ -219,15 +220,48 @@ export function registerApi(router, ctx) {
     sendJson(res, 200, { ok: true });
   });
 
+  // --- two-factor sign-in (TOTP). Settings: totp_secret (on when set), totp_last_step (a code
+  // works once), totp_recovery (hashes of unused recovery codes), totp_pending (during setup).
+  const twoFactor = () => {
+    const secret = db.getSetting('totp_secret');
+    if (!secret) return null;
+    let recovery = [];
+    try {
+      recovery = JSON.parse(db.getSetting('totp_recovery') || '[]');
+    } catch {}
+    return { secret, last: Number(db.getSetting('totp_last_step') ?? -1), recovery };
+  };
+  /** True if code is a fresh authenticator code or an unused recovery code (which is then used up). */
+  const useSecondFactor = (code) => {
+    const tf = twoFactor();
+    if (!tf) return true;
+    const step = checkCode(tf.secret, code, tf.last);
+    if (step != null) {
+      db.setSetting('totp_last_step', step);
+      return true;
+    }
+    const left = useRecoveryCode(tf.recovery, code);
+    if (!left) return false;
+    db.setSetting('totp_recovery', JSON.stringify(left));
+    ctx.log('Signed in with a two-factor recovery code');
+    return true;
+  };
+
   router.post('/api/login', async (req, res) => {
     const ip = req.socket.remoteAddress || '';
     const f = failures.get(ip);
     if (f && f.count >= LOGIN_LOCK_AFTER && f.until > Date.now()) throw new HttpError(429, 'Too many attempts; wait a minute');
-    const { password } = await readJson(req);
-    if (!verifyPassword(password || '', db.getSetting('admin_hash'))) {
+    const fail = (message) => {
       const n = (f && f.until > Date.now() ? f.count : 0) + 1;
       failures.set(ip, { count: n, until: Date.now() + LOGIN_LOCK_S * 1000 });
-      throw new HttpError(401, 'Wrong password');
+      throw new HttpError(401, message);
+    };
+    const { password, code } = await readJson(req);
+    if (!verifyPassword(password || '', db.getSetting('admin_hash'))) fail('Wrong password');
+    // Second step: the password was right; now the code (wrong ones count like wrong passwords).
+    if (twoFactor()) {
+      if (!code) return sendJson(res, 200, { two_factor_required: true });
+      if (!useSecondFactor(code)) fail('That code is not right (or was already used)');
     }
     failures.delete(ip);
     const s = makeSession(ctx.secret, ctx.sessionGen());
@@ -238,6 +272,60 @@ export function registerApi(router, ctx) {
   router.post('/api/logout', (req, res) => {
     res.setHeader('set-cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
     sendJson(res, 200, { ok: true });
+  });
+
+  router.get('/api/2fa', (req, res) => {
+    const tf = twoFactor();
+    sendJson(res, 200, { enabled: !!tf, recovery_left: tf ? tf.recovery.length : 0 });
+  });
+  // Start setup: a new secret, kept pending until a code from it is confirmed.
+  router.post('/api/2fa/setup', (req, res) => {
+    if (twoFactor()) throw new HttpError(400, 'Two-factor sign-in is already on');
+    const secret = newSecret();
+    db.setSetting('totp_pending', secret);
+    const uri = otpauthUri(secret);
+    sendJson(res, 200, { secret, uri, qr_svg: qrSvg(uri) });
+  });
+  // Finish setup: a code from the app proves it has the secret. Other sessions are signed out.
+  router.post('/api/2fa/enable', async (req, res) => {
+    const pending = db.getSetting('totp_pending');
+    if (twoFactor()) throw new HttpError(400, 'Two-factor sign-in is already on');
+    if (!pending) throw new HttpError(400, 'Start the setup first');
+    const { code } = await readJson(req);
+    const step = checkCode(pending, code);
+    if (step == null) throw new HttpError(400, 'That code is not right. Check the time on your phone, and use the newest code.');
+    const { codes, hashes } = newRecoveryCodes();
+    db.tx(() => {
+      db.setSetting('totp_secret', pending);
+      db.setSetting('totp_last_step', step);
+      db.setSetting('totp_recovery', JSON.stringify(hashes));
+      db.setSetting('totp_pending', null);
+      db.setSetting('session_gen', ctx.sessionGen() + 1);
+    });
+    const s = makeSession(ctx.secret, ctx.sessionGen());
+    res.setHeader('set-cookie', sessionCookie(s.value, s.maxAge, ctx.secureCookies(req)));
+    ctx.log('Two-factor sign-in turned on');
+    sendJson(res, 200, { ok: true, recovery_codes: codes });
+  });
+  // Turning it off, or making new recovery codes, needs a current code (or a recovery code to turn it off).
+  router.post('/api/2fa/disable', async (req, res) => {
+    if (!twoFactor()) throw new HttpError(400, 'Two-factor sign-in is off');
+    const { code } = await readJson(req);
+    if (!useSecondFactor(code)) throw new HttpError(400, 'That code is not right (or was already used)');
+    for (const k of ['totp_secret', 'totp_last_step', 'totp_recovery', 'totp_pending']) db.setSetting(k, null);
+    ctx.log('Two-factor sign-in turned off');
+    sendJson(res, 200, { ok: true });
+  });
+  router.post('/api/2fa/recovery', async (req, res) => {
+    const tf = twoFactor();
+    if (!tf) throw new HttpError(400, 'Two-factor sign-in is off');
+    const { code } = await readJson(req);
+    const step = checkCode(tf.secret, code, tf.last);
+    if (step == null) throw new HttpError(400, 'Enter a current code from your authenticator app');
+    const { codes, hashes } = newRecoveryCodes();
+    db.setSetting('totp_last_step', step);
+    db.setSetting('totp_recovery', JSON.stringify(hashes));
+    sendJson(res, 200, { ok: true, recovery_codes: codes });
   });
 
   router.post('/api/password', async (req, res) => {
