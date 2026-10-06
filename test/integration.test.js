@@ -1569,8 +1569,12 @@ test('who is watching what: proxy streams start to stop, redirected ones by thei
   assert.deepEqual([byWho('Mom')?.what, byWho('Mom')?.username, byWho('Mom')?.ending], [name2, 'mom2', false]);
   assert.match(byWho('Mom').ip, /127\.0\.0\.1|::1/);
   stop1();
-  await new Promise((r) => setTimeout(r, 100));
-  v = await viewers();
+  // The server sees the hang-up when the connection closes; give a busy machine up to 2 seconds.
+  for (let i = 0; i < 40; i++) {
+    v = await viewers();
+    if (byWho('watcher')?.ending) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
   assert.equal(byWho('watcher')?.ending, true, 'stopped: shown as ending for a few seconds, in case the player reconnects');
   stop2();
 
