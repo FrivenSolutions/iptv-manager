@@ -2160,7 +2160,8 @@ async function watchView(main, outputId, channelId) {
     } catch {}
     fill(nowLine, h('b', null, ch.chno ? `${ch.chno} · ${ch.name}` : ch.name), ch.now ? h('span', { class: 'meta' }, ` · on now: ${ch.now}`) : null);
     drawList();
-    const base = `/api/outputs/${oid}/watch/${ch.id}`;
+    // A full address: the player's background worker can't resolve relative ones.
+    const base = `${location.origin}/api/outputs/${oid}/watch/${ch.id}`;
     // The browser's own HLS player only where the libraries can't run (iPhone: no Media Source).
     const nativeHls = !window.MediaSource && !!video.canPlayType('application/vnd.apple.mpegurl');
     try {
@@ -2177,7 +2178,8 @@ async function watchView(main, outputId, channelId) {
         const Hls = await loadScript('/vendor/hls.js', 'Hls');
         if (current !== ch) return;
         if (!Hls.isSupported()) throw new Error('This browser cannot play HLS streams.');
-        const hls = new Hls({ enableWorker: true });
+        // Smooth over live-edge latency: IPTV arrives in bursts, and chasing the edge skips.
+        const hls = new Hls({ enableWorker: true, lowLatencyMode: false, liveSyncDurationCount: 4, maxBufferLength: 30 });
         hls.on(Hls.Events.ERROR, (e, d) => {
           if (!d.fatal) return;
           const kind = d.type === Hls.ErrorTypes.MEDIA_ERROR ? 'media' : d.type === Hls.ErrorTypes.NETWORK_ERROR ? 'network' : 'other';
@@ -2191,7 +2193,16 @@ async function watchView(main, outputId, channelId) {
         if (current !== ch) return;
         if (!mpegts.getFeatureList().mseLivePlayback) throw new Error('This browser cannot play live MPEG-TS streams.');
         const p = mpegts.createPlayer({ type: 'mpegts', isLive: true, url: `${base}?format=ts` },
-          { enableWorker: false, lazyLoad: false, liveBufferLatencyChasing: true });
+          {
+            // Decode off the page's thread, and keep a buffer instead of chasing the live edge:
+            // streams arrive in bursts, and chasing them skips and stalls.
+            enableWorker: true,
+            enableStashBuffer: true,
+            stashInitialSize: 512 * 1024,
+            lazyLoad: false,
+            liveBufferLatencyChasing: false,
+            autoCleanupSourceBuffer: true,
+          });
         p.on(mpegts.Events.ERROR, (type, detail, info) => {
           const kind = type === mpegts.ErrorTypes.MEDIA_ERROR ? 'media' : type === mpegts.ErrorTypes.NETWORK_ERROR ? 'network' : 'other';
           failed(`${base}?format=ts`, kind, [type, detail, info?.msg].filter(Boolean).join(': '));
