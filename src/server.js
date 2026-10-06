@@ -5,7 +5,7 @@ const port = Number(process.env.PORT || 8080);
 const host = process.env.HOST || '0.0.0.0';
 const dataDir = path.resolve(process.env.DATA_DIR || './data');
 
-const app = createApp({ dataDir, adminPassword: process.env.ADMIN_PASSWORD || '' });
+const app = createApp({ dataDir, adminPassword: process.env.ADMIN_PASSWORD || '', disableTwoFactor: process.env.DISABLE_2FA === '1' });
 const addr = await app.start(port, host);
 app.ctx.log(`IPTV Manager ${app.ctx.appVersion} listening on http://${host}:${addr.port} (data: ${dataDir})`);
 

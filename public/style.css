@@ -483,6 +483,13 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
   .watch-channels { position: static; max-height: 60vh; }
 }
 
+/* Two-factor sign-in */
+.code-input { font-variant-numeric: tabular-nums; letter-spacing: .08em; max-width: 220px; }
+.qr { width: 200px; height: 200px; background: #fff; padding: 6px; border-radius: 8px; margin: 6px 0 10px; }
+.qr svg { width: 100%; height: 100%; display: block; }
+.secret-key { font-size: 14px; letter-spacing: .05em; margin-bottom: 12px; word-break: break-all; }
+.recovery-codes { display: grid; grid-template-columns: repeat(2, max-content); gap: 6px 28px; font-size: 15px; margin: 8px 0 14px; }
+
 /* "Manage output": look, keep up to date, then the disruptive ones, a row each. */
 .manage-rows { display: flex; flex-direction: column; gap: 8px; }
 /* Each row fills the width: its buttons share it equally (halves, then thirds). */

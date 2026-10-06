@@ -487,6 +487,7 @@ because players connect to the provider themselves.
 | `HOST` | `0.0.0.0` | Bind address |
 | `DATA_DIR` | `./data` (`/data` in Docker) | Database, uploads, cache |
 | `ADMIN_PASSWORD` | (unset) | If set, it becomes the admin password on every start. Use it for recovery. |
+| `DISABLE_2FA` | (unset) | `1` turns two-factor sign-in off on start, if you lost both the authenticator and the recovery codes. Remove it again afterwards. |
 
 If players reach the server by a different name than your browser does (a reverse proxy or DNS
 name, for example), set **Settings → Base URL** so the published links use that address.
@@ -505,6 +506,11 @@ IPTV Manager is built for a home network.
   without changing anything for anyone else.
 - **The admin UI** needs a password (at least 8 characters). Changing it signs out every other
   session. If you forget it, start the app once with `ADMIN_PASSWORD` set.
+- **Two-factor sign-in** (Settings → Two-factor sign-in) adds a 6-digit code from an
+  authenticator app (Google or Microsoft Authenticator, 1Password, Bitwarden and the like) after
+  the password. Each code works once. Setup gives 8 one-time recovery codes for a lost phone;
+  turning it off needs a code. If both are lost, start the app once with `DISABLE_2FA=1` (on
+  Proxmox: add it to `/etc/default/iptv-manager` and restart the service, then remove it).
 - **Settings exports** can contain provider passwords, if you tick that option. Store them like
   any other credential.
 

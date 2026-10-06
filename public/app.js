@@ -460,6 +460,10 @@ async function route() {
 function renderAuth(setup) {
   const pw = h('input', { type: 'password', autocomplete: setup ? 'new-password' : 'current-password', required: true, minlength: setup ? 8 : null });
   const pw2 = setup ? h('input', { type: 'password', autocomplete: 'new-password', required: true }) : null;
+  // Asked for after the password, when two-factor sign-in is on.
+  const code = h('input', { inputmode: 'numeric', autocomplete: 'one-time-code', placeholder: '123456', class: 'code-input', maxlength: 9 });
+  const codeField = field('Code from your authenticator app', code, 'Or one of your recovery codes.');
+  codeField.hidden = true;
   const err = h('p', { class: 'form-error' });
   const form = h('form', {
     class: 'center-card card',
@@ -468,7 +472,12 @@ function renderAuth(setup) {
       err.textContent = '';
       if (setup && pw.value !== pw2.value) return (err.textContent = 'Passwords do not match');
       try {
-        await api('POST', setup ? '/api/setup' : '/api/login', { password: pw.value });
+        const r = await api('POST', setup ? '/api/setup' : '/api/login', { password: pw.value, code: codeField.hidden ? undefined : code.value });
+        if (r?.two_factor_required) {
+          codeField.hidden = false;
+          code.focus();
+          return;
+        }
         route();
       } catch (ex) {
         err.textContent = ex.message;
@@ -479,6 +488,7 @@ function renderAuth(setup) {
   setup ? h('p', null, 'Welcome! Choose an admin password to protect this dashboard.') : null,
   field(setup ? 'New password' : 'Password', pw, setup ? 'At least 8 characters.' : null),
   setup ? field('Repeat password', pw2) : null,
+  setup ? null : codeField,
   err,
   h('button', { class: 'btn primary wide', type: 'submit' }, setup ? 'Create password' : 'Log in'));
   fill($app, form);
@@ -2292,6 +2302,7 @@ async function settingsView(main) {
           cur.value = next.value = '';
         },
       }, field('Current password', cur), field('New password', next, 'At least 8 characters.'), h('button', { class: 'btn primary' }, 'Change password'))),
+    twoFactorCard(await api('GET', '/api/2fa')),
     updatesCard(await api('GET', '/api/updates')),
     alertsCard(s),
     emptyEventCard(s),
@@ -2368,6 +2379,79 @@ function advancedCard(s) {
         h('p', { class: 'hint' }, h('b', null, 'Name cleanup'), ' also appears on the page of each output, to tidy names like "US: CNN ᴴᴰ" into "CNN".')) : null);
   };
   draw();
+  return card;
+}
+
+/**
+ * Two-factor sign-in: an authenticator app's 6-digit code after the password. Setup shows a QR
+ * code, confirms one code, then shows recovery codes once.
+ */
+function twoFactorCard(state) {
+  const card = h('section', { class: 'card narrow' });
+  const codeInput = (placeholder = '123456') => h('input', { inputmode: 'numeric', autocomplete: 'one-time-code', placeholder, class: 'code-input', maxlength: 9 });
+  const showRecovery = (codes) => fill(card,
+    h('h2', null, 'Two-factor sign-in'),
+    h('p', null, h('b', null, 'Save these recovery codes now. '), 'Each one signs you in once if you lose your phone. They won\'t be shown again.'),
+    h('div', { class: 'recovery-codes mono' }, codes.map((c) => h('span', null, c))),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', onclick: () => copy(codes.join('\n')) }, 'Copy codes'),
+      h('button', { class: 'btn primary', onclick: async () => draw(await api('GET', '/api/2fa')) }, 'I\'ve saved them')));
+  const draw = (s) => {
+    if (!s.enabled) {
+      fill(card,
+        h('h2', null, 'Two-factor sign-in'),
+        h('p', { class: 'hint' }, 'Off. Turn it on to also ask for a code from an authenticator app (Google or Microsoft Authenticator, 1Password, Bitwarden and the like) when signing in.'),
+        h('button', {
+          class: 'btn primary',
+          onclick: async () => {
+            const setup = await attempt(() => api('POST', '/api/2fa/setup'));
+            const code = codeInput();
+            const qr = h('div', { class: 'qr' });
+            qr.innerHTML = setup.qr_svg; // built by the server from the otpauth link
+            fill(card,
+              h('h2', null, 'Two-factor sign-in'),
+              h('p', null, '1. Scan this with your authenticator app, or enter the key by hand.'),
+              qr,
+              h('div', { class: 'mono secret-key', title: 'Key for manual entry' }, setup.secret.match(/.{1,4}/g).join(' ')),
+              h('form', {
+                class: 'form',
+                onsubmit: async (e) => {
+                  e.preventDefault();
+                  const r = await attempt(() => api('POST', '/api/2fa/enable', { code: code.value }), 'Two-factor sign-in is on; other sessions were signed out');
+                  showRecovery(r.recovery_codes);
+                },
+              },
+              field('2. Enter the code it shows', code),
+              h('div', { class: 'row' },
+                h('button', { class: 'btn primary' }, 'Turn on'),
+                h('button', { class: 'btn', type: 'button', onclick: () => draw(s) }, 'Cancel'))));
+            code.focus();
+          },
+        }, 'Set up two-factor sign-in'));
+      return;
+    }
+    const code = codeInput('Code or recovery code');
+    fill(card,
+      h('h2', null, 'Two-factor sign-in'),
+      h('p', null, badge('on', 'ok'), ` Signing in asks for a code from your authenticator app. ${s.recovery_left} recovery code${s.recovery_left === 1 ? '' : 's'} left.`),
+      s.recovery_left < 3 ? h('p', { class: 'hint warn-text' }, 'Running low on recovery codes: make new ones.') : null,
+      h('div', { class: 'form' },
+        field('Code from your authenticator app', code, 'Needed to turn it off (a recovery code works too) or to make new recovery codes.'),
+        h('div', { class: 'row' },
+          h('button', {
+            class: 'btn',
+            onclick: async () => showRecovery((await attempt(() => api('POST', '/api/2fa/recovery', { code: code.value }), 'New recovery codes; the old ones no longer work')).recovery_codes),
+          }, 'New recovery codes'),
+          h('button', {
+            class: 'btn danger-text',
+            onclick: async () => {
+              if (!(await confirmBox('Turn off two-factor sign-in? Signing in will only need the password.', 'Turn off'))) return;
+              await attempt(() => api('POST', '/api/2fa/disable', { code: code.value }), 'Two-factor sign-in is off');
+              draw(await api('GET', '/api/2fa'));
+            },
+          }, 'Turn off'))));
+  };
+  draw(state);
   return card;
 }
 

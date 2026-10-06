@@ -1669,6 +1669,58 @@ test('pausing an output stops its URLs and every login until it is resumed; refr
   await app.ctx.jobs.idle();
 });
 
+test('two-factor sign-in: setup, codes once each, recovery codes, turning off, DISABLE_2FA', async () => {
+  const { codeAt, stepNow } = await import('../src/totp.js');
+  const login = (body) => fetch(`${base}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-requested-with': 'fetch' }, body: JSON.stringify(body) });
+  assert.deepEqual((await api('GET', '/api/2fa')).data, { enabled: false, recovery_left: 0 });
+
+  // Setup: a secret and a QR code; a wrong code doesn't turn it on.
+  const setup = (await api('POST', '/api/2fa/setup')).data;
+  assert.match(setup.secret, /^[A-Z2-7]{32}$/);
+  assert.match(setup.uri, /^otpauth:\/\/totp\/IPTV%20Manager%3Aadmin\?secret=/);
+  assert.match(setup.qr_svg, /^<svg/);
+  assert.equal((await api('POST', '/api/2fa/enable', { code: '000000' })).status, 400);
+  const oldCookie = cookie;
+  const step = stepNow();
+  const on = await api('POST', '/api/2fa/enable', { code: codeAt(setup.secret, step) });
+  assert.equal(on.status, 200);
+  assert.equal(on.data.recovery_codes.length, 8);
+  assert.match(on.data.recovery_codes[0], /^[a-z2-7]{4}-[a-z2-7]{4}$/);
+  assert.notEqual(cookie, oldCookie, 'this session gets a new cookie');
+  assert.equal((await fetch(`${base}/api/sources`, { headers: { cookie: oldCookie } })).status, 401, 'other sessions are signed out');
+  assert.deepEqual((await api('GET', '/api/2fa')).data, { enabled: true, recovery_left: 8 });
+
+  // Signing in: the password alone asks for the code; a code works once; recovery codes work once.
+  let r = await login({ password: PASSWORD });
+  assert.deepEqual([r.status, await r.json(), r.headers.get('set-cookie')], [200, { two_factor_required: true }, null]);
+  assert.equal((await login({ password: 'wrong', code: codeAt(setup.secret, step + 1) })).status, 401, 'the password still matters');
+  assert.equal((await login({ password: PASSWORD, code: codeAt(setup.secret, step) })).status, 401, 'the setup code was already used');
+  r = await login({ password: PASSWORD, code: codeAt(setup.secret, step + 1) });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('set-cookie'), /iptvm_session=/);
+  r = await login({ password: PASSWORD, code: on.data.recovery_codes[0].toUpperCase() });
+  assert.equal(r.status, 200, 'recovery codes ignore case');
+  assert.equal((await login({ password: PASSWORD, code: on.data.recovery_codes[0] })).status, 401, 'a recovery code works once');
+  assert.equal((await api('GET', '/api/2fa')).data.recovery_left, 7);
+
+  // Turning it off needs a code too.
+  assert.equal((await api('POST', '/api/2fa/disable', { code: '123456' })).status, 400);
+  assert.equal((await api('POST', '/api/2fa/disable', { code: on.data.recovery_codes[1] })).status, 200);
+  assert.deepEqual((await api('GET', '/api/2fa')).data, { enabled: false, recovery_left: 0 });
+  r = await login({ password: PASSWORD });
+  assert.match(r.headers.get('set-cookie') || '', /iptvm_session=/, 'back to the password alone');
+
+  // DISABLE_2FA=1 on start turns it off (the way back in without the phone or the codes).
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-2fa-'));
+  let app2 = createApp({ dataDir: dir2, adminPassword: PASSWORD, log: () => {} });
+  app2.ctx.db.setSetting('totp_secret', setup.secret);
+  await app2.close();
+  app2 = createApp({ dataDir: dir2, log: () => {}, disableTwoFactor: true });
+  assert.equal(app2.ctx.db.getSetting('totp_secret'), null);
+  await app2.close();
+  fs.rmSync(dir2, { recursive: true, force: true });
+});
+
 test('rule order is saved and returned as given, for category and channel rules', async () => {
   const o = (await api('POST', '/api/outputs', { name: 'Order' })).data;
   const rules = [
