@@ -17,7 +17,7 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/opt/iptv-manager}"
 DATA_DIR="${DATA_DIR:-/var/lib/iptv-manager}"
 CONF=/etc/default/iptv-manager
-REPO_URL="${IPTV_REPO:-https://github.com/frittsasaurus/iptv-manager.git}"
+REPO_URL="${IPTV_REPO:-https://github.com/FrivenSolutions/iptv-manager.git}"
 SERVICE_USER=iptvm
 
 [ "$(id -u)" = 0 ] || { echo "Run this as root." >&2; exit 1; }
