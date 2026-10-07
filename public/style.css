@@ -490,6 +490,11 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
 .secret-key { font-size: 14px; letter-spacing: .05em; margin-bottom: 12px; word-break: break-all; }
 .recovery-codes { display: grid; grid-template-columns: repeat(2, max-content); gap: 6px 28px; font-size: 15px; margin: 8px 0 14px; }
 
+/* Dashboard widget snippets */
+.widget-snippet { margin: 10px 0; }
+.widget-snippet .row { justify-content: space-between; margin-bottom: 4px; }
+.widget-snippet pre { margin: 0; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; font-size: 12.5px; line-height: 1.45; }
+
 /* "Manage output": look, keep up to date, then the disruptive ones, a row each. */
 .manage-rows { display: flex; flex-direction: column; gap: 8px; }
 /* Each row fills the width: its buttons share it equally (halves, then thirds). */

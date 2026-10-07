@@ -309,7 +309,8 @@ export function createApp({
       if (m.methodNotAllowed) throw new HttpError(405, 'Method not allowed');
 
       if (pathname.startsWith('/api/')) {
-        const open = ['/api/session', '/api/setup', '/api/login'].includes(pathname);
+        // /api/widget checks its own key (for dashboards such as Homepage) instead of a session.
+        const open = ['/api/session', '/api/setup', '/api/login', '/api/widget'].includes(pathname);
         if (!open && !ctx.isAuthed(req)) throw new HttpError(401, 'Not logged in');
         // Custom header blocks cross-site form posts (CSRF) without a token dance.
         if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers['x-requested-with'] !== 'fetch') {
