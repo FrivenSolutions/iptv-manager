@@ -1,4 +1,5 @@
 // Admin REST API behind the login session.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -458,6 +459,52 @@ export function registerApi(router, ctx) {
     web_update: ctx.webUpdate.view(),
   });
   router.get('/api/updates', (req, res) => sendJson(res, 200, updateView()));
+
+  // --- Dashboard widget (Homepage's Custom API widget and the like): read-only numbers, with an
+  // API key of its own (header X-API-Key, or ?key=). Off until a key is made in Settings.
+  const widgetKeyOk = (req, query) => {
+    const key = db.getSetting('widget_key');
+    const given = String(req.headers['x-api-key'] || query.get('key') || '');
+    return !!key && given.length === key.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(key));
+  };
+  router.get('/api/widget', (req, res, { query }) => {
+    if (!db.getSetting('widget_key')) throw new HttpError(404, 'The widget API is off; turn it on in Settings');
+    if (!widgetKeyOk(req, query)) throw new HttpError(401, 'Wrong or missing API key');
+    const sources = db.all('SELECT id, enabled, last_status FROM sources');
+    const count = (sql) => db.get(sql).n;
+    const viewers = ctx.viewers.list();
+    const watching = viewers.filter((v) => v.mode === 'proxy');
+    const upd = ctx.updates.state();
+    sendJson(res, 200, {
+      watching: watching.length,
+      recently_started: viewers.length - watching.length,
+      // For Homepage's "dynamic-list" view: who on the left, what on the right.
+      watching_list: watching.map((v) => ({ name: v.who, label: v.what, output: v.output })),
+      sources: sources.length,
+      sources_ok: sources.filter((s) => s.enabled && s.last_status === 'ok').length,
+      sources_warning: sources.filter((s) => s.enabled && s.last_status === 'warning').length,
+      sources_error: sources.filter((s) => s.enabled && s.last_status === 'error').length,
+      channels: count('SELECT COUNT(*) AS n FROM channels WHERE active = 1'),
+      movies: count("SELECT COUNT(*) AS n FROM vod_items WHERE active = 1 AND kind = 'movie'"),
+      series: count("SELECT COUNT(*) AS n FROM vod_items WHERE active = 1 AND kind = 'series'"),
+      outputs: count('SELECT COUNT(*) AS n FROM outputs'),
+      outputs_paused: count('SELECT COUNT(*) AS n FROM outputs WHERE paused = 1'),
+      alerts: computeAlerts(db).length,
+      update_available: (upd.behind || 0) > 0,
+      version: ctx.build.version,
+      commit: ctx.build.commit ? ctx.build.commit.slice(0, 7) : null,
+    });
+  });
+  router.get('/api/widget-key', (req, res) => sendJson(res, 200, { key: db.getSetting('widget_key') || null }));
+  // Make (or replace) the key; replacing one stops dashboards using the old key.
+  router.post('/api/widget-key', (req, res) => {
+    db.setSetting('widget_key', randomToken(24));
+    sendJson(res, 200, { key: db.getSetting('widget_key') });
+  });
+  router.delete('/api/widget-key', (req, res) => {
+    db.setSetting('widget_key', null);
+    sendJson(res, 200, { key: null });
+  });
   router.post('/api/updates/check', async (req, res) => {
     await ctx.updates.check();
     sendJson(res, 200, updateView());

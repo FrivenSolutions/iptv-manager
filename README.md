@@ -357,6 +357,24 @@ Only channels with guide data are affected. A channel with no programmes has not
 To use an output in Jellyfin, go to **Dashboard → Live TV**. Add an **M3U Tuner** with the
 output's playlist URL and an **XMLTV** guide provider with its `epg.xml` URL.
 
+### Dashboard widget (Homepage)
+
+**Settings → Dashboard widget → Turn on** makes an API key and shows a ready-to-paste entry for
+[Homepage](https://gethomepage.dev)'s `services.yaml`, using its
+[Custom API widget](https://gethomepage.dev/widgets/services/customapi/). The tile shows streams
+watching now, channels, sources that are OK, and alerts; a second snippet lists who is watching
+what. Other dashboards can read the same JSON:
+
+```bash
+curl -H "X-API-Key: <key>" http://<host>:8080/api/widget
+```
+
+It returns `watching`, `recently_started`, `watching_list`, `sources`, `sources_ok`,
+`sources_warning`, `sources_error`, `channels`, `movies`, `series`, `outputs`,
+`outputs_paused`, `alerts`, `update_available`, `version` and `commit`. The key only reads these
+numbers; **New key** replaces it, **Turn off** closes the endpoint. If Homepage reaches this server
+by another address than your browser, change the `url` in the snippet (or set the Base URL).
+
 ### Backup and restore
 
 Go to **Settings → Backup & restore**. **Export settings** downloads one JSON file with:

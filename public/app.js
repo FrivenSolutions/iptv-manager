@@ -2374,6 +2374,7 @@ async function settingsView(main) {
     twoFactorCard(await api('GET', '/api/2fa')),
     updatesCard(await api('GET', '/api/updates')),
     alertsCard(s),
+    widgetCard(s, (await api('GET', '/api/widget-key')).key),
     emptyEventCard(s),
     guidePatternsCard(s),
     backupCard(),
@@ -2521,6 +2522,91 @@ function twoFactorCard(state) {
           }, 'Turn off'))));
   };
   draw(state);
+  return card;
+}
+
+/**
+ * Dashboard widget: read-only numbers at /api/widget for Homepage (gethomepage.dev) and other
+ * dashboards, with an API key of its own. Shows a ready-to-paste Homepage services.yaml entry.
+ */
+function widgetCard(s, key) {
+  const card = h('section', { class: 'card narrow' });
+  const base = (s.base_url || s.detected_base_url || location.origin).replace(/\/+$/, '');
+  const yaml = (k) => [
+    '- IPTV Manager:',
+    '    icon: mdi-television-classic',
+    `    href: ${base}`,
+    '    widget:',
+    '      type: customapi',
+    `      url: ${base}/api/widget`,
+    '      refreshInterval: 10000',
+    '      headers:',
+    `        X-API-Key: ${k}`,
+    '      mappings:',
+    '        - field: watching',
+    '          label: Watching',
+    '          format: number',
+    '        - field: channels',
+    '          label: Channels',
+    '          format: number',
+    '        - field: sources_ok',
+    '          label: Sources OK',
+    '          format: number',
+    '        - field: alerts',
+    '          label: Alerts',
+    '          format: number',
+  ].join('\n');
+  const listYaml = (k) => [
+    '- Watching now:',
+    '    icon: mdi-play-network',
+    `    href: ${base}`,
+    '    widget:',
+    '      type: customapi',
+    `      url: ${base}/api/widget`,
+    '      refreshInterval: 5000',
+    '      headers:',
+    `        X-API-Key: ${k}`,
+    '      display: dynamic-list',
+    '      mappings:',
+    '        items: watching_list',
+    '        name: name',
+    '        label: label',
+  ].join('\n');
+  const snippet = (title, text) => h('div', { class: 'widget-snippet' },
+    h('div', { class: 'row' }, h('b', null, title), h('button', { class: 'btn small', onclick: () => copy(text) }, 'Copy')),
+    h('pre', { class: 'mono' }, text));
+  const draw = (k) => {
+    fill(card,
+      h('h2', null, 'Dashboard widget'),
+      !k ? [
+        h('p', { class: 'hint' }, 'Show this server\'s numbers (streams watching now, channels, sources, alerts) on a dashboard such as ',
+          h('a', { href: 'https://gethomepage.dev/widgets/services/customapi/', target: '_blank', rel: 'noopener' }, 'Homepage'),
+          '. It gets an API key of its own, which can only read these numbers.'),
+        h('button', { class: 'btn primary', onclick: async () => draw((await attempt(() => api('POST', '/api/widget-key'), 'Widget API on')).key) }, 'Turn on'),
+      ] : [
+        h('p', { class: 'hint' }, `Read-only numbers at ${base}/api/widget, with this key in an X-API-Key header. The key only reads these numbers.`),
+        copyField('API key', k),
+        snippet('Homepage services.yaml: four numbers', yaml(k)),
+        h('details', null, h('summary', null, 'Or a list of who is watching what'), snippet('Homepage services.yaml: watching now', listYaml(k))),
+        h('div', { class: 'row' },
+          h('button', {
+            class: 'btn small',
+            onclick: async () => {
+              if (!(await confirmBox('Make a new key? Dashboards using the current one stop updating until you give them the new one.', 'New key'))) return;
+              draw((await attempt(() => api('POST', '/api/widget-key'), 'New key made')).key);
+            },
+          }, 'New key'),
+          h('button', {
+            class: 'btn small danger-text',
+            onclick: async () => {
+              if (!(await confirmBox('Turn off the widget API? Dashboards using it stop updating.', 'Turn off'))) return;
+              await attempt(() => api('DELETE', '/api/widget-key'), 'Widget API off');
+              draw(null);
+            },
+          }, 'Turn off')),
+      ]);
+  };
+  draw(key);
   return card;
 }
 

@@ -1725,6 +1725,35 @@ test('two-factor sign-in: setup, codes once each, recovery codes, turning off, D
   fs.rmSync(dir2, { recursive: true, force: true });
 });
 
+test('dashboard widget API: off until a key is made, read-only numbers with that key only', async () => {
+  const widget = (headers = {}, qs = '') => fetch(`${base}/api/widget${qs}`, { headers });
+  assert.equal((await widget()).status, 404, 'off by default');
+  const key = (await api('POST', '/api/widget-key')).data.key;
+  assert.match(key, /^[\w-]{32}$/);
+  assert.equal((await api('GET', '/api/widget-key')).data.key, key);
+  assert.equal((await widget()).status, 401);
+  assert.equal((await widget({ 'x-api-key': 'nope' })).status, 401);
+  const r = await widget({ 'x-api-key': key });
+  assert.equal(r.status, 200);
+  const d = await r.json();
+  const srcCount = (await api('GET', '/api/sources')).data.length;
+  assert.equal(d.sources, srcCount);
+  assert.equal(d.sources_ok + d.sources_warning + d.sources_error <= srcCount, true);
+  for (const k of ['watching', 'recently_started', 'channels', 'movies', 'series', 'outputs', 'outputs_paused', 'alerts']) assert.equal(typeof d[k], 'number', k);
+  assert.ok(d.channels > 0);
+  assert.ok(Array.isArray(d.watching_list));
+  assert.equal(typeof d.update_available, 'boolean');
+  assert.equal((await widget({}, `?key=${key}`)).status, 200, 'the key also works as ?key=');
+  // The key reads these numbers and nothing else.
+  assert.equal((await fetch(`${base}/api/sources`, { headers: { 'x-api-key': key } })).status, 401);
+  // A new key retires the old; turning it off closes the endpoint.
+  const key2 = (await api('POST', '/api/widget-key')).data.key;
+  assert.equal((await widget({ 'x-api-key': key })).status, 401);
+  assert.equal((await widget({ 'x-api-key': key2 })).status, 200);
+  await api('DELETE', '/api/widget-key');
+  assert.equal((await widget({ 'x-api-key': key2 })).status, 404);
+});
+
 test('rule order is saved and returned as given, for category and channel rules', async () => {
   const o = (await api('POST', '/api/outputs', { name: 'Order' })).data;
   const rules = [
