@@ -98,6 +98,14 @@ deps() {
 
 fetch() {
   [ -d "$APP_DIR/.git" ] || die "$APP_DIR is not a git checkout. Re-run proxmox/install.sh once to convert it."
+  # The repository moved to FrivenSolutions. Installs made before still name the old address
+  # (GitHub redirects it, for now); move them over. Forks and other addresses are left alone.
+  case "$(git -C "$APP_DIR" remote get-url origin 2>/dev/null)" in
+    https://github.com/frittsasaurus/iptv-manager | https://github.com/frittsasaurus/iptv-manager.git)
+      git -C "$APP_DIR" remote set-url origin https://github.com/FrivenSolutions/iptv-manager.git
+      log "Repository address updated to https://github.com/FrivenSolutions/iptv-manager.git"
+      ;;
+  esac
   git -C "$APP_DIR" fetch --quiet --depth 1 origin "$BRANCH" || die "could not reach $(git -C "$APP_DIR" remote get-url origin)"
   OLD="$(git -C "$APP_DIR" rev-parse HEAD)"
   NEW="$(git -C "$APP_DIR" rev-parse FETCH_HEAD)"

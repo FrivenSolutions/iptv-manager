@@ -8,11 +8,11 @@
   "author": "frittsasaurus",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/frittsasaurus/iptv-manager.git"
+    "url": "git+https://github.com/FrivenSolutions/iptv-manager.git"
   },
-  "homepage": "https://github.com/frittsasaurus/iptv-manager#readme",
+  "homepage": "https://github.com/FrivenSolutions/iptv-manager#readme",
   "bugs": {
-    "url": "https://github.com/frittsasaurus/iptv-manager/issues"
+    "url": "https://github.com/FrivenSolutions/iptv-manager/issues"
   },
   "engines": {
     "node": ">=24"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run on the Proxmox VE host as root. Works from a checkout of the repository, or straight
 # from the web without one:
-#   bash -c "$(wget -qO- https://raw.githubusercontent.com/frittsasaurus/iptv-manager/main/proxmox/create-lxc.sh)"
+#   bash -c "$(wget -qO- https://raw.githubusercontent.com/FrivenSolutions/iptv-manager/main/proxmox/create-lxc.sh)"
 set -euo pipefail
 
 usage() {
@@ -30,7 +30,7 @@ GW="${GW:-}"                             # required with a static IP
 MEMORY="${MEMORY:-512}"                  # MB; large EPGs parse in a stream, 512 is plenty
 DISK="${DISK:-4}"                        # GB
 CORES="${CORES:-1}"
-INSTALL_URL="${INSTALL_URL:-https://raw.githubusercontent.com/frittsasaurus/iptv-manager/main/proxmox/install.sh}"
+INSTALL_URL="${INSTALL_URL:-https://raw.githubusercontent.com/FrivenSolutions/iptv-manager/main/proxmox/install.sh}"
 
 die() { echo "Error: $*" >&2; exit 1; }
 

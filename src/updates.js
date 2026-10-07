@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { now } from './db.js';
 
-export const DEFAULT_UPDATE_REPO = 'frittsasaurus/iptv-manager';
+export const DEFAULT_UPDATE_REPO = 'FrivenSolutions/iptv-manager';
 const CHECK_EVERY_S = 24 * 3600;
 const TICK_MS = 3600 * 1000;
 
