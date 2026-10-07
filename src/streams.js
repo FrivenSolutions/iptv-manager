@@ -68,18 +68,28 @@ class Hub {
   }
 
   async pump(body) {
+    const started = Date.now();
+    const mins = () => Math.round((Date.now() - started) / 6000) / 10;
+    const log = (msg) => this.streams.ctx.log?.(msg);
+    let failure = null;
     try {
       for await (const chunk of Readable.fromWeb(body)) {
         // Clients attach as soon as the response starts; by the first chunk, none left means
         // everyone who asked has gone.
         if (!this.clients.size) break;
         for (const res of this.clients) {
-          if (res.writableLength > MAX_BEHIND_BYTES) res.destroy();
-          else res.write(chunk);
+          if (res.writableLength > MAX_BEHIND_BYTES) {
+            log(`Stream "${this.ch.name}": dropped a viewer that fell ${Math.round(MAX_BEHIND_BYTES / 1048576)} MB behind, after ${mins()} min`);
+            res.destroy();
+          } else res.write(chunk);
         }
       }
-    } catch {
-      // Upstream dropped or was aborted.
+    } catch (e) {
+      failure = e; // upstream dropped, or aborted because everyone left
+    }
+    // Ended while people were still watching: the provider closed it (or the connection broke).
+    if (this.clients.size && !this.ac.signal.aborted) {
+      log(`Stream "${this.ch.name}": the provider ${failure ? `connection failed (${failure.message})` : 'ended it'} after ${mins()} min`);
     }
     this.close();
   }

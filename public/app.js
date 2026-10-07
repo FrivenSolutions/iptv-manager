@@ -2116,7 +2116,57 @@ async function watchView(main, outputId, channelId) {
     fill(message, ...[].concat(text));
     message.hidden = !text;
   };
+  // Keeping it playing: the provider may drop the connection, or the stream may skip (a gap the
+  // player won't cross). While the viewer wants it playing (not paused or stopped by them), a
+  // watchdog nudges over gaps and reconnects when the picture stops.
+  let wantPlaying = false;
+  let ownPauseUntil = 0; // pauses we cause (switching, reconnecting) aren't the viewer's
+  let progressAt = 0;
+  let lastTime = 0;
+  let retries = 0;
+  let lastRetry = 0;
+  let retryNote = false;
+  const reconnect = (why) => {
+    if (!current || !wantPlaying || Date.now() - lastRetry < 5000) return;
+    if (retries >= 10) {
+      wantPlaying = false;
+      return showMessage([h('b', null, 'The stream keeps dropping. '), `Last time ${why}. Try again later, or another channel.`]);
+    }
+    lastRetry = Date.now();
+    retries++;
+    play(current, why);
+  };
+  video.addEventListener('play', () => { wantPlaying = true; });
+  video.addEventListener('pause', () => { if (Date.now() > ownPauseUntil && !video.ended) wantPlaying = false; });
+  video.addEventListener('ended', () => reconnect('the stream ended'));
+  const watchdog = setInterval(() => {
+    if (!current || !wantPlaying) return;
+    const now = Date.now();
+    if (video.currentTime !== lastTime) {
+      lastTime = video.currentTime;
+      progressAt = now;
+      if (retryNote) {
+        retryNote = false;
+        showMessage(null);
+      }
+      if (now - lastRetry > 60_000) retries = 0;
+      return;
+    }
+    if (now - progressAt < 6000) return;
+    // Stuck. Data further on (after a gap)? Jump to it. Otherwise get a fresh connection.
+    for (let i = 0; i < video.buffered.length; i++) {
+      if (video.buffered.start(i) > video.currentTime + 0.05) {
+        video.currentTime = video.buffered.start(i) + 0.05;
+        progressAt = now;
+        return;
+      }
+    }
+    reconnect('the picture stopped');
+  }, 1000);
+  cleanups.push(() => clearInterval(watchdog));
+
   const stop = () => {
+    ownPauseUntil = Date.now() + 1000;
     if (player) {
       try {
         player.destroy();
@@ -2151,10 +2201,16 @@ async function watchView(main, outputId, channelId) {
     showMessage([h('b', null, 'Playback failed. '), 'If it keeps happening, the details below say why.', more]);
   };
 
-  const play = async (ch) => {
+  // retry: why this is a reconnect (keeps a small note up until the picture moves again).
+  const play = async (ch, retry = null) => {
     stop();
+    if (!retry || current !== ch) retries = 0;
     current = ch;
-    showMessage(null);
+    wantPlaying = true;
+    lastTime = 0;
+    progressAt = Date.now() + 6000; // time to start before the watchdog looks
+    retryNote = !!retry;
+    showMessage(retry ? `Reconnecting (${retry})…` : null, 'warn');
     try {
       history.replaceState(null, '', `#/watch/${oid}/${ch.id}`);
     } catch {}
@@ -2183,6 +2239,7 @@ async function watchView(main, outputId, channelId) {
         hls.on(Hls.Events.ERROR, (e, d) => {
           if (!d.fatal) return;
           const kind = d.type === Hls.ErrorTypes.MEDIA_ERROR ? 'media' : d.type === Hls.ErrorTypes.NETWORK_ERROR ? 'network' : 'other';
+          if (kind === 'network' && retries < 3) return reconnect('the connection dropped');
           failed(`${base}?format=m3u8`, kind, [d.type, d.details, d.reason].filter(Boolean).join(': '));
         });
         hls.loadSource(`${base}?format=m3u8`);
@@ -2205,6 +2262,7 @@ async function watchView(main, outputId, channelId) {
           });
         p.on(mpegts.Events.ERROR, (type, detail, info) => {
           const kind = type === mpegts.ErrorTypes.MEDIA_ERROR ? 'media' : type === mpegts.ErrorTypes.NETWORK_ERROR ? 'network' : 'other';
+          if (kind === 'network' && retries < 3) return reconnect('the connection dropped');
           failed(`${base}?format=ts`, kind, [type, detail, info?.msg].filter(Boolean).join(': '));
         });
         p.attachMediaElement(video);
@@ -2281,7 +2339,7 @@ async function watchView(main, outputId, channelId) {
             h('button', { class: 'btn small', title: 'Previous channel', onclick: () => step(-1) }, '‹ Prev'),
             h('button', { class: 'btn small', title: 'Next channel', onclick: () => step(1) }, 'Next ›'),
             h('button', { class: 'btn small', title: 'Full screen (or double-click the picture)', onclick: fullscreen }, 'Full screen'),
-            h('button', { class: 'btn small', onclick: () => { stop(); current = null; drawList(); fill(nowLine, h('span', { class: 'meta' }, 'Stopped.')); } }, 'Stop'))),
+            h('button', { class: 'btn small', onclick: () => { wantPlaying = false; stop(); current = null; drawList(); fill(nowLine, h('span', { class: 'meta' }, 'Stopped.')); } }, 'Stop'))),
         message),
       h('section', { class: 'card flush watch-channels' }, h('div', { class: 'pad' }, search), list)));
   const start = channelId && lineup.channels.find((c) => c.id === channelId);
