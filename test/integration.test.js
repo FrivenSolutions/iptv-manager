@@ -641,7 +641,11 @@ test('an empty upstream response keeps the previous channels', async () => {
 });
 
 test('export, then import into a fresh instance, reproduces every output', async () => {
+  // A category prefix and suffix on one source of the output, to see it come back.
+  const attached = (await api('GET', `/api/outputs/${outputId}`)).data.sources.filter((x) => x.attached).map((x) => x.id);
+  await api('PUT', `/api/outputs/${outputId}`, { source_ids: attached, source_affixes: { [xcId]: { cat_prefix: 'UK |', cat_suffix: '[P1]' } } });
   const full = (await api('GET', '/api/export')).data;
+  assert.deepEqual(full.outputs.find((x) => x.token === token).category_affixes, [{ source: xcId, prefix: 'UK |', suffix: '[P1]' }]);
   assert.equal(full.format, 'iptv-manager-settings');
   assert.equal(full.sources.find((s) => s.type === 'xc').xc_password, 'xp');
   const bare = (await api('GET', '/api/export?secrets=0')).data;
@@ -672,6 +676,12 @@ test('export, then import into a fresh instance, reproduces every output', async
       const after = norm(await (await fetch(`${base2}/o/${o.token}/playlist.m3u`)).text(), base2);
       assert.equal(after, before, `output "${o.name}" differs after import`);
     }
+    const restored = await (await fetch(`${base2}/o/${token}/playlist.m3u`)).text();
+    assert.match(restored, /group-title="UK \| [^"]+ \[P1\]"/, 'category prefix and suffix restored');
+    const o2 = (await (await fetch(`${base2}/api/outputs`, { headers: { cookie: cookie2 } })).json()).find((x) => x.token === token);
+    const src2 = (await (await fetch(`${base2}/api/outputs/${o2.id}`, { headers: { cookie: cookie2 } })).json()).sources
+      .filter((x) => x.cat_prefix || x.cat_suffix).map((x) => [x.type, x.cat_prefix, x.cat_suffix]);
+    assert.deepEqual(src2, [['xc', 'UK |', '[P1]']], 'only on the source it was set on, after the source ids changed');
     const xml = await (await fetch(`${base2}/o/${token}/epg.xml`, { headers: { 'accept-encoding': 'identity' } })).text();
     assert.match(xml, /<category lang="en">Kids<\/category>/, 'Jellyfin tags survive the round trip');
     const info = await (await fetch(`${base2}/player_api.php?username=family&password=pw123`)).json();
@@ -682,6 +692,7 @@ test('export, then import into a fresh instance, reproduces every output', async
   } finally {
     await app2.close();
     fs.rmSync(dir2, { recursive: true, force: true });
+    await api('PUT', `/api/outputs/${outputId}`, { source_ids: attached, source_affixes: { [xcId]: { cat_prefix: '', cat_suffix: '' } } });
   }
 });
 
