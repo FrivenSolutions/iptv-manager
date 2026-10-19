@@ -32,7 +32,7 @@ asks for the normal stream URL with that added:
 http://server:8080/live/USER/PASS/1234.ts?light=1
 ```
 
-The server must recognise it and answer with the light copy (stream it, or `302` redirect to the
+The server must recognize it and answer with the light copy (stream it, or `302` redirect to the
 channel's light URL). If it ignores the parameter and sends the original, the app notices (the
 picture is taller than 720p), goes back to the original and doesn't ask again for that channel.
 

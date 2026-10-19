@@ -34,7 +34,7 @@ export async function loadHdhrLineup(src) {
     .filter((c) => c.URL && c.GuideNumber != null)
     .map((c) => ({
       key: `hdhr:${c.GuideNumber}`,
-      // Keep the tuner number in the name: several channels often share a call sign ("9.1 KUSA", "9.2 KUSA").
+      // Keep the tuner number in the name: several channels often share a call sign ("5.1 WXXX", "5.2 WXXX").
       name: c.GuideName ? `${c.GuideNumber} ${c.GuideName}` : String(c.GuideNumber),
       tvgId: String(c.GuideNumber),
       tvgName: '',
@@ -58,7 +58,7 @@ export async function loadHdhrLineup(src) {
 
 const xmltvTime = (ts) => new Date(ts * 1000).toISOString().replace(/[-:T]/g, '').slice(0, 14) + ' +0000';
 
-// Jellyfin files programmes under "Movie" (singular); the guide service says "Movies".
+// Jellyfin files programs under "Movie" (singular); the guide service says "Movies".
 const EXTRA_CATEGORIES = { movies: 'Movie' };
 
 function programmeXml(guideNumber, p) {
@@ -83,7 +83,7 @@ function programmeXml(guideNumber, p) {
 
 /** Page through the free JSON guide (what the HDHomeRun apps use) and write it as XMLTV. */
 export async function writeGuideFromJson({ apiBase, auth, file, userAgent, days = GUIDE_DAYS }) {
-  const channels = new Map(); // GuideNumber -> { info, progs: Map(StartTime -> programme) }
+  const channels = new Map(); // GuideNumber -> { info, progs: Map(StartTime -> program) }
   let start = Math.floor(Date.now() / 1000);
   const end = start + days * 86400;
   for (let i = 0; i < MAX_GUIDE_REQUESTS && start < end; i++) {

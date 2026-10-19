@@ -33,26 +33,26 @@ const vodData = {
     { category_id: '203', category_name: 'FR| FILMS' },
   ],
   movies: [
-    { num: 1, name: 'Die Hard', stream_id: 5001, stream_icon: 'http://p/dh.jpg', rating: '8', added: '1700000000', category_id: '201', container_extension: 'mkv' },
-    { num: 2, name: 'Heat', stream_id: 5002, stream_icon: '', rating: '7', added: '1700000001', category_id: '201', container_extension: 'mp4' },
-    { num: 3, name: 'Frozen', stream_id: 5003, stream_icon: '', added: '1700000002', category_id: '202', container_extension: 'mp4' },
-    { num: 4, name: 'Amélie', stream_id: 5004, stream_icon: '', added: '1700000003', category_id: '203', container_extension: 'mp4' },
+    { num: 1, name: 'Tower Siege', stream_id: 5001, stream_icon: 'http://p/dh.jpg', rating: '8', added: '1700000000', category_id: '201', container_extension: 'mkv' },
+    { num: 2, name: 'City Chase', stream_id: 5002, stream_icon: '', rating: '7', added: '1700000001', category_id: '201', container_extension: 'mp4' },
+    { num: 3, name: 'Snow Day', stream_id: 5003, stream_icon: '', added: '1700000002', category_id: '202', container_extension: 'mp4' },
+    { num: 4, name: 'Caméra Obscura', stream_id: 5004, stream_icon: '', added: '1700000003', category_id: '203', container_extension: 'mp4' },
   ],
   seriesCats: [
     { category_id: '301', category_name: 'EN| DRAMA' },
     { category_id: '302', category_name: 'US| NEWS' },
   ],
   series: [
-    { num: 1, name: 'Breaking Bad', series_id: 7001, cover: 'http://p/bb.jpg', plot: 'Chemistry', last_modified: '1700000100', category_id: '301' },
-    { num: 2, name: 'The Newsroom', series_id: 7002, cover: '', last_modified: '1700000101', category_id: '302' },
+    { num: 1, name: 'Bad Chemistry', series_id: 7001, cover: 'http://p/bb.jpg', plot: 'Chemistry', last_modified: '1700000100', category_id: '301' },
+    { num: 2, name: 'The Night Desk', series_id: 7002, cover: '', last_modified: '1700000101', category_id: '302' },
   ],
 };
 
 const xcStreams = [
-  { num: 1, name: 'US: CNN HD', stream_id: 101, stream_icon: 'http://logo/cnn.png', epg_channel_id: 'cnn.us', category_id: '10' },
-  { num: 2, name: 'US: Fox News', stream_id: 102, stream_icon: '', epg_channel_id: '', category_id: '10' },
+  { num: 1, name: 'US: NewsNet HD', stream_id: 101, stream_icon: 'http://logo/newsnet.png', epg_channel_id: 'newsnet.us', category_id: '10' },
+  { num: 2, name: 'US: Daily News', stream_id: 102, stream_icon: '', epg_channel_id: '', category_id: '10' },
   { num: 3, name: 'Late Night', stream_id: 103, stream_icon: '', epg_channel_id: '', category_id: '11' },
-  { num: 4, name: 'UK: Sky Sports', stream_id: 104, stream_icon: '', epg_channel_id: 'sky.uk', category_id: '12' },
+  { num: 4, name: 'UK: Arena Sports', stream_id: 104, stream_icon: '', epg_channel_id: 'arena.uk', category_id: '12' },
 ];
 
 // DeviceAuth deliberately contains characters that must be URL-encoded.
@@ -81,7 +81,7 @@ function guide(ids) {
       x += `<programme start="${xmltvTime(s)}" stop="${xmltvTime(e)}" channel="${id}"><title>${name} show ${h}</title><desc>About ${name}</desc></programme>\n`;
     }
   }
-  // A stale programme outside the window must be dropped.
+  // A stale program outside the window must be dropped.
   x += `<programme start="20000101000000 +0000" stop="20000101010000 +0000" channel="${ids[0][0]}"><title>Old</title></programme>\n`;
   return x + '</tv>\n';
 }
@@ -97,12 +97,12 @@ function startUpstream() {
       res.writeHead(200, { 'content-type': 'audio/x-mpegurl' });
       return res.end([
         `#EXTM3U url-tvg="${up}/m3u-guide.xml.gz"`,
-        '#EXTINF:-1 tvg-id="bbc1.uk" tvg-logo="http://logo/bbc.png" group-title="UK| GENERAL",BBC One HD',
-        `${up}/hls/bbc/index.m3u8`,
-        '#EXTINF:-1 tvg-id="" group-title="UK| GENERAL",ITV 1',
+        '#EXTINF:-1 tvg-id="kingdom1.uk" tvg-logo="http://logo/bbc.png" group-title="UK| GENERAL",Kingdom One HD',
+        `${up}/hls/kingdom/index.m3u8`,
+        '#EXTINF:-1 tvg-id="" group-title="UK| GENERAL",Vista 1',
         'http://streams/itv.ts',
-        '#EXTINF:-1 tvg-id="cnn.us" group-title="US| NEWS",CNN',
-        'http://streams/cnn.ts',
+        '#EXTINF:-1 tvg-id="newsnet.us" group-title="US| NEWS",NewsNet',
+        'http://streams/newsnet.ts',
         '#EXTINF:-1 group-title="MOVIES",Some Movie',
         'http://h/movie/u/p/5.mp4',
         '#EXTINF:-1 tvg-logo="http://logo/lost.png" group-title="SHOWS",Lost S01 E01',
@@ -113,7 +113,7 @@ function startUpstream() {
     }
     if (u.pathname === '/m3u-guide.xml.gz') {
       res.writeHead(200, { 'content-type': 'application/octet-stream' });
-      return res.end(zlib.gzipSync(guide([['bbc1.uk', 'BBC One'], ['itv1.uk', 'ITV 1'], ['cnn.us', 'CNN M3U']])));
+      return res.end(zlib.gzipSync(guide([['kingdom1.uk', 'Kingdom One'], ['vista1.uk', 'Vista 1'], ['newsnet.us', 'NewsNet M3U']])));
     }
     if (u.pathname === '/player_api.php') {
       if (u.searchParams.get('username') !== 'xu' || u.searchParams.get('password') !== 'xp') return json({ user_info: { auth: 0 } });
@@ -131,7 +131,7 @@ function startUpstream() {
       if (action === 'get_series_info' && u.searchParams.get('series_id') === '7001') {
         return json({
           seasons: [{ season_number: 1, name: 'Season 1' }],
-          info: { name: 'Breaking Bad', plot: 'Chemistry teacher' },
+          info: { name: 'Bad Chemistry', plot: 'Chemistry teacher' },
           episodes: { 1: [
             { id: '90001', episode_num: 1, title: 'Pilot', container_extension: 'mkv', season: 1, info: { duration: '00:58:00' } },
             { id: '90002', episode_num: 2, title: 'Cat in the Bag', container_extension: 'mkv', season: 1, info: {} },
@@ -142,16 +142,16 @@ function startUpstream() {
     }
     if (u.pathname === '/xmltv.php') {
       res.writeHead(200, { 'content-type': 'application/xml' });
-      // Event channels whose programme airing now has a chosen title (e.g. "No Game Today").
-      // Deliberately appended after the other programmes, like a merged guide: ingest must
+      // Event channels whose program airing now has a chosen title (e.g. "No Game Today").
+      // Deliberately appended after the other programs, like a merged guide: ingest must
       // still match these late <channel> entries.
       const now = Date.now();
       // fromH/toH place the listing in time (default: airing now); channelOnly lists the channel
-      // with no programmes at all.
+      // with no programs at all.
       const events = eventGuide.map(({ id, title, fromH = -1, toH = 1, channelOnly, icon }) =>
         `<channel id="${id}"><display-name>${id}</display-name>${icon ? `<icon src="${icon}"/>` : ''}</channel>\n` +
         (channelOnly ? '' : `<programme start="${xmltvTime(new Date(now + fromH * 3600_000))}" stop="${xmltvTime(new Date(now + toH * 3600_000))}" channel="${id}"><title>${title}</title></programme>\n`)).join('');
-      return res.end(guide([['cnn.us', 'CNN'], ['sky.uk', 'Sky Sports'], ['foxnews.us', 'Fox News']]).replace('</tv>', `${events}</tv>`));
+      return res.end(guide([['newsnet.us', 'NewsNet'], ['arena.uk', 'Arena Sports'], ['dailynews.us', 'Daily News']]).replace('</tv>', `${events}</tv>`));
     }
     const liveId = /^\/live\/xu\/xp\/(95\d)\.ts$/.exec(u.pathname)?.[1];
     if (liveId) {
@@ -267,11 +267,11 @@ function startUpstream() {
         ]);
       }
     }
-    if (u.pathname === '/hls/bbc/index.m3u8') {
+    if (u.pathname === '/hls/kingdom/index.m3u8') {
       res.writeHead(200, { 'content-type': 'application/vnd.apple.mpegurl' });
       return res.end('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nseg1.ts\n');
     }
-    if (u.pathname === '/hls/bbc/seg1.ts') {
+    if (u.pathname === '/hls/kingdom/seg1.ts') {
       res.writeHead(200, { 'content-type': 'video/mp2t' });
       return res.end('SEGMENT-1');
     }
@@ -341,10 +341,10 @@ test('M3U source: parses, skips VOD, auto-associates the header EPG', async () =
   assert.equal(s.last_status, 'ok', s.last_error);
   assert.equal(s.counts.channels, 3);
   assert.equal(s.counts.categories, 2);
-  // bbc1.uk by tvg-id, ITV 1 by name, cnn.us by tvg-id
+  // kingdom1.uk by tvg-id, Vista 1 by name, newsnet.us by tvg-id
   assert.equal(s.counts.epg_matched, 3);
   const chans = (await api('GET', `/api/sources/${m3uId}/channels`)).data.items;
-  assert.equal(chans.find((c) => c.name === 'ITV 1').epg_match, 'name');
+  assert.equal(chans.find((c) => c.name === 'Vista 1').epg_match, 'name');
 });
 
 test('Xtream Codes source: categories, streams, account info and EPG', async () => {
@@ -360,7 +360,7 @@ test('Xtream Codes source: categories, streams, account info and EPG', async () 
   assert.equal(s.counts.channels, 4);
   assert.equal(s.counts.categories, 3);
   assert.equal(s.account_info.max_connections, '2');
-  assert.equal(s.counts.epg_matched, 3); // cnn.us, sky.uk by id; Fox News by name
+  assert.equal(s.counts.epg_matched, 3); // newsnet.us, arena.uk by id; Daily News by name
 });
 
 test('bad XC credentials produce an error status without wiping data', async () => {
@@ -407,13 +407,13 @@ test('M3U output: order, numbering, proxied URLs and EPG link', async () => {
   assert.equal(res.status, 200);
   const text = await res.text();
   const names = [...text.matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
-  assert.deepEqual(names, ['US: CNN HD', 'US: Fox News', 'BBC One HD', 'ITV 1', 'CNN']);
+  assert.deepEqual(names, ['US: NewsNet HD', 'US: Daily News', 'Kingdom One HD', 'Vista 1', 'NewsNet']);
   assert.match(text, /^#EXTM3U url-tvg="http:\/\/127\.0\.0\.1:\d+\/o\/[^/]+\/epg\.xml"/);
-  assert.match(text, /tvg-chno="100"[^\n]*,US: CNN HD/);
-  assert.match(text, /tvg-chno="104"[^\n]*,CNN/);
-  // cnn.us exists in both sources: the second gets a source-scoped id.
-  assert.match(text, /tvg-id="cnn\.us"[^\n]*,US: CNN HD/);
-  assert.match(text, new RegExp(`tvg-id="cnn\\.us\\.s${m3uId}"[^\\n]*,CNN`));
+  assert.match(text, /tvg-chno="100"[^\n]*,US: NewsNet HD/);
+  assert.match(text, /tvg-chno="104"[^\n]*,NewsNet/);
+  // newsnet.us exists in both sources: the second gets a source-scoped id.
+  assert.match(text, /tvg-id="newsnet\.us"[^\n]*,US: NewsNet HD/);
+  assert.match(text, new RegExp(`tvg-id="newsnet\\.us\\.s${m3uId}"[^\\n]*,NewsNet`));
   assert.ok(!text.includes('xu/xp'), 'provider credentials must not leak in proxy mode');
   assert.equal((await fetch(`${base}/o/nottoken/playlist.m3u`)).status, 404);
 });
@@ -423,16 +423,16 @@ test('EPG output contains only selected channels, in window, with renamed ids', 
   assert.equal(res.status, 200);
   const xml = await res.text();
   const channelIds = [...xml.matchAll(/<channel id="([^"]+)"/g)].map((m) => m[1]).sort();
-  assert.deepEqual(channelIds, ['bbc1.uk', 'cnn.us', `cnn.us.s${m3uId}`, 'foxnews.us', 'itv1.uk'].sort());
-  assert.ok(!xml.includes('sky.uk'));
-  assert.ok(!xml.includes('>Old<'), 'stale programmes are dropped');
-  assert.match(xml, new RegExp(`channel="cnn\\.us\\.s${m3uId}"><title>CNN M3U show 0</title>`));
-  assert.match(xml, /channel="cnn\.us"><title>CNN show 0<\/title>/);
+  assert.deepEqual(channelIds, ['kingdom1.uk', 'newsnet.us', `newsnet.us.s${m3uId}`, 'dailynews.us', 'vista1.uk'].sort());
+  assert.ok(!xml.includes('arena.uk'));
+  assert.ok(!xml.includes('>Old<'), 'stale programs are dropped');
+  assert.match(xml, new RegExp(`channel="newsnet\\.us\\.s${m3uId}"><title>NewsNet M3U show 0</title>`));
+  assert.match(xml, /channel="newsnet\.us"><title>NewsNet show 0<\/title>/);
   const gz = await fetch(`${base}/o/${token}/epg.xml.gz`);
   assert.equal(zlib.gunzipSync(Buffer.from(await gz.arrayBuffer())).toString(), xml);
 });
 
-test('Jellyfin categories on a group tag every programme of its channels, and only those', async () => {
+test('Jellyfin categories on a group tag every program of its channels, and only those', async () => {
   const cats = (await api('GET', `/api/sources/${xcId}/categories`)).data;
   const news = cats.find((c) => c.name === 'US| NEWS');
   assert.equal((await api('PUT', `/api/categories/${news.id}`, { jellyfin: ['Sports'] })).status, 200);
@@ -444,23 +444,23 @@ test('Jellyfin categories on a group tag every programme of its channels, and on
 
   const xml = await (await fetch(`${base}/o/${token}/epg.xml`, { headers: { 'accept-encoding': 'identity' } })).text();
   const programmes = (id) => [...xml.matchAll(new RegExp(`<programme [^>]*channel="${id.replace(/\./g, '\\.')}">(.*?)</programme>`, 'g'))].map((m) => m[1]);
-  const tagged = [...programmes('cnn.us'), ...programmes('foxnews.us')];
+  const tagged = [...programmes('newsnet.us'), ...programmes('dailynews.us')];
   assert.ok(tagged.length >= 6);
   for (const p of tagged) {
     assert.match(p, /<\/desc><category lang="en">News<\/category><category lang="en">Kids<\/category>$/);
   }
   // Same group name from the M3U source is a different group: untouched.
-  for (const p of [...programmes(`cnn.us.s${m3uId}`), ...programmes('bbc1.uk')]) assert.doesNotMatch(p, /<category/);
+  for (const p of [...programmes(`newsnet.us.s${m3uId}`), ...programmes('kingdom1.uk')]) assert.doesNotMatch(p, /<category/);
 
   const m3u = await (await fetch(`${base}/o/${token}/playlist.m3u`)).text();
-  assert.match(m3u, /group-title="US News",US: CNN HD/);
+  assert.match(m3u, /group-title="US News",US: NewsNet HD/);
   await api('PUT', `/api/categories/${news.id}`, { custom_name: '' });
 });
 
 test('proxy mode relays TS with the source user agent and rewrites HLS', async () => {
   const text = await (await fetch(`${base}/o/${token}/playlist.m3u`)).text();
-  const cnn = text.split('\n').find((l) => /\/s\/.+\.ts$/.test(l));
-  const ts = await fetch(cnn);
+  const newsnet = text.split('\n').find((l) => /\/s\/.+\.ts$/.test(l));
+  const ts = await fetch(newsnet);
   assert.equal(ts.status, 200);
   assert.equal(await ts.text(), 'TS-101.ts');
 
@@ -482,12 +482,12 @@ test('Xtream Codes output API', async () => {
   const streams = await q('get_live_streams');
   assert.equal(streams.length, 5);
   const inCat = await q('get_live_streams', `&category_id=${cats[1].category_id}`);
-  assert.deepEqual(inCat.map((s) => s.name), ['BBC One HD', 'ITV 1']);
+  assert.deepEqual(inCat.map((s) => s.name), ['Kingdom One HD', 'Vista 1']);
   assert.deepEqual(await q('get_vod_streams'), []);
   const epg = await q('get_short_epg', `&stream_id=${streams[0].stream_id}&limit=2`);
   assert.equal(epg.epg_listings.length, 2);
-  assert.equal(Buffer.from(epg.epg_listings[0].title, 'base64').toString(), 'CNN show 0');
-  assert.equal(Buffer.from(epg.epg_listings[0].description, 'base64').toString(), 'About CNN');
+  assert.equal(Buffer.from(epg.epg_listings[0].title, 'base64').toString(), 'NewsNet show 0');
+  assert.equal(Buffer.from(epg.epg_listings[0].description, 'base64').toString(), 'About NewsNet');
   const live = await fetch(`${base}/live/family/pw123/${streams[0].stream_id}.ts`);
   assert.equal(await live.text(), 'TS-101.ts');
   assert.equal((await fetch(`${base}/live/family/bad/${streams[0].stream_id}.ts`)).status, 401);
@@ -498,7 +498,7 @@ test('Xtream Codes output API', async () => {
 test('new upstream categories that match rules join automatically; manual overrides stick', async () => {
   xcCats.push({ category_id: '13', category_name: 'US| SPORTS' }, { category_id: '14', category_name: 'FR| INFO' });
   xcStreams.push(
-    { num: 5, name: 'US: ESPN', stream_id: 105, epg_channel_id: '', category_id: '13' },
+    { num: 5, name: 'US: Sportsline', stream_id: 105, epg_channel_id: '', category_id: '13' },
     { num: 6, name: 'France 24', stream_id: 106, epg_channel_id: '', category_id: '14' },
   );
   await api('POST', `/api/sources/${xcId}/refresh`);
@@ -514,27 +514,27 @@ test('new upstream categories that match rules join automatically; manual overri
   await api('PUT', `/api/outputs/${outputId}/categories`, { ids: [sports.id], state: 'exclude' });
   await api('PUT', `/api/outputs/${outputId}/categories`, { ids: [fr.id], state: 'include' });
   let text = await (await fetch(`${base}/o/${token}/playlist.m3u`)).text();
-  assert.ok(!text.includes('US: ESPN'));
+  assert.ok(!text.includes('US: Sportsline'));
   assert.ok(text.includes('France 24'));
 
   // Survives another refresh.
   await api('POST', `/api/sources/${xcId}/refresh`);
   await app.ctx.jobs.idle();
   text = await (await fetch(`${base}/o/${token}/playlist.m3u`)).text();
-  assert.ok(!text.includes('US: ESPN'));
+  assert.ok(!text.includes('US: Sportsline'));
   assert.ok(text.includes('France 24'));
 });
 
 test('channel edits and per-output channel overrides', async () => {
-  const chans = (await api('GET', `/api/sources/${m3uId}/channels?q=ITV`)).data.items;
+  const chans = (await api('GET', `/api/sources/${m3uId}/channels?q=Vista`)).data.items;
   const itv = chans[0];
   const r = await api('PUT', `/api/channels/${itv.id}`, { custom_name: 'ITV One', custom_logo: 'http://logo/itv.png' });
   assert.equal(r.status, 200);
-  const bbc = (await api('GET', `/api/sources/${m3uId}/channels?q=BBC`)).data.items[0];
+  const bbc = (await api('GET', `/api/sources/${m3uId}/channels?q=Kingdom`)).data.items[0];
   await api('PUT', `/api/outputs/${outputId}/channels`, { ids: [bbc.id], state: 'exclude' });
   const text = await (await fetch(`${base}/o/${token}/playlist.m3u`)).text();
   assert.match(text, /tvg-logo="http:\/\/logo\/itv\.png"[^\n]*,ITV One/);
-  assert.ok(!text.includes('BBC One'));
+  assert.ok(!text.includes('Kingdom One'));
 });
 
 test('channel rules inside one category; manual channel picks still win', async () => {
@@ -543,26 +543,26 @@ test('channel rules inside one category; manual channel picks still win', async 
   const names = async () => [...(await (await fetch(`${base}/o/${token}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
 
   assert.equal((await api('PUT', `/api/outputs/${outputId}/categories/${news.id}/channel-rules`, { rules: [{ action: 'exclude', op: 'wat', value: 'x' }] })).status, 400);
-  await api('PUT', `/api/outputs/${outputId}/categories/${news.id}/channel-rules`, { rules: [{ action: 'exclude', op: 'contains', value: 'fox' }] });
+  await api('PUT', `/api/outputs/${outputId}/categories/${news.id}/channel-rules`, { rules: [{ action: 'exclude', op: 'contains', value: 'daily' }] });
   let list = await names();
-  assert.ok(list.includes('US: CNN HD') && !list.includes('US: Fox News'));
+  assert.ok(list.includes('US: NewsNet HD') && !list.includes('US: Daily News'));
   // The M3U source's "US| NEWS" is a different category and is untouched.
-  assert.ok(list.includes('CNN'));
+  assert.ok(list.includes('NewsNet'));
 
   const view = (await api('GET', `/api/outputs/${outputId}/channels?category_id=${news.id}`)).data;
-  assert.deepEqual(view.rules.map((r) => [r.action, r.op, r.value]), [['exclude', 'contains', 'fox']]);
-  const fox = view.channels.find((c) => c.name === 'US: Fox News');
+  assert.deepEqual(view.rules.map((r) => [r.action, r.op, r.value]), [['exclude', 'contains', 'daily']]);
+  const fox = view.channels.find((c) => c.name === 'US: Daily News');
   assert.deepEqual([fox.included, fox.reason], [false, 'rule']);
 
   await api('PUT', `/api/outputs/${outputId}/channels`, { ids: [fox.id], state: 'include' });
-  assert.ok((await names()).includes('US: Fox News'), 'manual include beats the rule');
+  assert.ok((await names()).includes('US: Daily News'), 'manual include beats the rule');
   await api('PUT', `/api/outputs/${outputId}/channels`, { ids: [fox.id], state: null });
 
-  await api('PUT', `/api/outputs/${outputId}/categories/${news.id}/channel-rules`, { rules: [{ action: 'include', op: 'starts_with', value: 'us: cnn' }] });
+  await api('PUT', `/api/outputs/${outputId}/categories/${news.id}/channel-rules`, { rules: [{ action: 'include', op: 'starts_with', value: 'us: newsnet' }] });
   list = await names();
-  assert.ok(list.includes('US: CNN HD') && !list.includes('US: Fox News'));
-  const cnn = (await api('GET', `/api/outputs/${outputId}/channels?category_id=${news.id}`)).data.channels.find((c) => c.name === 'US: CNN HD');
-  assert.equal(cnn.reason, 'rule');
+  assert.ok(list.includes('US: NewsNet HD') && !list.includes('US: Daily News'));
+  const newsnet = (await api('GET', `/api/outputs/${outputId}/channels?category_id=${news.id}`)).data.channels.find((c) => c.name === 'US: NewsNet HD');
+  assert.equal(newsnet.reason, 'rule');
 });
 
 test('find a channel across an output: every attached source, with its state and why', async () => {
@@ -570,17 +570,17 @@ test('find a channel across an output: every attached source, with its state and
   const cats = new Map((await api('GET', `/api/outputs/${outputId}/categories`)).data.map((c) => [c.id, c]));
   const brief = (r) => r.matches.map((m) => [m.name, cats.get(m.category_id).source_id === xcId ? 'xc' : 'm3u', m.included, m.reason]);
 
-  // Case-insensitive, from both sources; the XC news category still has 'starts with "us: cnn"'.
-  let r = await find('CnN');
-  assert.deepEqual(brief(r).sort(), [['CNN', 'm3u', true, 'category'], ['US: CNN HD', 'xc', true, 'rule']]);
+  // Case-insensitive, from both sources; the XC news category still has 'starts with "us: newsnet"'.
+  let r = await find('NeWsNeT');
+  assert.deepEqual(brief(r).sort(), [['NewsNet', 'm3u', true, 'category'], ['US: NewsNet HD', 'xc', true, 'rule']]);
   assert.equal(r.total, 2);
-  r = await find('fox news');
-  assert.deepEqual(brief(r).filter((m) => m[1] === 'xc'), [['US: Fox News', 'xc', false, 'nomatch']]);
-  r = await find('sky sports');
-  assert.deepEqual(brief(r), [['UK: Sky Sports', 'xc', false, 'category']], 'channels of excluded categories are found too');
+  r = await find('daily news');
+  assert.deepEqual(brief(r).filter((m) => m[1] === 'xc'), [['US: Daily News', 'xc', false, 'nomatch']]);
+  r = await find('arena sports');
+  assert.deepEqual(brief(r), [['UK: Arena Sports', 'xc', false, 'category']], 'channels of excluded categories are found too');
   assert.deepEqual(await find('c'), { matches: [], total: 0 }, 'two characters at least');
   assert.deepEqual((await find('no such channel zz')).matches, []);
-  assert.equal((await api('GET', '/api/outputs/99999/search?q=cnn')).status, 404);
+  assert.equal((await api('GET', '/api/outputs/99999/search?q=newsnet')).status, 404);
 });
 
 test('an excluded category excludes its channels even if picked by hand; picks return when included', async () => {
@@ -589,7 +589,7 @@ test('an excluded category excludes its channels even if picked by hand; picks r
   assert.equal(uk.included, false);
   const sky = (await api('GET', `/api/outputs/${outputId}/channels?category_id=${uk.id}`)).data.channels[0];
   await api('PUT', `/api/outputs/${outputId}/channels`, { ids: [sky.id], state: 'include' });
-  const has = async () => (await (await fetch(`${base}/o/${token}/playlist.m3u`)).text()).includes('UK: Sky Sports');
+  const has = async () => (await (await fetch(`${base}/o/${token}/playlist.m3u`)).text()).includes('UK: Arena Sports');
   assert.equal(await has(), false, 'a hand pick cannot pull a channel out of an excluded category');
   const view = (await api('GET', `/api/outputs/${outputId}/channels?category_id=${uk.id}`)).data;
   assert.deepEqual([view.category_included, view.channels[0].included, view.channels[0].override], [false, false, 'include']);
@@ -616,7 +616,7 @@ test('ends with / does not end with, for categories and channels', async () => {
   const news = cats.find((c) => c.name === 'US| NEWS');
   await api('PUT', `/api/outputs/${o.id}/categories/${news.id}/channel-rules`, { rules: [{ action: 'exclude', op: 'not_ends_with', value: ' hd' }] });
   const names = [...(await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
-  assert.deepEqual(names, ['US: CNN HD']);
+  assert.deepEqual(names, ['US: NewsNet HD']);
   await api('DELETE', `/api/outputs/${o.id}`);
 });
 
@@ -625,7 +625,7 @@ test('a second output with different criteria and direct mode', async () => {
   await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [{ action: 'include', op: 'contains', value: 'sports' }] });
   const text = await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text();
   const names = [...text.matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
-  assert.deepEqual(names, ['UK: Sky Sports', 'US: ESPN']);
+  assert.deepEqual(names, ['UK: Arena Sports', 'US: Sportsline']);
   assert.match(text, /\/live\/xu\/xp\/104\.ts/, 'direct mode hands out provider URLs');
   const list = (await api('GET', '/api/outputs')).data;
   assert.equal(list.length, 2);
@@ -763,35 +763,35 @@ test('HDHomeRun: an unreachable box is a clear error and keeps the last lineup',
 });
 
 test('hide empty event channels: per-category toggle, editable patterns, backup round trip', async () => {
-  xcCats.push({ category_id: '20', category_name: 'US| ESPN+ EVENTS' });
-  const events = ['ESPN+ 01:', 'ESPN+ 02: Lakers vs Celtics', 'ESPN+ 03 -', 'ESPN+ 04', 'ESPN+ 05 NO EVENT', 'ESPN+ 06: Bills - Jets'];
+  xcCats.push({ category_id: '20', category_name: 'US| MATCH EVENTS' });
+  const events = ['Match 01:', 'Match 02: Team A vs Team B', 'Match 03 -', 'Match 04', 'Match 05 NO EVENT', 'Match 06: Team C - Team D'];
   events.forEach((name, i) => xcStreams.push({ num: 50 + i, name, stream_id: 500 + i, epg_channel_id: '', category_id: '20' }));
   await api('POST', `/api/sources/${xcId}/refresh`);
   await app.ctx.jobs.idle();
 
   const o = (await api('POST', '/api/outputs', { name: 'Events' })).data;
-  await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [{ action: 'include', op: 'contains', value: 'espn+' }] });
-  const cat = (await api('GET', `/api/outputs/${o.id}/categories`)).data.find((c) => c.name === 'US| ESPN+ EVENTS');
+  await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [{ action: 'include', op: 'contains', value: 'match events' }] });
+  const cat = (await api('GET', `/api/outputs/${o.id}/categories`)).data.find((c) => c.name === 'US| MATCH EVENTS');
   const names = async () => [...(await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
   assert.equal((await names()).length, 6, 'off by default');
 
   await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_empty: true });
-  assert.deepEqual(await names(), ['ESPN+ 02: Lakers vs Celtics', 'ESPN+ 06: Bills - Jets']);
+  assert.deepEqual(await names(), ['Match 02: Team A vs Team B', 'Match 06: Team C - Team D']);
   const view = (await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data;
   assert.equal(view.hide_empty, true);
-  assert.deepEqual(view.channels.filter((c) => c.reason === 'empty').map((c) => c.name), ['ESPN+ 01:', 'ESPN+ 03 -', 'ESPN+ 04', 'ESPN+ 05 NO EVENT']);
+  assert.deepEqual(view.channels.filter((c) => c.reason === 'empty').map((c) => c.name), ['Match 01:', 'Match 03 -', 'Match 04', 'Match 05 NO EVENT']);
 
   // A hand pick still wins over the toggle.
-  const idle = view.channels.find((c) => c.name === 'ESPN+ 04');
+  const idle = view.channels.find((c) => c.name === 'Match 04');
   await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [idle.id], state: 'include' });
-  assert.ok((await names()).includes('ESPN+ 04'));
+  assert.ok((await names()).includes('Match 04'));
   await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [idle.id], state: null });
 
   // Edit the patterns: drop "ends with a number", keep the rest.
   assert.equal((await api('PUT', '/api/settings', { empty_event_patterns: ['('] })).status, 400);
   const s = await api('PUT', '/api/settings', { empty_event_patterns: [':\\s*$', '-\\s*$', 'no event\\s*$'] });
   assert.equal(s.status, 200);
-  assert.deepEqual(await names(), ['ESPN+ 02: Lakers vs Celtics', 'ESPN+ 04', 'ESPN+ 06: Bills - Jets']);
+  assert.deepEqual(await names(), ['Match 02: Team A vs Team B', 'Match 04', 'Match 06: Team C - Team D']);
   const settings = (await api('GET', '/api/settings')).data;
   assert.equal(settings.empty_event_patterns.length, 3);
   assert.equal(settings.base_url, '', 'saving patterns leaves other settings alone');
@@ -799,7 +799,7 @@ test('hide empty event channels: per-category toggle, editable patterns, backup 
   // Export keeps both the custom patterns and the toggle; a fresh instance reproduces the output.
   const exported = (await api('GET', '/api/export')).data;
   assert.deepEqual(exported.settings.empty_event_patterns, [':\\s*$', '-\\s*$', 'no event\\s*$']);
-  assert.deepEqual(exported.outputs.find((x) => x.token === o.token).category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true, hide_by_guide: false, hide_unlisted: false, unlisted_hours: 24 }]);
+  assert.deepEqual(exported.outputs.find((x) => x.token === o.token).category_options, [{ source: xcId, category: 'US| MATCH EVENTS', hide_empty: true, hide_by_guide: false, hide_unlisted: false, unlisted_hours: 24 }]);
   const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-import2-'));
   const app2 = createApp({ dataDir: dir2, adminPassword: PASSWORD, log: () => {} });
   const base2 = `http://127.0.0.1:${(await app2.start(0, '127.0.0.1')).port}`;
@@ -818,7 +818,7 @@ test('hide empty event channels: per-category toggle, editable patterns, backup 
 
   // null restores the defaults.
   await api('PUT', '/api/settings', { empty_event_patterns: null });
-  assert.deepEqual(await names(), ['ESPN+ 02: Lakers vs Celtics', 'ESPN+ 06: Bills - Jets']);
+  assert.deepEqual(await names(), ['Match 02: Team A vs Team B', 'Match 06: Team C - Team D']);
 });
 
 test('export/import of empty-event settings: defaults, empty list, old files, bad files', async () => {
@@ -842,7 +842,7 @@ test('export/import of empty-event settings: defaults, empty list, old files, ba
   let file = (await api('GET', '/api/export')).data;
   assert.equal(file.settings.empty_event_patterns, null);
   const events = file.outputs.find((o) => o.name === 'Events');
-  assert.deepEqual(events.category_options, [{ source: xcId, category: 'US| ESPN+ EVENTS', hide_empty: true, hide_by_guide: false, hide_unlisted: false, unlisted_hours: 24 }]);
+  assert.deepEqual(events.category_options, [{ source: xcId, category: 'US| MATCH EVENTS', hide_empty: true, hide_by_guide: false, hide_unlisted: false, unlisted_hours: 24 }]);
 
   // 2. The toggle's category does not exist on the new instance until its first refresh;
   //    the import creates it as a placeholder and the toggle applies once channels arrive.
@@ -853,7 +853,7 @@ test('export/import of empty-event settings: defaults, empty list, old files, ba
     assert.equal((await t.call('POST', '/api/import', file)).status, 200);
     await t.a.ctx.jobs.idle();
     assert.equal((await t.call('GET', '/api/settings')).data.empty_event_patterns.length, 4, 'defaults restored over the custom list');
-    assert.deepEqual(await names(t.b, events.token), ['ESPN+ 02: Lakers vs Celtics', 'ESPN+ 06: Bills - Jets']);
+    assert.deepEqual(await names(t.b, events.token), ['Match 02: Team A vs Team B', 'Match 06: Team C - Team D']);
   } finally {
     await t.close();
   }
@@ -906,36 +906,36 @@ test('export/import of empty-event settings: defaults, empty list, old files, ba
 });
 
 test('hide channels by guide: title airing now, separate from the name toggle, clock-driven, backed up', async () => {
-  xcCats.push({ category_id: '30', category_name: 'US| NFL SUNDAY' });
+  xcCats.push({ category_id: '30', category_name: 'US| Gameday SUNDAY' });
   xcStreams.push(
-    { num: 70, name: 'NFL 01', stream_id: 700, epg_channel_id: 'nfl1', category_id: '30' },
-    { num: 71, name: 'NFL 02', stream_id: 701, epg_channel_id: 'nfl2', category_id: '30' },
-    { num: 72, name: 'NFL 03', stream_id: 702, epg_channel_id: '', category_id: '30' }, // no guide at all
-    { num: 73, name: 'NFL 04', stream_id: 703, epg_channel_id: 'nfl4', category_id: '30' },
+    { num: 70, name: 'Gameday 01', stream_id: 700, epg_channel_id: 'gameday1', category_id: '30' },
+    { num: 71, name: 'Gameday 02', stream_id: 701, epg_channel_id: 'gameday2', category_id: '30' },
+    { num: 72, name: 'Gameday 03', stream_id: 702, epg_channel_id: '', category_id: '30' }, // no guide at all
+    { num: 73, name: 'Gameday 04', stream_id: 703, epg_channel_id: 'gameday4', category_id: '30' },
   );
-  eventGuide.push({ id: 'nfl1', title: 'No Game Today' }, { id: 'nfl2', title: 'Bills at Jets' }, { id: 'nfl4', title: 'Off Air' });
+  eventGuide.push({ id: 'gameday1', title: 'No Game Today' }, { id: 'gameday2', title: 'Team C at Team D' }, { id: 'gameday4', title: 'Off Air' });
   await api('POST', `/api/sources/${xcId}/refresh`);
   await app.ctx.jobs.idle();
 
-  const o = (await api('POST', '/api/outputs', { name: 'NFL' })).data;
-  await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [{ action: 'include', op: 'contains', value: 'nfl' }] });
-  const cat = (await api('GET', `/api/outputs/${o.id}/categories`)).data.find((c) => c.name === 'US| NFL SUNDAY');
+  const o = (await api('POST', '/api/outputs', { name: 'Gameday' })).data;
+  await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [{ action: 'include', op: 'contains', value: 'gameday' }] });
+  const cat = (await api('GET', `/api/outputs/${o.id}/categories`)).data.find((c) => c.name === 'US| Gameday SUNDAY');
   const names = async () => [...(await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
-  assert.deepEqual(await names(), ['NFL 01', 'NFL 02', 'NFL 03', 'NFL 04'], 'off by default');
+  assert.deepEqual(await names(), ['Gameday 01', 'Gameday 02', 'Gameday 03', 'Gameday 04'], 'off by default');
 
   // The panel shows what is on now even before the toggle is on.
   let view = (await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data;
   assert.deepEqual(view.channels.map((c) => [c.name, c.now_title, c.is_guide_placeholder]),
-    [['NFL 01', 'No Game Today', true], ['NFL 02', 'Bills at Jets', false], ['NFL 03', null, false], ['NFL 04', 'Off Air', true]]);
+    [['Gameday 01', 'No Game Today', true], ['Gameday 02', 'Team C at Team D', false], ['Gameday 03', null, false], ['Gameday 04', 'Off Air', true]]);
 
   // Separate toggle: guide on, names off (these names end in numbers, which the name toggle would hide).
   await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_by_guide: true });
-  assert.deepEqual(await names(), ['NFL 02', 'NFL 03'], 'placeholders hidden; no listing means not hidden');
+  assert.deepEqual(await names(), ['Gameday 02', 'Gameday 03'], 'placeholders hidden; no listing means not hidden');
   view = (await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data;
   assert.deepEqual([view.hide_by_guide, view.hide_empty], [true, false]);
-  assert.equal(view.channels.find((c) => c.name === 'NFL 01').reason, 'guide');
+  assert.equal(view.channels.find((c) => c.name === 'Gameday 01').reason, 'guide');
   const xml = await (await fetch(`${base}/o/${o.token}/epg.xml`, { headers: { 'accept-encoding': 'identity' } })).text();
-  assert.ok(!xml.includes('channel="nfl1"') && xml.includes('channel="nfl2"'), 'the guide output follows the playlist');
+  assert.ok(!xml.includes('channel="gameday1"') && xml.includes('channel="gameday2"'), 'the guide output follows the playlist');
 
   // Turning on the name toggle too does not undo the guide one (partial update of options).
   await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_empty: true });
@@ -945,26 +945,26 @@ test('hide channels by guide: title airing now, separate from the name toggle, c
   // The clock: once the placeholder's slot has ended, the channel returns without any refresh.
   const src = app.ctx.db.get('SELECT epg_gen FROM sources WHERE id = ?', [xcId]);
   const t = Math.floor(Date.now() / 1000);
-  app.ctx.db.run('UPDATE programmes SET stop_ts = ? WHERE source_id = ? AND gen = ? AND channel = ?', [t - 1, xcId, src.epg_gen, 'nfl1']);
+  app.ctx.db.run('UPDATE programmes SET stop_ts = ? WHERE source_id = ? AND gen = ? AND channel = ?', [t - 1, xcId, src.epg_gen, 'gameday1']);
   app.ctx.bump(); // stands in for the one-minute cache expiring
-  assert.deepEqual(await names(), ['NFL 01', 'NFL 02', 'NFL 03']);
+  assert.deepEqual(await names(), ['Gameday 01', 'Gameday 02', 'Gameday 03']);
 
   // Hand picks win; custom patterns apply; settings are partial.
-  const nfl4 = view.channels.find((c) => c.name === 'NFL 04');
-  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [nfl4.id], state: 'include' });
-  assert.ok((await names()).includes('NFL 04'));
-  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [nfl4.id], state: null });
+  const gameday4 = view.channels.find((c) => c.name === 'Gameday 04');
+  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [gameday4.id], state: 'include' });
+  assert.ok((await names()).includes('Gameday 04'));
+  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [gameday4.id], state: null });
   assert.equal((await api('PUT', '/api/settings', { guide_patterns: ['['] })).status, 400);
-  await api('PUT', '/api/settings', { guide_patterns: ['^bills'] });
-  assert.deepEqual(await names(), ['NFL 01', 'NFL 03', 'NFL 04']);
+  await api('PUT', '/api/settings', { guide_patterns: ['^team c'] });
+  assert.deepEqual(await names(), ['Gameday 01', 'Gameday 03', 'Gameday 04']);
   const s = (await api('GET', '/api/settings')).data;
-  assert.deepEqual([s.guide_patterns, s.empty_event_patterns.length], [['^bills'], 4]);
+  assert.deepEqual([s.guide_patterns, s.empty_event_patterns.length], [['^team c'], 4]);
 
   // Backup: guide patterns and the toggle travel with the export.
   const file = (await api('GET', '/api/export')).data;
-  assert.deepEqual(file.settings.guide_patterns, ['^bills']);
+  assert.deepEqual(file.settings.guide_patterns, ['^team c']);
   assert.deepEqual(file.outputs.find((x) => x.token === o.token).category_options,
-    [{ source: xcId, category: 'US| NFL SUNDAY', hide_empty: false, hide_by_guide: true, hide_unlisted: false, unlisted_hours: 24 }]);
+    [{ source: xcId, category: 'US| Gameday SUNDAY', hide_empty: false, hide_by_guide: true, hide_unlisted: false, unlisted_hours: 24 }]);
   const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-guide-'));
   const app2 = createApp({ dataDir: dir2, adminPassword: PASSWORD, log: () => {} });
   const base2 = `http://127.0.0.1:${(await app2.start(0, '127.0.0.1')).port}`;
@@ -974,9 +974,9 @@ test('hide channels by guide: title airing now, separate from the name toggle, c
     const r = await fetch(`${base2}/api/import`, { method: 'POST', headers: { cookie: c2, 'content-type': 'application/json', 'x-requested-with': 'fetch' }, body: JSON.stringify(file) });
     assert.equal(r.status, 200, await r.clone().text());
     await app2.ctx.jobs.idle();
-    // Fresh guide data on the new instance: nfl2 ("Bills at Jets") matches ^bills and is hidden.
+    // Fresh guide data on the new instance: gameday2 ("Team C at Team D") matches ^team c and is hidden.
     const after = [...(await (await fetch(`${base2}/o/${o.token}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
-    assert.deepEqual(after, ['NFL 01', 'NFL 03', 'NFL 04']);
+    assert.deepEqual(after, ['Gameday 01', 'Gameday 03', 'Gameday 04']);
   } finally {
     await app2.close();
     fs.rmSync(dir2, { recursive: true, force: true });
@@ -986,31 +986,31 @@ test('hide channels by guide: title airing now, separate from the name toggle, c
 });
 
 test('hide channels with nothing listed in the next N hours: sub-option of the guide toggle, with a stale-guide safety net', async () => {
-  xcCats.push({ category_id: '31', category_name: 'US| NBA LEAGUE PASS' });
+  xcCats.push({ category_id: '31', category_name: 'US| Hoops LEAGUE PASS' });
   xcStreams.push(
-    { num: 80, name: 'NBA 01', stream_id: 800, epg_channel_id: 'nba1', category_id: '31' }, // game on now
-    { num: 81, name: 'NBA 02', stream_id: 801, epg_channel_id: 'nba2', category_id: '31' }, // game later tonight
-    { num: 82, name: 'NBA 03', stream_id: 802, epg_channel_id: 'nba3', category_id: '31' }, // listed, no programmes
-    { num: 83, name: 'NBA 04', stream_id: 803, epg_channel_id: 'nba4', category_id: '31' }, // guide id unknown to the guide
-    { num: 84, name: 'NBA 05', stream_id: 804, epg_channel_id: '', category_id: '31' }, // no guide id at all
-    { num: 85, name: 'NBA 06', stream_id: 805, epg_channel_id: 'nba6', category_id: '31' }, // blank title now
-    { num: 86, name: 'NBA 07', stream_id: 806, epg_channel_id: 'nba7', category_id: '31' }, // game the day after tomorrow
+    { num: 80, name: 'Hoops 01', stream_id: 800, epg_channel_id: 'hoops1', category_id: '31' }, // game on now
+    { num: 81, name: 'Hoops 02', stream_id: 801, epg_channel_id: 'hoops2', category_id: '31' }, // game later tonight
+    { num: 82, name: 'Hoops 03', stream_id: 802, epg_channel_id: 'hoops3', category_id: '31' }, // listed, no programs
+    { num: 83, name: 'Hoops 04', stream_id: 803, epg_channel_id: 'hoops4', category_id: '31' }, // guide id unknown to the guide
+    { num: 84, name: 'Hoops 05', stream_id: 804, epg_channel_id: '', category_id: '31' }, // no guide id at all
+    { num: 85, name: 'Hoops 06', stream_id: 805, epg_channel_id: 'hoops6', category_id: '31' }, // blank title now
+    { num: 86, name: 'Hoops 07', stream_id: 806, epg_channel_id: 'hoops7', category_id: '31' }, // game the day after tomorrow
   );
   eventGuide.push(
-    { id: 'nba1', title: 'Lakers at Celtics' },
-    { id: 'nba2', title: 'Knicks at Heat', fromH: 2, toH: 4 },
-    { id: 'nba3', channelOnly: true },
-    { id: 'nba6', title: '' },
-    { id: 'nba7', title: 'Bulls at Suns', fromH: 30, toH: 33 },
+    { id: 'hoops1', title: 'Team A at Team B' },
+    { id: 'hoops2', title: 'Knicks at City Chase', fromH: 2, toH: 4 },
+    { id: 'hoops3', channelOnly: true },
+    { id: 'hoops6', title: '' },
+    { id: 'hoops7', title: 'Bulls at Suns', fromH: 30, toH: 33 },
   );
   await api('POST', `/api/sources/${xcId}/refresh`);
   await app.ctx.jobs.idle();
 
-  const o = (await api('POST', '/api/outputs', { name: 'NBA' })).data;
-  await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [{ action: 'include', op: 'contains', value: 'nba' }] });
-  const cat = (await api('GET', `/api/outputs/${o.id}/categories`)).data.find((c) => c.name === 'US| NBA LEAGUE PASS');
+  const o = (await api('POST', '/api/outputs', { name: 'Hoops' })).data;
+  await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId], rules: [{ action: 'include', op: 'contains', value: 'hoops' }] });
+  const cat = (await api('GET', `/api/outputs/${o.id}/categories`)).data.find((c) => c.name === 'US| Hoops LEAGUE PASS');
   const names = async () => [...(await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text()).matchAll(/,([^\n]+)\n/g)].map((m) => m[1]);
-  const all = ['NBA 01', 'NBA 02', 'NBA 03', 'NBA 04', 'NBA 05', 'NBA 06', 'NBA 07'];
+  const all = ['Hoops 01', 'Hoops 02', 'Hoops 03', 'Hoops 04', 'Hoops 05', 'Hoops 06', 'Hoops 07'];
 
   // The sub-option does nothing without the guide toggle, and the guide toggle alone hides nothing here.
   await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_unlisted: true });
@@ -1021,34 +1021,34 @@ test('hide channels with nothing listed in the next N hours: sub-option of the g
   // Looking 24 hours ahead by default: the game on now, the one tonight, and the channel with no
   // guide id stay; empty guides, a blank title and the game in 30 hours go.
   await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { hide_unlisted: true });
-  assert.deepEqual(await names(), ['NBA 01', 'NBA 02', 'NBA 05']);
+  assert.deepEqual(await names(), ['Hoops 01', 'Hoops 02', 'Hoops 05']);
   let view = (await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data;
   assert.deepEqual([view.hide_by_guide, view.hide_unlisted, view.unlisted_hours, view.guide_current], [true, true, 24, true]);
   assert.deepEqual(view.channels.map((c) => [c.name, c.is_unlisted, c.reason]), [
-    ['NBA 01', false, 'category'], ['NBA 02', false, 'category'], ['NBA 03', true, 'unlisted'],
-    ['NBA 04', true, 'unlisted'], ['NBA 05', false, 'category'], ['NBA 06', true, 'unlisted'], ['NBA 07', true, 'unlisted'],
+    ['Hoops 01', false, 'category'], ['Hoops 02', false, 'category'], ['Hoops 03', true, 'unlisted'],
+    ['Hoops 04', true, 'unlisted'], ['Hoops 05', false, 'category'], ['Hoops 06', true, 'unlisted'], ['Hoops 07', true, 'unlisted'],
   ]);
   // Nothing on now: the next listing within the look-ahead is reported (so it's clear why it stays).
-  const nba2 = view.channels.find((c) => c.name === 'NBA 02');
-  assert.equal(nba2.next.title, 'Knicks at Heat');
-  assert.ok(Math.abs(nba2.next.start - (Date.now() / 1000 + 2 * 3600)) < 120);
-  assert.equal(view.channels.find((c) => c.name === 'NBA 01').next, null, 'on now: no "next"');
+  const hoops2 = view.channels.find((c) => c.name === 'Hoops 02');
+  assert.equal(hoops2.next.title, 'Knicks at City Chase');
+  assert.ok(Math.abs(hoops2.next.start - (Date.now() / 1000 + 2 * 3600)) < 120);
+  assert.equal(view.channels.find((c) => c.name === 'Hoops 01').next, null, 'on now: no "next"');
 
   // The look-ahead is per category and changeable: 1 hour drops tonight's game, 48 brings in the later one.
   await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { unlisted_hours: 1 });
-  assert.deepEqual(await names(), ['NBA 01', 'NBA 05']);
+  assert.deepEqual(await names(), ['Hoops 01', 'Hoops 05']);
   await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { unlisted_hours: 48 });
-  assert.deepEqual(await names(), ['NBA 01', 'NBA 02', 'NBA 05', 'NBA 07']);
+  assert.deepEqual(await names(), ['Hoops 01', 'Hoops 02', 'Hoops 05', 'Hoops 07']);
   await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { unlisted_hours: 9999 });
   view = (await api('GET', `/api/outputs/${o.id}/channels?category_id=${cat.id}`)).data;
   assert.equal(view.unlisted_hours, 168, 'at most a week');
   await api('PUT', `/api/outputs/${o.id}/categories/${cat.id}/options`, { unlisted_hours: 24 });
 
   // Hand picks still win.
-  const nba3 = view.channels.find((c) => c.name === 'NBA 03');
-  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [nba3.id], state: 'include' });
-  assert.ok((await names()).includes('NBA 03'));
-  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [nba3.id], state: null });
+  const hoops3 = view.channels.find((c) => c.name === 'Hoops 03');
+  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [hoops3.id], state: 'include' });
+  assert.ok((await names()).includes('Hoops 03'));
+  await api('PUT', `/api/outputs/${o.id}/channels`, { ids: [hoops3.id], state: null });
 
   // Safety net: if the source's guide has nothing airing now for any channel (it ran out or
   // failed to refresh), nothing is hidden as "unlisted".
@@ -1062,7 +1062,7 @@ test('hide channels with nothing listed in the next N hours: sub-option of the g
   // Backed up with the other switches.
   const file = (await api('GET', '/api/export')).data;
   assert.deepEqual(file.outputs.find((x) => x.token === o.token).category_options,
-    [{ source: xcId, category: 'US| NBA LEAGUE PASS', hide_empty: false, hide_by_guide: true, hide_unlisted: true, unlisted_hours: 24 }]);
+    [{ source: xcId, category: 'US| Hoops LEAGUE PASS', hide_empty: false, hide_by_guide: true, hide_unlisted: true, unlisted_hours: 24 }]);
   // Restore the guide for later tests.
   await api('POST', `/api/sources/${xcId}/refresh`);
   await app.ctx.jobs.idle();
@@ -1105,7 +1105,7 @@ test('name cleanup: per-output find/replace on channel and category names, in ev
   const m3u = async () => [...(await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text())
     .matchAll(/tvg-name="([^"]*)".*group-title="([^"]*)",([^\n]+)\n/g)].map((m) => [m[1], m[2], m[3]]);
   const before = await m3u();
-  assert.deepEqual(before.map((r) => r[2]).sort(), ['US: CNN HD', 'US: Fox News']);
+  assert.deepEqual(before.map((r) => r[2]).sort(), ['US: Daily News', 'US: NewsNet HD']);
 
   const rules = [
     { scope: 'both', find: '^\\|?[A-Z]{2,3}\\s*[|:\\-]\\s*', replace: '' },
@@ -1116,7 +1116,7 @@ test('name cleanup: per-output find/replace on channel and category names, in ev
   let r = await api('POST', `/api/outputs/${o.id}/name-preview`, { rules });
   assert.deepEqual([r.data.channels.changed, r.data.channels.total, r.data.categories.changed, r.data.categories.total], [2, 2, 1, 1]);
   assert.deepEqual(r.data.categories.samples, [['US| NEWS', 'News & Talk']]);
-  assert.deepEqual(r.data.channels.samples.find((s) => s[0] === 'US: CNN HD'), ['US: CNN HD', 'CNN']);
+  assert.deepEqual(r.data.channels.samples.find((s) => s[0] === 'US: NewsNet HD'), ['US: NewsNet HD', 'NewsNet']);
   assert.deepEqual(await m3u(), before);
   r = await api('POST', `/api/outputs/${o.id}/name-preview`, { rules: [{ scope: 'channel', find: '(', replace: '' }] });
   assert.equal(r.status, 400);
@@ -1125,20 +1125,20 @@ test('name cleanup: per-output find/replace on channel and category names, in ev
 
   r = await api('PUT', `/api/outputs/${o.id}`, { name_rules: rules });
   assert.deepEqual(r.data.name_rules, rules.map((x) => ({ ...x, media: 'live' })), 'rules without a target are live TV');
-  assert.deepEqual((await m3u()).sort(), [['CNN', 'News & Talk', 'CNN'], ['Fox News', 'News & Talk', 'Fox News']]);
+  assert.deepEqual((await m3u()).sort(), [['Daily News', 'News & Talk', 'Daily News'], ['NewsNet', 'News & Talk', 'NewsNet']]);
   const xc = (action) => fetch(`${base}/player_api.php?username=tidy&password=pw&action=${action}`).then((x) => x.json());
   assert.deepEqual((await xc('get_live_categories')).map((c) => c.category_name), ['News & Talk']);
-  assert.deepEqual((await xc('get_live_streams')).map((s) => s.name).sort(), ['CNN', 'Fox News']);
-  assert.match(await (await fetch(`${base}/o/${o.token}/epg.xml`)).text(), /<display-name>CNN<\/display-name>/);
+  assert.deepEqual((await xc('get_live_streams')).map((s) => s.name).sort(), ['Daily News', 'NewsNet']);
+  assert.match(await (await fetch(`${base}/o/${o.token}/epg.xml`)).text(), /<display-name>NewsNet<\/display-name>/);
 
   // A name set by hand wins; saving other settings leaves the rules alone.
-  const cnn = (await api('GET', `/api/sources/${xcId}/channels?q=cnn`)).data.items.find((c) => c.name === 'US: CNN HD');
-  const edits = { custom_logo: cnn.custom_logo, custom_epg_id: cnn.custom_epg_id, custom_chno: cnn.custom_chno };
-  await api('PUT', `/api/channels/${cnn.id}`, { ...edits, custom_name: 'US: CNN HD (mine)' });
+  const newsnet = (await api('GET', `/api/sources/${xcId}/channels?q=newsnet`)).data.items.find((c) => c.name === 'US: NewsNet HD');
+  const edits = { custom_logo: newsnet.custom_logo, custom_epg_id: newsnet.custom_epg_id, custom_chno: newsnet.custom_chno };
+  await api('PUT', `/api/channels/${newsnet.id}`, { ...edits, custom_name: 'US: NewsNet HD (mine)' });
   await api('PUT', `/api/outputs/${o.id}`, { name: 'Tidy 2' });
-  assert.ok((await m3u()).some((x) => x[2] === 'US: CNN HD (mine)'));
+  assert.ok((await m3u()).some((x) => x[2] === 'US: NewsNet HD (mine)'));
   assert.equal((await api('GET', `/api/outputs/${o.id}`)).data.name_rules.length, 3);
-  await api('PUT', `/api/channels/${cnn.id}`, { ...edits, custom_name: cnn.custom_name });
+  await api('PUT', `/api/channels/${newsnet.id}`, { ...edits, custom_name: newsnet.custom_name });
 
   // Backed up with the output, and checked on import.
   const file = (await api('GET', '/api/export')).data;
@@ -1151,7 +1151,7 @@ test('name cleanup: per-output find/replace on channel and category names, in ev
   assert.equal((await api('GET', `/api/outputs/${o.id}`)).status, 200, 'a rejected import changes nothing');
 
   await api('PUT', `/api/outputs/${o.id}`, { name_rules: [] });
-  assert.deepEqual((await m3u()).map((x) => x[2]).sort(), ['US: CNN HD', 'US: Fox News']);
+  assert.deepEqual((await m3u()).map((x) => x[2]).sort(), ['US: Daily News', 'US: NewsNet HD']);
   await api('DELETE', `/api/outputs/${o.id}`);
 });
 
@@ -1511,11 +1511,11 @@ test('movies and series: loaded when a source includes them, filtered per output
   const vodCats = await xc('get_vod_categories');
   assert.deepEqual(vodCats.map((c) => c.category_name), ['EN| ACTION', 'EN| KIDS']);
   const movies = await xc('get_vod_streams');
-  assert.deepEqual(movies.map((m) => m.name), ['Die Hard', 'Heat', 'Frozen']);
+  assert.deepEqual(movies.map((m) => m.name), ['Tower Siege', 'City Chase', 'Snow Day']);
   const dieHard = movies[0];
   assert.notEqual(dieHard.stream_id, 5001, 'ids are this server\'s own');
   assert.deepEqual([dieHard.stream_type, dieHard.rating, dieHard.container_extension, dieHard.stream_icon], ['movie', '8', 'mkv', 'http://p/dh.jpg']);
-  assert.deepEqual((await xc('get_vod_streams', `&category_id=${vodCats[1].category_id}`)).map((m) => m.name), ['Frozen']);
+  assert.deepEqual((await xc('get_vod_streams', `&category_id=${vodCats[1].category_id}`)).map((m) => m.name), ['Snow Day']);
   const info = await xc('get_vod_info', `&vod_id=${dieHard.stream_id}`);
   assert.deepEqual([info.info.plot, info.movie_data.stream_id, info.movie_data.container_extension], ['A cop in a tower', dieHard.stream_id, 'mkv']);
 
@@ -1537,10 +1537,10 @@ test('movies and series: loaded when a source includes them, filtered per output
   const titles = async (catId) => (await api('GET', `/api/outputs/${o.id}/titles?category_id=${catId}`)).data;
   let t = await titles(action);
   assert.deepEqual([t.category_included, t.total, t.titles.map((x) => [x.name, x.included, x.override])],
-    [true, 2, [['Die Hard', true, null], ['Heat', true, null]]]);
+    [true, 2, [['Tower Siege', true, null], ['City Chase', true, null]]]);
   const heat = t.titles[1];
   await api('PUT', `/api/outputs/${o.id}/titles`, { ids: [heat.id], state: 'exclude' });
-  assert.deepEqual((await xc('get_vod_streams')).map((m) => m.name), ['Die Hard', 'Frozen']);
+  assert.deepEqual((await xc('get_vod_streams')).map((m) => m.name), ['Tower Siege', 'Snow Day']);
   assert.equal((await fetch(`${base}/movie/vod/pw/${heat.id}.mp4`, { redirect: 'manual' })).status, 404, 'a title picked out can\'t be played');
   let movieCats = (await api('GET', `/api/outputs/${o.id}/categories?kind=movie`)).data;
   assert.deepEqual(movieCats.map((c) => [c.name, c.channel_count, c.excluded_count]), [['EN| ACTION', 2, 1], ['EN| KIDS', 1, 0], ['FR| FILMS', 1, 0]]);
@@ -1550,28 +1550,28 @@ test('movies and series: loaded when a source includes them, filtered per output
   await api('PUT', `/api/outputs/${o.id}/titles`, { category_id: Number(action), state: 'include' });
   t = await titles(action);
   assert.deepEqual(t.titles.map((x) => [x.included, x.override]), [[true, 'include'], [true, 'include']]);
-  assert.deepEqual((await xc('get_vod_streams')).map((m) => m.name), ['Die Hard', 'Heat', 'Frozen']);
+  assert.deepEqual((await xc('get_vod_streams')).map((m) => m.name), ['Tower Siege', 'City Chase', 'Snow Day']);
   // A pick can't pull a title out of an excluded category.
   const french = (await api('GET', `/api/outputs/${o.id}/categories?kind=movie`)).data.find((c) => c.name === 'FR| FILMS');
   const amelieRow = (await titles(french.id)).titles[0];
   await api('PUT', `/api/outputs/${o.id}/titles`, { ids: [amelieRow.id], state: 'include' });
   assert.deepEqual([(await titles(french.id)).category_included, (await titles(french.id)).titles[0].included], [false, false]);
-  assert.ok(!(await xc('get_vod_streams')).some((m) => m.name === 'Amélie'));
+  assert.ok(!(await xc('get_vod_streams')).some((m) => m.name === 'Caméra Obscura'));
   await api('PUT', `/api/outputs/${o.id}/titles`, { ids: [amelieRow.id], state: null });
   // Renaming a title shows in every output, over name cleanup.
-  await api('PUT', `/api/vod/${heat.id}`, { custom_name: 'Heat (Director\'s Cut)' });
-  assert.ok((await xc('get_vod_streams')).some((m) => m.name === 'Heat (Director\'s Cut)'));
+  await api('PUT', `/api/vod/${heat.id}`, { custom_name: 'City Chase (Director\'s Cut)' });
+  assert.ok((await xc('get_vod_streams')).some((m) => m.name === 'City Chase (Director\'s Cut)'));
   // Searching titles, across the categories of a kind, with whether each is in and why not.
   const search = async (k, q) => (await api('GET', `/api/outputs/${o.id}/search?kind=${k}&q=${encodeURIComponent(q)}`)).data.matches
     .map((m) => [m.custom_name || m.name, m.included, m.reason]);
-  assert.deepEqual(await search('movie', 'DIE'), [['Die Hard', true, 'manual']]);
-  assert.deepEqual(await search('movie', 'amé'), [['Amélie', false, 'category']], 'titles of excluded categories are found too');
-  assert.deepEqual(await search('movie', 'director'), [['Heat (Director\'s Cut)', true, 'manual']], 'renamed titles match their name');
-  assert.deepEqual(await search('series', 'bad'), [['Breaking Bad', true, 'category']]);
+  assert.deepEqual(await search('movie', 'TOWER'), [['Tower Siege', true, 'manual']]);
+  assert.deepEqual(await search('movie', 'amé'), [['Caméra Obscura', false, 'category']], 'titles of excluded categories are found too');
+  assert.deepEqual(await search('movie', 'director'), [['City Chase (Director\'s Cut)', true, 'manual']], 'renamed titles match their name');
+  assert.deepEqual(await search('series', 'bad'), [['Bad Chemistry', true, 'category']]);
   assert.deepEqual(await search('movie', 'bad'), [], 'each tab searches its own kind');
   // Backed up by provider id, and duplicated with the output.
   const exported = (await api('GET', '/api/export')).data;
-  assert.deepEqual(exported.sources.find((x) => x.ref === xcId).vod_titles, [{ kind: 'movie', key: '5002', name: 'Heat', custom_name: 'Heat (Director\'s Cut)' }]);
+  assert.deepEqual(exported.sources.find((x) => x.ref === xcId).vod_titles, [{ kind: 'movie', key: '5002', name: 'City Chase', custom_name: 'City Chase (Director\'s Cut)' }]);
   assert.deepEqual(exported.outputs.find((x) => x.token === o.token).title_overrides.map((x) => [x.kind, x.key, x.state]).sort(),
     [['movie', '5001', 'include'], ['movie', '5002', 'include']]);
   // Restored into a fresh database, picks and names wait on placeholders for the next refresh.
@@ -1582,7 +1582,7 @@ test('movies and series: loaded when a source includes them, filtered per output
     const restored = db2.all(`SELECT v.kind, v.key, v.custom_name, x.state FROM output_vod_overrides x
       JOIN vod_items v ON v.id = x.item_id JOIN outputs o ON o.id = x.output_id WHERE o.token = ? ORDER BY v.key`, [o.token]);
     assert.deepEqual(restored.map((r) => [r.kind, r.key, r.custom_name, r.state]),
-      [['movie', '5001', null, 'include'], ['movie', '5002', 'Heat (Director\'s Cut)', 'include']]);
+      [['movie', '5001', null, 'include'], ['movie', '5002', 'City Chase (Director\'s Cut)', 'include']]);
   } finally {
     db2.close();
     for (const f of [dbFile, `${dbFile}-wal`, `${dbFile}-shm`]) fs.rmSync(f, { force: true });
@@ -1598,23 +1598,23 @@ test('movies and series: loaded when a source includes them, filtered per output
 
   // Name cleanup for movies and series: only rules aimed at them (or everywhere) apply.
   const nameRules = [
-    { scope: 'both', media: 'live', find: 'Die', replace: 'LIVE-ONLY' },
+    { scope: 'both', media: 'live', find: 'Tower', replace: 'LIVE-ONLY' },
     { scope: 'category', media: 'vod', find: '^[A-Z]{2}\\|\\s*', replace: '' },
-    { scope: 'channel', media: 'all', find: '^Die ', replace: 'The ' },
+    { scope: 'channel', media: 'all', find: '^Tower ', replace: 'The ' },
   ];
   const preview = (await api('POST', `/api/outputs/${o.id}/name-preview`, { rules: nameRules })).data;
   assert.deepEqual([preview.vod.categories.changed, preview.vod.titles.changed], [3, 1]);
-  assert.deepEqual(preview.vod.titles.samples, [['Die Hard', 'The Hard']]);
+  assert.deepEqual(preview.vod.titles.samples, [['Tower Siege', 'The Siege']]);
   await api('PUT', `/api/outputs/${o.id}`, { name_rules: nameRules });
   assert.deepEqual((await xc('get_vod_categories')).map((c) => c.category_name), ['ACTION', 'KIDS']);
-  assert.equal((await xc('get_vod_streams'))[0].name, 'The Hard');
-  assert.equal((await xc('get_vod_info', `&vod_id=${dieHard.stream_id}`)).movie_data.name, 'The Hard');
+  assert.equal((await xc('get_vod_streams'))[0].name, 'The Siege');
+  assert.equal((await xc('get_vod_info', `&vod_id=${dieHard.stream_id}`)).movie_data.name, 'The Siege');
   assert.deepEqual((await xc('get_series_categories')).map((c) => c.category_name), ['DRAMA']);
   await api('PUT', `/api/outputs/${o.id}`, { name_rules: [] });
 
   assert.deepEqual((await xc('get_series_categories')).map((c) => c.category_name), ['EN| DRAMA']);
   const shows = await xc('get_series');
-  assert.deepEqual(shows.map((x) => [x.name, x.plot]), [['Breaking Bad', 'Chemistry']]);
+  assert.deepEqual(shows.map((x) => [x.name, x.plot]), [['Bad Chemistry', 'Chemistry']]);
   const bb = await xc('get_series_info', `&series_id=${shows[0].series_id}`);
   assert.equal(bb.info.plot, 'Chemistry teacher');
   assert.deepEqual(bb.episodes['1'].map((e) => [e.episode_num, e.title]), [[1, 'Pilot'], [2, 'Cat in the Bag']]);
@@ -1630,7 +1630,7 @@ test('movies and series: loaded when a source includes them, filtered per output
   assert.match(r.headers.get('location'), /\/movie\/xu\/xp\/5001\.mkv$/);
   r = await get(`/series/vod/pw/${pilot.id}.mkv`);
   assert.match(r.headers.get('location'), /\/series\/xu\/xp\/90001\.mkv$/);
-  const amelie = app.ctx.db.get("SELECT id FROM vod_items WHERE name = 'Amélie'").id;
+  const amelie = app.ctx.db.get("SELECT id FROM vod_items WHERE name = 'Caméra Obscura'").id;
   assert.equal((await get(`/movie/vod/pw/${amelie}.mp4`)).status, 404, 'a movie outside the output is refused');
   assert.equal((await get(`/movie/vod/wrong/${dieHard.stream_id}.mkv`)).status, 401);
 
@@ -1645,10 +1645,10 @@ test('movies and series: loaded when a source includes them, filtered per output
   assert.match(await r.text(), /^SERIES-90001-/);
 
   // A title the provider drops disappears on the next refresh.
-  vodData.movies.splice(1, 1); // Heat
+  vodData.movies.splice(1, 1); // City Chase
   await api('POST', `/api/sources/${xcId}/refresh`);
   await app.ctx.jobs.idle();
-  assert.deepEqual((await xc('get_vod_streams')).map((m) => m.name), ['Die Hard', 'Frozen']);
+  assert.deepEqual((await xc('get_vod_streams')).map((m) => m.name), ['Tower Siege', 'Snow Day']);
 
   // M3U playlists: movies and episodes come from the playlist itself.
   src = await setSource(m3uId, { live_only: false });
@@ -1816,7 +1816,7 @@ test('who is watching what: proxy streams start to stop, redirected ones by thei
 
   // HLS through a proxy: the playlist says who; the segments (by token URL) keep it.
   const hls = await mk('HLS room', { stream_mode: 'proxy', xc_username: 'hlsu', xc_password: 'h', source_ids: [m3uId], rules: [{ action: 'include', op: 'equals', value: 'uk| general' }] });
-  const bbc = (await ids('hlsu', 'h')).find(([n]) => /BBC/.test(n));
+  const bbc = (await ids('hlsu', 'h')).find(([n]) => /Kingdom/.test(n));
   const playlist = await (await fetch(`${base}/live/hlsu/h/${bbc[1]}.m3u8`)).text();
   await (await fetch(base + playlist.split('\n').find((l) => l.startsWith('/s/')))).text();
   v = await viewers();
@@ -1833,14 +1833,14 @@ test('Watch page: an output\'s lineup, played through this server whatever the o
     { action: 'include', op: 'equals', value: 'us| live' }, { action: 'include', op: 'equals', value: 'uk| general' },
     { action: 'include', op: 'equals', value: 'us| news', source_id: xcId }] });
   // The dashboard's list says what the guide has on now for a live channel.
-  const cnn = (await api('GET', `/api/outputs/${o.id}/lineup`)).data.channels.find((c) => c.name === 'US: CNN HD');
-  await (await fetch(`${base}/api/outputs/${o.id}/watch/${cnn.id}`, { headers: { cookie } })).text();
-  const cnnViewer = (await api('GET', '/api/viewers')).data.find((x) => x.what === 'US: CNN HD');
-  assert.deepEqual([cnnViewer?.program, cnnViewer?.source, cnnViewer?.mode], ['CNN show 0', 'XC', 'proxy']);
+  const newsnet = (await api('GET', `/api/outputs/${o.id}/lineup`)).data.channels.find((c) => c.name === 'US: NewsNet HD');
+  await (await fetch(`${base}/api/outputs/${o.id}/watch/${newsnet.id}`, { headers: { cookie } })).text();
+  const newsnetViewer = (await api('GET', '/api/viewers')).data.find((x) => x.what === 'US: NewsNet HD');
+  assert.deepEqual([newsnetViewer?.program, newsnetViewer?.source, newsnetViewer?.mode], ['NewsNet show 0', 'XC', 'proxy']);
   app.ctx.viewers.entries.clear();
   const lineup = (await api('GET', `/api/outputs/${o.id}/lineup`)).data;
   const live1 = lineup.channels.find((c) => c.name === 'Live 1');
-  const bbc = lineup.channels.find((c) => /BBC/.test(c.name));
+  const bbc = lineup.channels.find((c) => /Kingdom/.test(c.name));
   assert.deepEqual([live1.format, live1.hls_available, live1.group], ['ts', true, 'US| LIVE']);
   assert.deepEqual([bbc.format, bbc.hls_available], ['m3u8', true]);
   assert.equal(lineup.paused, false);

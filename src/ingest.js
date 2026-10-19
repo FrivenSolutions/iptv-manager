@@ -251,11 +251,11 @@ async function loadEpg(ctx, src, epgUrls, tmps, localFiles = [], warnings = []) 
   const needed = new Set();
   for (const m of matches.values()) if (m.epgId) needed.add(m.epgId);
 
-  // Pass 2: programmes for matched channels only, inside a rolling time window.
+  // Pass 2: programs for matched channels only, inside a rolling time window.
   const t = now();
   const minTs = t - PROGRAMME_PAST_S;
   const maxTs = t + PROGRAMME_FUTURE_S;
-  const ownerFile = new Map(); // first file to supply a channel's programmes wins
+  const ownerFile = new Map(); // first file to supply a channel's programs wins
   let count = 0;
   let batch = [];
   const flush = () => {
@@ -272,9 +272,9 @@ async function loadEpg(ctx, src, epgUrls, tmps, localFiles = [], warnings = []) 
       }
     });
   };
-  // Pass 1 stops at the first programme, as XMLTV lists channels first. Guides merged from
+  // Pass 1 stops at the first program, as XMLTV lists channels first. Guides merged from
   // several sources often don't: a channel met here for the first time is recorded and matched
-  // to still-unmatched playlist channels on the spot, before its programmes stream past.
+  // to still-unmatched playlist channels on the spot, before its programs stream past.
   const lateChannel = (c) => {
     if (!c.id || epgChans.has(c.id)) return;
     epgChans.set(c.id, c);
@@ -423,7 +423,7 @@ export async function refreshSource(ctx, id, { forceVod = false } = {}) {
     );
     log(`Source "${src.name}": ${stats.channels} channels, ${stats.categories} categories` +
       (stats.newCategories ? `, ${stats.newCategories} new` : '') +
-      (epg.channels ? `, EPG ${epg.matched}/${stats.channels} matched, ${epg.programmes} programmes` : '') +
+      (epg.channels ? `, EPG ${epg.matched}/${stats.channels} matched, ${epg.programmes} programs` : '') +
       (vod ? `, ${vod.movies} movies, ${vod.series} series` : '') +
       ` in ${stats.seconds}s` + (warning ? ` (warning: ${warning})` : ''));
   } catch (e) {

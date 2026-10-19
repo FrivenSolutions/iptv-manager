@@ -49,7 +49,7 @@ function guide() {
     for (let h = -2; h < 24; h++) {
       x += `<programme start="${t(new Date(start + h * 3_600_000))}" stop="${t(new Date(start + (h + 1) * 3_600_000))}" channel="${esc(id)}">` +
         `<title lang="en">${esc(name)} at ${(new Date(start + h * 3_600_000).getUTCHours() + '').padStart(2, '0')}:00</title>` +
-        `<desc lang="en">A demo programme on ${esc(name)}.</desc><category lang="en">Demo</category></programme>\n`;
+        `<desc lang="en">A demo program on ${esc(name)}.</desc><category lang="en">Demo</category></programme>\n`;
     }
   }
   return x + '</tv>\n';

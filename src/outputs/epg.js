@@ -6,7 +6,7 @@ import { finished } from 'node:stream/promises';
 import { escapeXml } from '../xmltv.js';
 import { now } from '../db.js';
 
-// Jellyfin sorts guide programmes into these sections by their XMLTV <category>;
+// Jellyfin sorts guide programs into these sections by their XMLTV <category>;
 // the values match its default category lists (case-insensitive).
 export const JELLYFIN_CATEGORIES = ['Movie', 'Sports', 'News', 'Kids'];
 
@@ -18,7 +18,7 @@ export function parseJellyfin(value) {
 // XMLTV orders <category> after these elements; inserting there keeps the guide DTD-valid.
 const BEFORE_CATEGORY = /<\/(?:title|sub-title|desc|credits|date|category)>|<(?:title|sub-title|desc|credits|date|category)(?:\s[^>]*)?\/>/g;
 
-/** Add <category> elements to a programme's inner markup, skipping ones it already has. */
+/** Add <category> elements to a program's inner markup, skipping ones it already has. */
 export function addCategories(xml, categories) {
   xml = xml || '';
   const existing = new Set();

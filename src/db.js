@@ -143,7 +143,7 @@ const MIGRATIONS = [
   `,
   `
   -- Comma-separated Jellyfin guide categories (Movie, Sports, News, Kids) stamped on
-  -- every programme of every channel in the group.
+  -- every program of every channel in the group.
   ALTER TABLE categories ADD COLUMN jellyfin TEXT;
   `,
   `
@@ -211,7 +211,7 @@ const MIGRATIONS = [
   );
   `,
   `
-  -- Hide channels whose programme on now has a placeholder title ("No Game Today").
+  -- Hide channels whose program on now has a placeholder title ("No Game Today").
   ALTER TABLE output_category_settings ADD COLUMN hide_by_guide INTEGER NOT NULL DEFAULT 0;
   `,
   `

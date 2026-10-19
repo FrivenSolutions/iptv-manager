@@ -11,7 +11,7 @@ export function escapeXml(s) {
 const unescapeXml = (s) =>
   s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 
-// Programmes are stored as their inner XMLTV markup; pull the first element's text on demand.
+// Programs are stored as their inner XMLTV markup; pull the first element's text on demand.
 export function firstText(xml, tag) {
   const m = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</${tag}>`).exec(xml || '');
   return m ? unescapeXml(m[1].replace(/<[^>]+>/g, '')).trim() : '';
@@ -50,7 +50,7 @@ export function parseXmltv(readable, { onChannel, onProgramme } = {}) {
     let stopped = false;
     let chan = null;
     let prog = null;
-    let depth = 0; // depth inside the current channel/programme
+    let depth = 0; // depth inside the current channel/program
     let textTarget = null;
     let text = '';
     const selfClosing = [];

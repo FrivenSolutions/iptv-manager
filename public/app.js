@@ -859,7 +859,7 @@ async function sourceDetail(main, id) {
         src.counts.movies || src.counts.series ? stat(src.counts.movies.toLocaleString(), 'movies') : null,
         src.counts.movies || src.counts.series ? stat(src.counts.series.toLocaleString(), 'series') : null,
         !src.live_only && src.vod_refreshed_at ? stat(ago(src.vod_refreshed_at), 'movies & series loaded') : null,
-        stat(st.epg?.programmes ?? '–', 'programmes'),
+        stat(st.epg?.programmes ?? '–', 'programs'),
         stat(ago(src.last_refresh_at), 'last refresh'),
         src.account_info?.exp_date ? stat(new Date(Number(src.account_info.exp_date) * 1000).toLocaleDateString(), 'account expires') : null,
         src.account_info?.max_connections ? stat(src.account_info.max_connections, 'max connections') : null,
@@ -915,7 +915,7 @@ function editCategory(cat, onSaved, { vod = false } = {}) {
     vod ? null : h('div', { class: 'field' },
       h('span', { class: 'field-label' }, 'Jellyfin category'),
       h('span', { class: 'hint' },
-        `Tags every programme on all ${cat.channel_count ?? ''} channels in this group, so Jellyfin lists them under Movies, Sports, News or Kids. `,
+        `Tags every program on all ${cat.channel_count ?? ''} channels in this group, so Jellyfin lists them under Movies, Sports, News or Kids. `,
         'This only applies to channels that have guide data.'),
       h('div', { class: 'row' }, boxes))), [
     h('button', { class: 'btn', onclick: () => close() }, 'Cancel'),
@@ -1334,7 +1334,7 @@ async function outputEditor(main, id) {
     ? h('section', { class: 'card' },
       h('h2', null, 'Name cleanup'),
       h('p', { class: 'hint' },
-        'Tidy the names players show, like "US: CNN ᴴᴰ" into "CNN". Each rule\'s pattern is a regular expression (case-sensitive) ',
+        'Tidy the names players show, like "US: Daily News ᴴᴰ" into "Daily News". Each rule\'s pattern is a regular expression (case-sensitive) ',
         'and every match is replaced; rules run top to bottom, then leftover spaces are tidied. Names you set by hand are never changed. ',
         'With movies & series on, each rule also says where it applies: live TV, movies & series, or everywhere.'),
       namesBox, namePreview)
@@ -1573,7 +1573,7 @@ async function outputEditor(main, id) {
           h('b', null, ' Hide empty event channels'),
           h('span', { class: 'meta' }, ` · by name · ${emptyCount} of ${chans.length} look empty right now`)),
         h('span', { class: 'hint' },
-          'Hides placeholders named like "ESPN+ 03:" or "PPV 12 NO EVENT" until the provider names the event. ',
+          'Hides placeholders named like "Event 03:" or "Live 12 NO EVENT" until the provider names the event. ',
           h('a', { href: '#/settings' }, 'Edit the patterns'),
           '. Names update when the source refreshes, so give event sources a short refresh interval.'),
         h('label', { class: 'check second' },
@@ -1581,7 +1581,7 @@ async function outputEditor(main, id) {
           h('b', null, ' Hide channels by guide'),
           h('span', { class: 'meta' }, ` · by what's on now · ${guideCount} of ${chans.length} show a placeholder now`)),
         h('span', { class: 'hint' },
-          'Hides a channel while the programme on now is titled like "No Game Today" or "Off Air", and shows it again when a real listing starts. ',
+          'Hides a channel while the program on now is titled like "No Game Today" or "Off Air", and shows it again when a real listing starts. ',
           h('a', { href: '#/settings' }, 'Edit the patterns'),
           '. Players only notice when they reload the playlist.'),
         h('label', { class: 'check sub' },
@@ -2561,7 +2561,7 @@ function advancedCard(s) {
           }),
           ' Use guide logos for channels without one'),
         h('span', { class: 'hint' }, 'When the provider gives a channel no logo, use the logo its guide lists (if any). Provider logos and your own always win.'),
-        h('p', { class: 'hint' }, h('b', null, 'Name cleanup'), ' also appears on the page of each output, to tidy names like "US: CNN ᴴᴰ" into "CNN".')) : null);
+        h('p', { class: 'hint' }, h('b', null, 'Name cleanup'), ' also appears on the page of each output, to tidy names like "US: Daily News ᴴᴰ" into "Daily News".')) : null);
   };
   draw();
   return card;
@@ -2962,11 +2962,11 @@ function emptyEventCard(s) {
     key: 'empty_event_patterns',
     patterns: s.empty_event_patterns,
     defaults: s.empty_event_defaults,
-    tryPlaceholder: 'Try a channel name, e.g. ESPN+ 03:',
-    intro: ['Event providers keep placeholder channels, such as "ESPN+ 03:" or "PPV 12 NO EVENT", that only carry something when an event is scheduled. ',
+    tryPlaceholder: 'Try a channel name, e.g. Event 03:',
+    intro: ['Event providers keep placeholder channels, such as "Event 03:" or "Live 12 NO EVENT", that only carry something when an event is scheduled. ',
       'Turn on "Hide empty event channels" in an expanded category of an output to hide the placeholders. ',
       'A channel counts as empty when its name matches any pattern below (regular expressions, case-insensitive).'],
-    note: ['Note: "ends with a number" also hides a live event whose title ends in a number, e.g. "PPV 01: UFC 300". ',
+    note: ['Note: "ends with a number" also hides a live event whose title ends in a number, e.g. "Event 01: Final 2026". ',
       'Replacing it with ^[^:]*\\d\\s*$ only counts names without a ":" as empty.'],
   });
 }
@@ -2978,10 +2978,10 @@ function guidePatternsCard(s) {
     key: 'guide_patterns',
     patterns: s.guide_patterns,
     defaults: s.guide_defaults,
-    tryPlaceholder: 'Try a programme title, e.g. No Game Today',
+    tryPlaceholder: 'Try a program title, e.g. No Game Today',
     intro: ['Some event channels always have a name, but their guide says "No Game Today" or "Off Air" while nothing is on. ',
       'Turn on "Hide channels by guide" in an expanded category of an output to hide them until a real listing starts. ',
-      'A channel counts as empty while the title of the programme on now matches any pattern below (case-insensitive).'],
+      'A channel counts as empty while the title of the program on now matches any pattern below (case-insensitive).'],
     note: null,
   });
 }

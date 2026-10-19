@@ -20,7 +20,7 @@ import { parseEpisodeName } from '../src/vod.js';
 test('parseM3U reads header, attributes, commas in names and player options', () => {
   const { header, entries } = parseM3U([
     '﻿#EXTM3U url-tvg="http://x/guide.xml"',
-    '#EXTINF:-1 tvg-id="cnn.us" tvg-name="CNN" tvg-logo="http://l/cnn.png" group-title="US, News",CNN, International',
+    '#EXTINF:-1 tvg-id="newsnet.us" tvg-name="NewsNet" tvg-logo="http://l/newsnet.png" group-title="US, News",NewsNet, International',
     '#EXTVLCOPT:http-user-agent=Foo',
     'http://p/1.ts',
     '#EXTINF:-1,No Attrs',
@@ -32,7 +32,7 @@ test('parseM3U reads header, attributes, commas in names and player options', ()
   assert.equal(entries.length, 2);
   assert.deepEqual(
     { name: entries[0].name, group: entries[0].group, id: entries[0].attrs['tvg-id'], opts: entries[0].opts },
-    { name: 'CNN, International', group: 'US, News', id: 'cnn.us', opts: ['#EXTVLCOPT:http-user-agent=Foo'] },
+    { name: 'NewsNet, International', group: 'US, News', id: 'newsnet.us', opts: ['#EXTVLCOPT:http-user-agent=Foo'] },
   );
   assert.equal(entries[1].group, 'Misc');
   assert.equal(entries[1].name, 'No Attrs');
@@ -53,7 +53,7 @@ test('parseXmltvTime handles offsets and missing zones', () => {
   assert.equal(parseXmltvTime('garbage'), null);
 });
 
-test('parseXmltv keeps programme inner markup and survives bad entities', async () => {
+test('parseXmltv keeps program inner markup and survives bad entities', async () => {
   const xml = `<?xml version="1.0"?><tv>
     <channel id="a"><display-name>Alpha HD</display-name><display-name>A</display-name><icon src="http://i/a.png"/></channel>
     <programme start="20240101000000 +0000" stop="20240101010000 +0000" channel="a">
@@ -72,22 +72,22 @@ test('parseXmltv keeps programme inner markup and survives bad entities', async 
 });
 
 test('normalizeName strips country prefixes and quality tags', () => {
-  assert.equal(normalizeName('US: ESPN HD'), 'espn');
-  assert.equal(normalizeName('UK | Sky Sports Main Event FHD'), 'skysportsmainevent');
+  assert.equal(normalizeName('US: Sportsline HD'), 'sportsline');
+  assert.equal(normalizeName('UK | Arena Sports Main Event FHD'), 'arenasportsmainevent');
   assert.equal(normalizeName('|US| A&E (East)'), 'aande');
-  assert.equal(normalizeName('CNN - HD', false), 'cnn');
+  assert.equal(normalizeName('NewsNet - HD', false), 'newsnet');
 });
 
 test('matchChannels prefers manual, then tvg-id, then name', () => {
-  const epg = [{ id: 'ESPN.us', names: ['ESPN'] }, { id: 'cnn.us', names: ['CNN'] }];
+  const epg = [{ id: 'Sportsline.us', names: ['Sportsline'] }, { id: 'newsnet.us', names: ['NewsNet'] }];
   const m = matchChannels([
-    { id: 1, name: 'X', tvg_id: 'espn.US' },
-    { id: 2, name: 'US: CNN HD', tvg_id: '' },
+    { id: 1, name: 'X', tvg_id: 'sportsline.US' },
+    { id: 2, name: 'US: NewsNet HD', tvg_id: '' },
     { id: 3, name: 'Nothing', tvg_id: 'none' },
-    { id: 4, name: 'CNN', tvg_id: 'ESPN.us', custom_epg_id: 'manual.id' },
+    { id: 4, name: 'NewsNet', tvg_id: 'Sportsline.us', custom_epg_id: 'manual.id' },
   ], epg);
-  assert.deepEqual(m.get(1), { epgId: 'ESPN.us', how: 'tvg-id' });
-  assert.deepEqual(m.get(2), { epgId: 'cnn.us', how: 'name' });
+  assert.deepEqual(m.get(1), { epgId: 'Sportsline.us', how: 'tvg-id' });
+  assert.deepEqual(m.get(2), { epgId: 'newsnet.us', how: 'name' });
   assert.deepEqual(m.get(3), { epgId: null, how: null });
   assert.deepEqual(m.get(4), { epgId: 'manual.id', how: 'manual' });
 });
@@ -101,14 +101,14 @@ test('matchChannels matches a tvg-id against exact display names (HDHomeRun tune
 
 test('default empty-event patterns', () => {
   const re = compilePatterns(DEFAULT_EMPTY_EVENT_PATTERNS);
-  for (const idle of ['ESPN+ 03:', 'NFL Game Pass 07 -', 'PPV 12', 'NBA 04 NO EVENT', 'MLB 09 no event ', 'Event 1 : ']) {
+  for (const idle of ['Match 03:', 'Gameday Pass 07 -', 'Event 12', 'Hoops 04 NO EVENT', 'Ball 09 no event ', 'Event 1 : ']) {
     assert.ok(isEmptyEvent(idle, re), `${idle} should count as empty`);
   }
-  for (const live of ['ESPN+ 03: Lakers vs Celtics', 'NFL Game Pass 07 - Bills at Jets', 'PPV 12: Title Fight', 'NO EVENT TONIGHT? no']) {
+  for (const live of ['Match 03: Team A vs Team B', 'Gameday Pass 07 - Team C at Team D', 'Event 12: Title Match', 'NO EVENT TONIGHT? no']) {
     assert.ok(!isEmptyEvent(live, re), `${live} should not count as empty`);
   }
   // Known trade-off of "ends with a number": a live event whose title ends in a number.
-  assert.ok(isEmptyEvent('PPV 01: UFC 300', re));
+  assert.ok(isEmptyEvent('Event 01: Final 2026', re));
   assert.deepEqual(compilePatterns(['(', 'ok$']).map(String), ['/ok$/i'], 'invalid patterns are skipped');
 });
 
@@ -140,7 +140,7 @@ test('default guide-title patterns', () => {
   for (const t of ['No Game Today', 'NO GAME TODAY - check back', 'No Event', 'No Events Scheduled', 'No Live Event', 'Off Air']) {
     assert.ok(isEmptyEvent(t, re), `${t} should count as a placeholder`);
   }
-  for (const t of ['Bills at Jets', 'Game Day Live', 'Big Event Tonight', 'Offside: The Show', 'Is There No Event Horizon?']) {
+  for (const t of ['Team C at Team D', 'Game Day Live', 'Big Event Tonight', 'Offside: The Show', 'Is There No Event Horizon?']) {
     assert.ok(!isEmptyEvent(t, re), `${t} should not count as a placeholder`);
   }
 });
@@ -151,10 +151,10 @@ test('rule operators', () => {
   assert.ok(testRule(r('not_contains', 'adult'), 'US| SPORTS'));
   assert.ok(testRule(r('starts_with', 'us|'), 'US| SPORTS'));
   assert.ok(!testRule(r('not_starts_with', 'us'), 'US| SPORTS'));
-  assert.ok(testRule(r('ends_with', ' hd'), 'US: CNN HD'));
+  assert.ok(testRule(r('ends_with', ' hd'), 'US: NewsNet HD'));
   assert.ok(!testRule(r('ends_with', 'hd'), 'HD Movies'));
-  assert.ok(testRule(r('not_ends_with', 'backup'), 'ESPN'));
-  assert.ok(!testRule(r('not_ends_with', 'BACKUP'), 'ESPN backup'), 'case-insensitive');
+  assert.ok(testRule(r('not_ends_with', 'backup'), 'Sportsline'));
+  assert.ok(!testRule(r('not_ends_with', 'BACKUP'), 'Sportsline backup'), 'case-insensitive');
   assert.ok(testRule(r('ends_with', ''), 'anything'), 'an empty value matches like the other operators');
   assert.ok(testRule(r('regex', '^(us|uk)\\|'), 'UK| NEWS'));
   assert.ok(!testRule(r('regex', '('), 'anything'));
@@ -183,7 +183,7 @@ test('rewriteHls routes playlist and key URIs through the mapper', () => {
   assert.match(out, /^P\(http:\/\/up\/a\/seg1.ts\)$/m);
 });
 
-test('firstText pulls the first title/desc out of stored programme markup', () => {
+test('firstText pulls the first title/desc out of stored program markup', () => {
   const xml = '<title lang="en">News &amp; Weather</title><title lang="fr">Infos</title><desc>Line &lt;1&gt;</desc>';
   assert.equal(firstText(xml, 'title'), 'News & Weather');
   assert.equal(firstText(xml, 'desc'), 'Line <1>');
@@ -211,8 +211,8 @@ test('addCategories inserts after title/desc, before later elements, without dup
 
 test('splitUrls and xcBase normalize user input', () => {
   assert.deepEqual(splitUrls('http://a/x.xml\n\nhttp://b/y.xml, http://c/z.xml'), ['http://a/x.xml', 'http://b/y.xml', 'http://c/z.xml']);
-  assert.equal(xcBase('provider.tv:8080/'), 'http://provider.tv:8080');
-  assert.equal(xcBase('https://p.tv/player_api.php?username=a'), 'https://p.tv');
+  assert.equal(xcBase('provider.example:8080/'), 'http://provider.example:8080');
+  assert.equal(xcBase('https://p.example/player_api.php?username=a'), 'https://p.example');
 });
 
 test('jsonObjects reads big JSON lists one object at a time, across chunks and tricky strings', async () => {
@@ -251,7 +251,7 @@ test('nameCleaner tidies only runs of spaces (a double "s" in a name is left alo
 
 test('parseEpisodeName finds the show, season and episode in playlist names', () => {
   assert.deepEqual(parseEpisodeName('Lost S01 E02'), { show: 'Lost', season: 1, episode: 2 });
-  assert.deepEqual(parseEpisodeName('The.Office.US.S03E14.720p'), { show: 'The Office US', season: 3, episode: 14 });
+  assert.deepEqual(parseEpisodeName('The.Workplace.US.S03E14.720p'), { show: 'The Workplace US', season: 3, episode: 14 });
   assert.deepEqual(parseEpisodeName('EN - Dark - S2E10 - Title'), { show: 'EN - Dark', season: 2, episode: 10 });
   assert.equal(parseEpisodeName('Some Movie (2020)'), null);
   assert.equal(parseEpisodeName('S01 E01'), null, 'no show name');

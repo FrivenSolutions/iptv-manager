@@ -60,7 +60,7 @@ export function categoryState(cat, rules, override, includeAll) {
 export function channelState(name, catIncluded, rules, override, hidden = null) {
   if (!catIncluded) return { included: false, reason: 'category' };
   if (override) return { included: override === 'include', reason: 'manual' };
-  // Placeholders for events that aren't on: by name ("ESPN+ 03:") -> 'empty', by what the
+  // Placeholders for events that aren't on: by name ("Event 03:") -> 'empty', by what the
   // guide says is on now ("No Game Today") -> 'guide', or nothing in the guide now -> 'unlisted'.
   if (hidden) return { included: false, reason: hidden };
   const exclude = rules.find((r) => r.action === 'exclude' && testRule(r, name));
@@ -72,10 +72,10 @@ export function channelState(name, catIncluded, rules, override, hidden = null) 
 }
 
 // Event providers list idle placeholders whose names end in ":", "-", a number or "NO EVENT";
-// once an event is scheduled the name gains a title ("ESPN+ 03: Team A vs Team B").
+// once an event is scheduled the name gains a title ("Event 03: Team A vs Team B").
 export const DEFAULT_EMPTY_EVENT_PATTERNS = [':\\s*$', '-\\s*$', '\\d\\s*$', 'no event\\s*$'];
 
-// Guide titles that mean nothing is on. Matched against the title of the programme airing now.
+// Guide titles that mean nothing is on. Matched against the title of the program airing now.
 export const DEFAULT_GUIDE_PATTERNS = ['no game today', '^no event', '^no live event', '^off air'];
 
 function patternSetting(db, key, defaults) {
@@ -95,7 +95,7 @@ export const emptyEventPatterns = (db) => patternSetting(db, 'empty_event_patter
 export const guidePatterns = (db) => patternSetting(db, 'guide_patterns', DEFAULT_GUIDE_PATTERNS);
 
 /**
- * Title of the programme airing at time t, per "sourceId|guide channel id", for the given
+ * Title of the program airing at time t, per "sourceId|guide channel id", for the given
  * sources. One indexed query per source; only called when a category hides by guide.
  */
 // How far ahead "nothing listed" looks by default, in hours.
@@ -145,7 +145,7 @@ export const isEmptyEvent = (name, regexes) => regexes.some((r) => r.test(String
 
 /**
  * For categories that hide by guide: what is on each channel now, and whether that title is
- * a placeholder. Looks programmes up only for the sources those categories belong to.
+ * a placeholder. Looks programs up only for the sources those categories belong to.
  */
 export function guideHider(db, output, cats, t = Math.floor(Date.now() / 1000)) {
   const wanted = new Set(cats.filter((c) => c.hide_by_guide).map((c) => c.source_id));
@@ -363,7 +363,7 @@ export function evaluateCategories(db, output, kind = 'live') {
 
 /**
  * Resolve the final channel list for an output with every per-channel edit applied.
- * tvg ids are made unique per source so two providers' "CNN.us" never collide in one guide.
+ * tvg ids are made unique per source so two providers' "news.us" never collide in one guide.
  */
 export function selectChannels(db, output) {
   const cats = evaluateCategories(db, output);

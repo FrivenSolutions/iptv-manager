@@ -293,17 +293,17 @@ include it.
 ### Hiding empty event channels
 
 Event providers keep placeholder channels that only carry something when an event is scheduled.
-They have names like `ESPN+ 03:`, `NFL 07 -`, `PPV 12` or `NBA 04 NO EVENT`, and gain a title such
-as `ESPN+ 03: Lakers vs Celtics` once an event is on. In an output, expand an event category and
+They have names like `Event 03:`, `Sports 07 -`, `Live 12` or `Match 04 NO EVENT`, and gain a title
+such as `Event 03: Team A vs Team B` once an event is on. In an output, expand an event category and
 tick **Hide empty event channels** to drop the placeholders. The panel shows how many channels
 currently look empty. The toggle is per category, because the same patterns would also hide
-ordinary channels like "ESPN 2" elsewhere. A channel you pick by hand is always kept.
+ordinary channels like "Sports 2" elsewhere. A channel you pick by hand is always kept.
 
 A channel counts as empty when its provider name matches any pattern in **Settings → Empty event
 channels**. The patterns are case-insensitive regular expressions. The defaults cover names that
 end with `:`, `-`, a number or `NO EVENT`. You can add patterns, remove them, or restore the
 defaults, and a test box shows what a given name counts as. "Ends with a number" also hides a live
-event whose title ends in a number (`PPV 01: UFC 300`). If that matters, replace it with
+event whose title ends in a number (`Event 01: Final 2026`). If that matters, replace it with
 `^[^:]*\d\s*$`, which only counts names without a `:` as empty.
 
 Names only change when the source refreshes, so give event sources a short refresh interval (for
@@ -311,7 +311,7 @@ example 1 hour) in the source's **Advanced** settings.
 
 **By guide.** Some event channels keep a normal name, and their guide says "No Game Today" or "Off
 Air" while nothing is on. The second toggle in the same place, **Hide channels by guide**, hides a
-channel while the title of the programme airing now matches a pattern in **Settings → Guide
+channel while the title of the program airing now matches a pattern in **Settings → Guide
 placeholders**. The defaults are *contains "no game today"* and *starts with "no event"*, *"no live
 event"* or *"off air"*. The channel reappears by itself when a real listing starts; no refresh is
 needed, because the output is re-evaluated at least once a minute. A few things to know:
@@ -339,7 +339,7 @@ reservation so the address doesn't change. `hdhomerun.local` usually does not re
 Docker.
 
 - **Channels** come from the box's own `lineup.json`, so run a channel scan on the box first.
-  Channels are named with their tuner number first, such as `9.1 KUSA`, and the tuner number is
+  Channels are named with their tuner number first, such as `5.1 Channel 5`, and the tuner number is
   also the channel number and guide id. Copy-protected (DRM) channels go into their own
   **HDHomeRun (DRM)** group so they are easy to exclude.
 - **Guide:** the box reports a `DeviceAuth` key, which is used to fetch listings from SiliconDust's
@@ -348,24 +348,24 @@ Docker.
   is paged through and converted to XMLTV instead. The source page shows which feed was used.
   Genre tags from the guide become XMLTV categories, and **Movies** is also tagged **Movie** for
   Jellyfin.
-- **Streams** play straight from the box (`http://<box>:5004/auto/v9.1`), so use Direct or
+- **Streams** play straight from the box (`http://<box>:5004/auto/v5.1`), so use Direct or
   Redirect mode unless you need Proxy. Each stream uses one of the box's tuners. In Proxy mode, the
   tuner count is the source's stream limit, and viewers of the same channel share a tuner.
 
 ### Jellyfin categories
 
-Jellyfin sorts guide programmes into **Movies**, **Sports**, **News** and **Kids** using the
-XMLTV `<category>` of each programme. You can tag a whole channel group so Jellyfin sorts it
+Jellyfin sorts guide programs into **Movies**, **Sports**, **News** and **Kids** using the
+XMLTV `<category>` of each program. You can tag a whole channel group so Jellyfin sorts it
 correctly. Click **Edit group** on a source's category, or ✎ on a category row in an output. Then
 tick one or more of Movies, Sports, News or Kids.
 
-Every programme on every channel in that group gets the matching `<category>` in the published
+Every program on every channel in that group gets the matching `<category>` in the published
 guide. Categories the provider already set are kept, and a category is never added twice. The tag
 belongs to the group, so it applies in every output that includes it and survives refreshes. The
 values match Jellyfin's default category lists (`movie`, `sports`, `news`, `kids`). If you have
 customized those lists in Jellyfin's XMLTV settings, keep these words in them.
 
-Only channels with guide data are affected. A channel with no programmes has nothing to tag.
+Only channels with guide data are affected. A channel with no programs has nothing to tag.
 
 To use an output in Jellyfin, go to **Dashboard → Live TV**. Add an **M3U Tuner** with the
 output's playlist URL and an **XMLTV** guide provider with its `epg.xml` URL.
@@ -418,7 +418,7 @@ on/off switch. They sit on the same disk as the database, so copy one elsewhere 
 `https://ntfy.sh/my-iptv`) or to any webhook (a JSON POST) when:
 - a source has failed three refreshes in a row,
 - an Xtream Codes account expires in 14, 7, 3 or 1 days, or has expired,
-- a source's guide has run out (it has programmes, but none airing now).
+- a source's guide has run out (it has programs, but none airing now).
 
 Each problem is sent once, and a "Resolved" note follows when it clears (expiry warnings just move
 on to the next step). The same list shows on the dashboard. Use **Send test** to check the address.
@@ -431,7 +431,7 @@ off hides them again; anything already set up keeps working.
 - **Use guide logos for channels without one.** If the provider gives a channel no logo, the logo
   its guide lists is used. Provider logos and your own always win.
 - **Name cleanup** (on each output's page). Find/replace rules on channel names, category names
-  or both, such as `US: CNN ᴴᴰ` into `CNN`. Patterns are case-sensitive regular expressions, and
+  or both, such as `US: Daily News ᴴᴰ` into `Daily News`. Patterns are case-sensitive regular expressions, and
   `$1` works in the replacement. Rules run top to bottom, then leftover spaces are tidied.
   **Country prefix** and **Quality tags** presets are included, and a preview shows how many names
   change, with examples. Names you set by hand are never changed, and a name that would end up
