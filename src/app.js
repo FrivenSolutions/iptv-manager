@@ -242,9 +242,14 @@ export function createApp({
     const ch = channelOf(sel, params.id);
     return serveSegment(ctx, res, sel.output, ch, query.get('u'), query.get('sig'), liveViewer(req, sel, ch));
   });
-  router.get('/s/:token/:id.:ext', (req, res, { params }) => {
+  // A stream link with ?light=1 asks for the channel's light copy (light.js), for players that
+  // can't see tileiptv-light (an Xtream Codes login has no playlist attributes). Ignored when the
+  // output doesn't offer light copies: the player gets the original and notices.
+  const wantsLight = (sel, query) => query.get('light') === '1' && !!sel.output.light_enabled;
+  router.get('/s/:token/:id.:ext', (req, res, { params, query }) => {
     const sel = byToken(params.token);
     const ch = channelOf(sel, params.id);
+    if (wantsLight(sel, query)) return serveLight(ctx, res, ch, lightViewer(req, sel, ch));
     return serveChannel(ctx, res, sel.output, ch, params.ext, liveViewer(req, sel, ch));
   });
 
@@ -289,11 +294,12 @@ export function createApp({
     if (!sel) throw new HttpError(401, 'Invalid credentials');
     return sendEpg(req, res, sel, false);
   });
-  const xcStream = (req, res, { params }) => {
+  const xcStream = (req, res, { params, query }) => {
     const sel = xcAuth(params.u, params.p);
     if (!sel) throw new HttpError(401, 'Invalid credentials');
     const [id, ext = 'ts'] = params.file.split('.');
     const ch = channelOf(sel, id);
+    if (wantsLight(sel, query)) return serveLight(ctx, res, ch, lightViewer(req, sel, ch, params.u));
     return serveChannel(ctx, res, sel.output, ch, ext, liveViewer(req, sel, ch, params.u));
   };
   router.get('/live/:u/:p/:file', xcStream);

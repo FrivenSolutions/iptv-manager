@@ -479,7 +479,11 @@ about 2.5 Mb/s, roughly a quarter of the decoding work. This server makes that c
 
 Tick **Light copies for multi-view (TileIPTV)** in an output's settings. Its M3U playlist (the
 playlist link, and `get.php` for an Xtream Codes login) then gives each channel a
-`tileiptv-light="…/light/…/<channel>.ts"` attribute. Other players ignore it.
+`tileiptv-light="…/light/…/<channel>.ts"` attribute. Other players ignore it. An Xtream Codes
+login has no playlist attributes, so its stream URLs take `?light=1` instead
+(`/live/<user>/<pass>/<channel>.ts?light=1` serves the light copy); in TileIPTV, set the
+playlist's **Light stream URL** to `{url}?light=1`. While the output doesn't offer light copies,
+`?light=1` is ignored and the original is sent.
 
 - ffmpeg starts when a light copy is asked for and stops as soon as its last viewer leaves.
   Everyone watching the same channel's light copy shares one ffmpeg.

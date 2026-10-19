@@ -1329,6 +1329,14 @@ test('light streams: a 720p copy made by ffmpeg while watched, shared, capped, s
     assert.deepEqual(lightsOf(await playlist()), [], 'off by default');
     const chId = Number((await playlist()).split('\n').find((l) => l.startsWith('http')).match(/\/(\d+)\.ts$/)[1]);
     assert.equal((await fetch(`${base}/light/${o.token}/${chId}.ts`)).status, 404, 'no light copies from an output that does not offer them');
+    const ignored = await fetch(`${base}/s/${o.token}/${chId}.ts?light=1`);
+    const ignoredReader = ignored.body.getReader();
+    const firstRead = await ignoredReader.read();
+    assert.equal(ignored.status, 200);
+    assert.match(new TextDecoder().decode(firstRead.value), /^chunk-950;/, '?light=1 is ignored there: the original is sent');
+    assert.equal(light.jobs.size, 0);
+    await ignoredReader.cancel().catch(() => {});
+    await until(() => live.open.get('950') === 0, 'its provider connection closed');
 
     let r = await api('PUT', `/api/outputs/${o.id}`, { light_enabled: true });
     assert.equal(r.data.light_enabled, true);
@@ -1358,6 +1366,15 @@ test('light streams: a 720p copy made by ffmpeg while watched, shared, capped, s
     assert.match(a2.first, /chunk-\d+;/, 'a second light viewer joins the same ffmpeg mid-stream');
     assert.equal(live.requests - before, 1, 'one provider connection for all three');
     assert.equal(runs().length, 1, 'one ffmpeg');
+    // ?light=1 on a stream URL (an Xtream Codes login has no playlist attributes): the same copy.
+    for (const u of [`${base}/live/multi/mv/${chId}.ts?light=1`, `${base}/multi/mv/${chId}.ts?light=1`, `${fullUrls[0]}?light=1`]) {
+      const x = await watch(u);
+      assert.equal(x.status, 200, u);
+      assert.equal(light.jobs.get(chId).clients.size, 3, `${u} joins the light copy`);
+      x.stop();
+      await until(() => light.jobs.get(chId).clients.size === 2, 'and leaves it');
+    }
+    assert.equal(runs().length, 1, 'still one ffmpeg');
     st = (await api('GET', '/api/light')).data;
     assert.deepEqual(st.active, [{ channel: 'Live 1', viewers: 2 }]);
     const watching = (await api('GET', '/api/viewers')).data;
