@@ -7,7 +7,7 @@ and others). Refreshes run on a schedule, and new provider categories that match
 are added automatically.
 
 It is a lighter alternative to tools like IPTV Boss or Dispatcharr: one Node.js process with an
-embedded SQLite database and a single small dependency. It uses about 60 MB of RAM when idle. A
+embedded SQLite database and a few small dependencies. It uses about 60 MB of RAM when idle. A
 refresh of a large provider (20k channels and a 260 MB guide) peaks at about 300 MB and takes
 around 25 seconds.
 
@@ -56,9 +56,15 @@ around 25 seconds.
   kind of rules on their own tabs.
 - **Light streams** (optional, per output): a 720p copy of each channel made with ffmpeg while it's
   watched, for multi-view players such as TileIPTV on TVs that can't decode several full channels.
+- **Sharing:** extra Xtream Codes logins per output, each removable on its own. Outputs can be
+  duplicated or paused.
+- **Watch** in the browser: play any output's channels, full screen.
+- **Dashboard:** who is watching what right now, with what's on, plus alerts and source health. A
+  [Homepage](https://gethomepage.dev) widget API shows the same numbers on your homelab dashboard.
 - **Advanced options** (hidden until you turn them on): guide logos for channels without one, and
   name cleanup rules per output.
-- Admin login for the web UI. Output URLs carry a random token, which you can regenerate.
+- Admin login for the web UI, with optional two-factor sign-in. Output URLs carry a random token,
+  which you can regenerate.
 
 Live TV comes first. **Movies and series** are optional, per source and per output (see
 [Movies and series](#movies-and-series)); until you turn them on, they are skipped.
@@ -118,7 +124,7 @@ bash -c "$(wget -qO- https://raw.githubusercontent.com/FrivenSolutions/simple-ip
 ```
 
 The script creates an unprivileged Debian container (1 core, 512 MB RAM, 4 GB disk), installs
-Node.js 24 and git inside it, and runs the app as a systemd service. It prints the URL when done.
+Node.js 24, git and ffmpeg inside it, and runs the app as a systemd service. It prints the URL when done.
 You can put settings in front of the command, for example a fixed container ID and address, and
 nightly updates turned on:
 
@@ -148,8 +154,9 @@ pct exec <container id> -- iptv-manager-update
 Or run `iptv-manager-update` in the container's own console. If `pct exec` answers
 `Failed to exec "iptv-manager-update"`, use the full path once:
 `pct exec <container id> -- /usr/local/bin/iptv-manager-update`. This affects installs converted
-before the command was also linked into `/usr/bin`, and that first run adds the link. It fetches the latest version and
-stops if there is nothing new. It reinstalls dependencies only if they changed, then restarts the
+before the command was also linked into `/usr/bin`, and that first run adds the link.
+
+The updater fetches the latest version and stops if there is nothing new. It reinstalls dependencies only if they changed, then restarts the
 service; it never runs apt or touches the container itself. If the new version does not start
 within about 30 seconds, the previous one is restored automatically. That release is then skipped
 until you run `iptv-manager-update --force`.
@@ -221,9 +228,14 @@ when they are built, from the `.git` folder in the build context. An image built
    **Exclude** on a category to override the rules for it. Expand a category (▸) to filter or
    pick its channels. To find a channel, type part of its name in the search box: categories
    that hold a match show it as a chip, marked ✓ (in the output) or ✕ (with the reason). Click a
-   chip to open its category at that channel. Tick **Hide excluded** to see only the categories that are in the
-   output (Live TV, Movies and Series; your browser remembers it). An expanded category has its
-   own **Hide excluded** for its channels or titles.
+   chip to open its category at that channel. Tick **Hide excluded** to see only the categories
+   that are in the output (Live TV, Movies and Series; your browser remembers it). An expanded
+   category has its own **Hide excluded** for its channels or titles.
+
+   Under **Sources**, ✎ on a source's row (or on its heading in the category list) adds a
+   **prefix or suffix** to the names of that source's categories in this output, such as
+   `UK | News` or `News [Provider A]`, so players can tell two providers' categories apart.
+   Rules still match the provider's names.
 
    **Manage output** (at the bottom of **Connect your apps**) has, in order:
    - **Open playlist** and **Open guide**, to see what the output publishes.
@@ -381,9 +393,14 @@ by another address than your browser, change the `url` in the snippet (or set th
 ### Backup and restore
 
 Go to **Settings → Backup & restore**. **Export settings** downloads one JSON file with:
-- sources, outputs and rules (category and channel)
-- hand picks, channel and category edits, and Jellyfin tags
-- each output's URL token and Xtream Codes login
+- sources, outputs and rules (category and channel, live TV, movies and series)
+- hand picks (categories, channels and titles), channel, category and title edits, and Jellyfin
+  tags
+- each output's URL token, Xtream Codes login and other logins, name cleanup rules, category
+  prefixes and suffixes, and per-category toggles
+- app settings (patterns, alerts, light streams and the like)
+
+The admin password, two-factor sign-in and the dashboard widget key are not in it.
 
 It can include provider passwords (tick the box). The file then contains credentials, so
 keep it safe.
@@ -559,7 +576,8 @@ no limit. A new channel over the limit is refused with *503 Service Unavailable*
 knocking another stream off at the provider. More viewers of a channel already playing are
 always let in. HLS channels count while their playlist or segments are being fetched, and for 30
 seconds after. The Sources list shows the streams in use. Direct and Redirect can't be limited,
-because players connect to the provider themselves.
+because players connect to the provider themselves. The Watch page and light streams always go
+through this server, so they count in any mode.
 
 ## Configuration
 
@@ -570,6 +588,9 @@ because players connect to the provider themselves.
 | `DATA_DIR` | `./data` (`/data` in Docker) | Database, uploads, cache |
 | `ADMIN_PASSWORD` | (unset) | If set, it becomes the admin password on every start. Use it for recovery. |
 | `DISABLE_2FA` | (unset) | `1` turns two-factor sign-in off on start, if you lost both the authenticator and the recovery codes. Remove it again afterwards. |
+| `IPTV_UPDATE_REPO` | `FrivenSolutions/simple-iptv-manager` | GitHub repository the update check compares against (`owner/name`), for forks |
+| `FFMPEG_PATH` | `ffmpeg` | ffmpeg program for light streams |
+| `LIGHT_VAAPI_DEVICE` | `/dev/dri/renderD128` | GPU device for Intel Quick Sync |
 
 If players reach the server by a different name than your browser does (a reverse proxy or DNS
 name, for example), set **Settings → Base URL** so the published links use that address.
@@ -610,20 +631,27 @@ node scripts/demo-provider.js     # fake provider on :9090 (M3U, XMLTV and XC lo
 DATA_DIR=./data-dev node src/server.js
 ```
 
-Requires Node.js 24 or newer, for the built-in `node:sqlite`. The only runtime dependency is
-[`sax`](https://github.com/isaacs/sax-js). The web UI is plain JavaScript with no build step.
+Requires Node.js 24 or newer, for the built-in `node:sqlite`. Runtime dependencies:
+[`sax`](https://github.com/isaacs/sax-js) (guide parsing), and for the browser,
+[`mpegts.js`](https://github.com/xqq/mpegts.js) and [`hls.js`](https://github.com/video-dev/hls.js)
+(Watch page) and [`qrcode-generator`](https://github.com/kazuhikoarase/qrcode-generator)
+(two-factor setup). The web UI is plain JavaScript with no build step. Light streams use ffmpeg
+when it is installed.
 
 The layout of `src/`:
 
 | File | Role |
 |---|---|
 | `server.js`, `app.js`, `http.js` | Entry point, routing, published outputs |
-| `api.js`, `auth.js` | Admin REST API and login |
-| `ingest.js`, `m3u.js`, `xmltv.js`, `hdhomerun.js` | Fetching and parsing sources and guides |
-| `epgmatch.js`, `filters.js` | Guide matching, category/channel rules |
-| `outputs/` | M3U, XMLTV and Xtream Codes output |
-| `stream.js` | Redirect and proxy streaming |
-| `backup.js`, `db.js`, `jobs.js` | Settings export/import, schema, refresh scheduler |
+| `api.js`, `auth.js`, `totp.js` | Admin REST API, login and two-factor sign-in |
+| `ingest.js`, `m3u.js`, `xmltv.js`, `hdhomerun.js`, `fetch.js` | Fetching and parsing sources and guides |
+| `vod.js`, `jsonstream.js` | Movies and series (big lists read one entry at a time) |
+| `epgmatch.js`, `filters.js` | Guide matching, category/channel rules, name cleanup |
+| `outputs/` | M3U, XMLTV and Xtream Codes output (live, movies and series) |
+| `stream.js`, `streams.js`, `viewers.js` | Redirect and proxy streaming, shared connections and limits, who is watching |
+| `light.js` | Light streams (ffmpeg) |
+| `backup.js`, `autobackup.js`, `db.js`, `jobs.js` | Settings export/import, daily backups, schema, refresh scheduler |
+| `alerts.js`, `updates.js`, `webupdate.js`, `version.js` | Alerts, update check, Update now, running version |
 
 Issues and pull requests are welcome. Please run `npm test` before opening a pull request, and add
 a test for any behavior you change.
@@ -631,7 +659,9 @@ a test for any behavior you change.
 ## Credits
 
 The Watch page plays streams with [mpegts.js](https://github.com/xqq/mpegts.js) and
-[hls.js](https://github.com/video-dev/hls.js), both Apache-2.0 licensed.
+[hls.js](https://github.com/video-dev/hls.js), both Apache-2.0 licensed. Two-factor setup draws its
+QR code with [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) (MIT). The Docker
+image includes [FFmpeg](https://ffmpeg.org) for light streams.
 
 The HDHomeRun guide support follows the approach of
 [HDHomeRunEPG-to-XmlTv](https://github.com/IncubusVictim/HDHomeRunEPG-to-XmlTv), reimplemented here
