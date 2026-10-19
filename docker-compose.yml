@@ -20,6 +20,12 @@ services:
       TZ: ${TZ:-UTC}
       # Optional: if set, becomes the admin password on every start (also password recovery).
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    # Optional, for light streams with Intel Quick Sync: pass the GPU in, and let the container
+    # user open it (the number is the host's render group: getent group render | cut -d: -f3).
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "993"
 
 volumes:
   iptv-data:

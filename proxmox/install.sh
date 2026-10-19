@@ -57,6 +57,13 @@ else
   apt-get install -y -qq nodejs >/dev/null
 fi
 
+# ffmpeg makes light streams (720p copies for multi-view players), only while one is watched.
+if ! command -v ffmpeg >/dev/null; then
+  echo "==> Installing ffmpeg"
+  apt-get update -qq
+  apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null
+fi
+
 id "$SERVICE_USER" >/dev/null 2>&1 || useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
 mkdir -p "$APP_DIR" "$DATA_DIR"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"

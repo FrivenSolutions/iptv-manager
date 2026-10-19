@@ -1040,6 +1040,7 @@ async function outputEditor(main, id) {
   let o = await api('GET', `/api/outputs/${id}`);
   let cats = await api('GET', `/api/outputs/${id}/categories`);
   const settings = await api('GET', '/api/settings');
+  const lightStatus = await api('GET', '/api/light');
   const draft = {
     name: o.name,
     stream_mode: o.stream_mode,
@@ -1056,6 +1057,7 @@ async function outputEditor(main, id) {
     rules: o.rules.filter((r) => r.kind === 'live').map((r) => ({ ...r })),
     vod_rules: { movie: o.rules.filter((r) => r.kind === 'movie').map((r) => ({ ...r })), series: o.rules.filter((r) => r.kind === 'series').map((r) => ({ ...r })) },
     vod_enabled: o.vod_enabled,
+    light_enabled: o.light_enabled,
     name_rules: o.name_rules.map((r) => ({ ...r })),
   };
   let dirty = false;
@@ -1184,7 +1186,15 @@ async function outputEditor(main, id) {
       h('label', { class: 'check' },
         h('input', { type: 'checkbox', checked: draft.vod_enabled, onchange: (e) => { draft.vod_enabled = e.target.checked; markDirty(); } }),
         ' Include movies & series'),
-      h('span', { class: 'hint' }, 'Players see them through the Xtream Codes login. Pick them on the Movies and Series tabs.')));
+      h('span', { class: 'hint' }, 'Players see them through the Xtream Codes login. Pick them on the Movies and Series tabs.'),
+      h('label', { class: 'check' },
+        h('input', { type: 'checkbox', checked: draft.light_enabled, onchange: (e) => { draft.light_enabled = e.target.checked; markDirty(); } }),
+        ' Light copies for multi-view (TileIPTV)'),
+      h('span', { class: 'hint' },
+        'Adds a tileiptv-light link to each channel in the M3U playlist: a 720p copy this server makes with ffmpeg while it is watched. Other players ignore it. ',
+        lightStatus.ffmpeg ? 'Encoder and limits are under ' : null,
+        lightStatus.ffmpeg ? h('a', { href: '#/settings' }, 'Settings') : h('b', { class: 'warn-text' }, 'ffmpeg is not installed on this server, so the links won\'t play yet (see Settings).'),
+        lightStatus.ffmpeg ? '.' : null)));
 
   // --- sources
   const sourcesBox = h('div', { class: 'source-list' });
@@ -1802,6 +1812,7 @@ async function outputEditor(main, id) {
         ...draft.vod_rules.series.map((r) => ({ ...r, kind: 'series' })),
       ].filter((r) => r.value !== ''),
       vod_enabled: draft.vod_enabled,
+      light_enabled: draft.light_enabled,
       // Only sent when shown, so an output's rules are never touched with advanced options off.
       name_rules: settings.advanced ? draft.name_rules.filter((r) => r.find !== '') : undefined,
     };
@@ -2414,10 +2425,71 @@ async function settingsView(main) {
     updatesCard(await api('GET', '/api/updates')),
     alertsCard(s),
     widgetCard(s, (await api('GET', '/api/widget-key')).key),
+    lightCard(s, await api('GET', '/api/light')),
     emptyEventCard(s),
     guidePatternsCard(s),
     backupCard(),
     advancedCard(s));
+}
+
+/**
+ * Light streams: the 720p copies multi-view players (TileIPTV) switch side windows to. Shows
+ * whether ffmpeg is there and which encoder runs, the light copies being made now, the encoder
+ * choice and how many may run at once, and a short test encode.
+ */
+function lightCard(s, st) {
+  const card = h('section', { class: 'card narrow' });
+  const ENCODER_LABELS = { vaapi: 'Intel Quick Sync (VAAPI)', software: 'software (CPU)' };
+  const encoder = h('select', null,
+    [['auto', 'Auto: Intel Quick Sync when the GPU is reachable, else software'], ['vaapi', 'Intel Quick Sync (VAAPI)'], ['software', 'Software (CPU, about 1–2 cores per stream)']]
+      .map(([v, l]) => h('option', { value: v, selected: s.light_encoder === v }, l)));
+  const max = h('input', { type: 'number', min: 1, max: 16, value: s.light_max });
+  const result = h('p', { class: 'hint' });
+  const statusLine = () => (!st.ffmpeg
+    ? h('p', { class: 'hint' }, h('b', { class: 'warn-text' }, 'ffmpeg is not installed on this server. '),
+      'The Docker image includes it. On a Proxmox or other Debian install, run: ', h('code', null, 'apt install --no-install-recommends ffmpeg'), '.')
+    : h('p', { class: 'hint' }, `ffmpeg ${st.ffmpeg} · encoding with ${ENCODER_LABELS[st.encoder] || st.encoder}`,
+      st.setting === 'auto' && st.encoder === 'software' ? (st.device ? ' (the GPU is there but did not pass a test encode)' : ' (no GPU passed to this server)') : '',
+      st.active.length ? ` · now making ${st.active.map((a) => `${a.channel} (${a.viewers})`).join(', ')}` : ' · none running now'));
+  const draw = () => fill(card,
+    h('h2', null, 'Light streams'),
+    h('p', { class: 'hint' },
+      'A 720p copy of a channel at up to 30 fps, made with ffmpeg only while it is watched. Multi-view players such as TileIPTV ',
+      'switch side windows to it when a TV can\'t play several full channels at once. Turn it on for an output on its page.'),
+    statusLine(),
+    h('form', {
+      class: 'form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        await attempt(() => api('PUT', '/api/settings', { light_encoder: encoder.value, light_max: Number(max.value) }), 'Saved');
+        st = await api('GET', '/api/light');
+        draw();
+      },
+    },
+    field('Encoder', encoder),
+    field('At most at once', max, 'Each one is an ffmpeg and a connection to the provider (shared with anyone watching the same channel in full). Over this, players are told to keep the full stream.'),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn primary' }, 'Save'),
+      h('button', {
+        type: 'button',
+        class: 'btn',
+        disabled: !st.ffmpeg,
+        onclick: async (e) => {
+          e.target.disabled = true;
+          fill(result, 'Encoding a few seconds of 1080p60…');
+          try {
+            const t = await api('POST', '/api/light/test', { encoder: encoder.value });
+            fill(result, t.ok
+              ? [h('b', null, 'Works. '), `${ENCODER_LABELS[t.encoder].replace(/^./, (c) => c.toUpperCase())}${t.speed ? ` at ${t.speed}× real time: roughly ${Math.max(1, Math.floor(t.speed))} light stream${Math.floor(t.speed) > 1 ? 's' : ''} at once.` : '.'}`]
+              : [h('b', { class: 'warn-text' }, `${ENCODER_LABELS[t.encoder] || 'The encoder'} failed: `), t.error]);
+          } finally {
+            e.target.disabled = false;
+          }
+        },
+      }, 'Test encoder'))),
+    result);
+  draw();
+  return card;
 }
 
 /** Where to push alerts (a source that keeps failing, an expiring account, a guide that ran out). */

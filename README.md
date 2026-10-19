@@ -47,12 +47,15 @@ around 25 seconds.
 - **Scheduled refresh** per source, every 12 hours by default. An empty or failed refresh never
   wipes working data.
 - **Edits that survive refreshes:** channel name, logo, number and guide id; category display
-  names; **Jellyfin categories** (Movies, Sports, News, Kids) per channel group.
+  names; a **prefix or suffix** for a source's category names in an output; **Jellyfin
+  categories** (Movies, Sports, News, Kids) per channel group.
 - **Backup and restore** of all settings as one JSON file, plus an automatic backup every day.
 - **Alerts** by ntfy or webhook when a source keeps failing, an account is about to expire, or a
   guide has run out.
 - **Movies and series** (optional) through an output's Xtream Codes login, picked with the same
   kind of rules on their own tabs.
+- **Light streams** (optional, per output): a 720p copy of each channel made with ffmpeg while it's
+  watched, for multi-view players such as TileIPTV on TVs that can't decode several full channels.
 - **Advanced options** (hidden until you turn them on): guide logos for channels without one, and
   name cleanup rules per output.
 - Admin login for the web UI. Output URLs carry a random token, which you can regenerate.
@@ -466,6 +469,61 @@ them. The M3U playlist and the XMLTV guide stay live TV only.
 Playback follows the output's stream mode. Direct and Redirect send the player to the provider.
 Proxy relays the video, seeking included, and counts each title that is playing against the
 source's **Streams at once** limit.
+
+### Light streams (multi-view)
+
+Multi-view players such as TileIPTV show several channels at once, and some TVs can't decode that
+many full HD channels: a Chromecast with Google TV manages about two 1080p60 channels. Such a
+player can switch its side windows to a **light copy** of the channel: 720p, at most 30 fps,
+about 2.5 Mb/s, roughly a quarter of the decoding work. This server makes that copy with ffmpeg.
+
+Tick **Light copies for multi-view (TileIPTV)** in an output's settings. Its M3U playlist (the
+playlist link, and `get.php` for an Xtream Codes login) then gives each channel a
+`tileiptv-light="…/light/…/<channel>.ts"` attribute. Other players ignore it.
+
+- ffmpeg starts when a light copy is asked for and stops as soon as its last viewer leaves.
+  Everyone watching the same channel's light copy shares one ffmpeg.
+- ffmpeg reads the channel through the same shared provider connection as normal viewing (in any
+  stream mode), so a light copy and the full channel together use one of the source's
+  connections. A light copy counts against the source's **Streams at once** like any channel.
+- **Settings → Light streams** sets the encoder and how many may run at once (4 by default). Over
+  either limit, the player gets *503* and keeps the full stream. **Test encoder** encodes a few
+  seconds of 1080p60 and says how much faster than real time it ran, which is roughly how many
+  light streams fit at once.
+- Light copies show on the dashboard as the channel name with "(light)".
+
+**Encoder.** *Auto* uses Intel Quick Sync (VAAPI) when the GPU is reachable and passes a short
+test encode, and software otherwise. Software works on any machine, at about 1–2 CPU cores per
+stream; Quick Sync on an N100 takes almost no CPU.
+
+**Docker.** The image includes ffmpeg and Intel's VAAPI drivers. To use Quick Sync, pass the GPU
+in and let the container's user open it. In `docker-compose.yml` (or the Portainer stack),
+uncomment:
+
+```yaml
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "993"   # the host's render group: getent group render | cut -d: -f3
+```
+
+**Proxmox.** New installs get ffmpeg. For an install from before light streams, run
+`apt install --no-install-recommends ffmpeg` inside the container. To use Quick Sync, on the
+Proxmox host (8.1 or newer) give the container the GPU, then restart it:
+
+```bash
+pct set <container id> --dev0 /dev/dri/renderD128,mode=0666
+pct reboot <container id>
+```
+
+Then, inside the container, install Intel's driver:
+
+```bash
+apt install intel-media-va-driver
+```
+
+If **Test encoder** still fails with Quick Sync, install `intel-media-va-driver-non-free` instead
+(it needs Debian's `non-free` component in the apt sources).
 
 ### Stream modes
 

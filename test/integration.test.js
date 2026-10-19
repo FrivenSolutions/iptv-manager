@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { fileURLToPath } from 'node:url';
 import { createApp } from '../src/app.js';
 import { openDb } from '../src/db.js';
 import { importSettings } from '../src/backup.js';
@@ -1293,6 +1294,146 @@ test('proxy mode: viewers of a channel share one upstream stream; a source is ca
   assert.deepEqual(r.map((x) => x.status), [302, 302, 302]);
   await setMax(xcId, '');
   await api('DELETE', `/api/outputs/${o.id}`);
+});
+
+test('light streams: a 720p copy made by ffmpeg while watched, shared, capped, stopped when the last viewer leaves', async () => {
+  const light = app.ctx.light;
+  const ffmpegLog = path.join(os.tmpdir(), `iptvm-fake-ffmpeg-${process.pid}.log`);
+  fs.rmSync(ffmpegLog, { force: true });
+  process.env.FAKE_FFMPEG_LOG = ffmpegLog;
+  const realCmd = light.cmd;
+  light.cmd = [process.execPath, fileURLToPath(new URL('./fake-ffmpeg.mjs', import.meta.url))];
+  light.reset();
+  const runs = () => (fs.existsSync(ffmpegLog) ? fs.readFileSync(ffmpegLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : [])
+    .filter((a) => a.includes('pipe:1') && !a.includes('lavfi'));
+  const until = async (cond, what) => {
+    for (let i = 0; i < 150 && !cond(); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(cond(), what);
+  };
+  const watch = async (url) => {
+    const ac = new AbortController();
+    const r = await fetch(url, { signal: ac.signal });
+    if (r.status !== 200) return { status: r.status, text: await r.text() };
+    const reader = r.body.getReader();
+    const first = new TextDecoder().decode((await reader.read()).value);
+    return { status: 200, first, stop: () => { ac.abort(); reader.cancel().catch(() => {}); } };
+  };
+  const o = (await api('POST', '/api/outputs', { name: 'Multi' })).data;
+  try {
+    await api('PUT', `/api/outputs/${o.id}`, {
+      stream_mode: 'proxy', source_ids: [xcId], xc_enabled: true, xc_username: 'multi', xc_password: 'mv',
+      rules: [{ action: 'include', op: 'equals', value: 'us| live' }],
+    });
+    const playlist = async (url = `${base}/o/${o.token}/playlist.m3u`) => (await fetch(url)).text();
+    const lightsOf = (text) => [...text.matchAll(/tileiptv-light="([^"]+)"/g)].map((m) => m[1]);
+    assert.deepEqual(lightsOf(await playlist()), [], 'off by default');
+    const chId = Number((await playlist()).split('\n').find((l) => l.startsWith('http')).match(/\/(\d+)\.ts$/)[1]);
+    assert.equal((await fetch(`${base}/light/${o.token}/${chId}.ts`)).status, 404, 'no light copies from an output that does not offer them');
+
+    let r = await api('PUT', `/api/outputs/${o.id}`, { light_enabled: true });
+    assert.equal(r.data.light_enabled, true);
+    const text = await playlist();
+    const lights = lightsOf(text);
+    assert.equal(lights.length, 3);
+    assert.equal(lights[0], `${base}/light/${o.token}/${chId}.ts`);
+    assert.match(text, /group-title="[^"]*" tileiptv-light="[^"]+",Live 1\n/, 'on the #EXTINF line, before the name');
+    const xcLights = lightsOf(await playlist(`${base}/get.php?username=multi&password=mv`));
+    assert.equal(xcLights[0], `${base}/light/multi/mv/${chId}.ts`, 'an Xtream Codes login gets links with its own credentials');
+    assert.deepEqual(lightsOf(await playlist(`${base}/o/${token}/playlist.m3u`)), [], 'other outputs are unchanged');
+
+    let st = (await api('GET', '/api/light')).data;
+    assert.deepEqual([st.ffmpeg, st.setting, st.encoder, st.max, st.active], ['7.1-fake', 'auto', 'software', 4, []], 'no GPU here: software');
+
+    // A light viewer and a full-quality viewer of the same channel: one provider connection.
+    const provider = ['950', '951', '952']; // the provider's stream ids of Live 1, 2 and 3
+    const fullUrls = text.split('\n').filter((l) => l.startsWith('http'));
+    const before = live.requests;
+    const a = await watch(lights[0]);
+    assert.equal(a.status, 200);
+    assert.match(a.first, /^LIGHT\[libx264\];/);
+    const full = await watch(fullUrls[0]);
+    assert.equal(full.status, 200);
+    const a2 = await watch(xcLights[0]);
+    assert.equal(a2.status, 200, 'the Xtream Codes link works too');
+    assert.match(a2.first, /chunk-\d+;/, 'a second light viewer joins the same ffmpeg mid-stream');
+    assert.equal(live.requests - before, 1, 'one provider connection for all three');
+    assert.equal(runs().length, 1, 'one ffmpeg');
+    st = (await api('GET', '/api/light')).data;
+    assert.deepEqual(st.active, [{ channel: 'Live 1', viewers: 2 }]);
+    const watching = (await api('GET', '/api/viewers')).data;
+    assert.ok(JSON.stringify(watching).includes('Live 1 (light)'), 'listed on the dashboard as a light copy');
+
+    // The light copy counts against the source's connections like any channel (2 on this account).
+    const b = await watch(lights[1]);
+    assert.equal(b.status, 200);
+    const c = await watch(lights[2]);
+    assert.equal(c.status, 503);
+    assert.match(c.text, /All 2 streams for this source are in use/);
+    b.stop();
+    await until(() => light.jobs.size === 1 && live.open.get(provider[1]) === 0, 'its ffmpeg and provider connection close');
+
+    // Its own cap: ffmpeg runs at a time.
+    await api('PUT', '/api/settings', { light_max: 1 });
+    const d = await watch(lights[1]);
+    assert.equal(d.status, 503);
+    assert.match(d.text, /Light streams are all in use \(1 at a time\)/);
+    await api('PUT', '/api/settings', { light_max: 4 });
+
+    // Stopped as soon as its last viewer leaves; the provider connection stays for the full viewer.
+    const proc = light.jobs.get(chId).proc;
+    a.stop();
+    await new Promise((res) => setTimeout(res, 100));
+    assert.equal(proc.exitCode, null, 'still running for the other light viewer');
+    a2.stop();
+    await until(() => !light.jobs.size && (proc.exitCode !== null || proc.signalCode !== null), 'ffmpeg stopped');
+    assert.equal(live.open.get(provider[0]), 1, 'the full-quality viewer keeps watching');
+    full.stop();
+    await until(() => live.open.get(provider[0]) === 0, 'provider connection closed with the last viewer');
+
+    // Settings, the test encode, and backups.
+    assert.equal((await api('PUT', '/api/settings', { light_encoder: 'gpu' })).status, 400);
+    await api('PUT', '/api/settings', { light_encoder: 'vaapi', light_max: 3 });
+    const s = (await api('GET', '/api/settings')).data;
+    assert.deepEqual([s.light_encoder, s.light_max], ['vaapi', 3]);
+    let t = (await api('POST', '/api/light/test', { encoder: 'vaapi' })).data;
+    assert.equal(t.ok, false);
+    assert.match(t.error, /VAAPI/);
+    t = (await api('POST', '/api/light/test', { encoder: 'software' })).data;
+    assert.deepEqual(t, { ok: true, encoder: 'software', speed: 3.5 });
+    const file = (await api('GET', '/api/export')).data;
+    assert.deepEqual([file.settings.light_encoder, file.settings.light_max], ['vaapi', 3]);
+    assert.equal(file.outputs.find((x) => x.token === o.token).light_enabled, true);
+    const dbFile = path.join(os.tmpdir(), `iptvm-light-${process.pid}.db`);
+    const db2 = openDb(dbFile);
+    try {
+      importSettings(db2, file);
+      assert.equal(db2.get('SELECT light_enabled FROM outputs WHERE token = ?', [o.token]).light_enabled, 1);
+      assert.equal(db2.get('SELECT light_enabled FROM outputs WHERE token = ?', [token]).light_enabled, 0);
+      assert.deepEqual([db2.getSetting('light_encoder'), db2.getSetting('light_max')], ['vaapi', '3']);
+    } finally {
+      db2.close();
+      for (const f of [dbFile, `${dbFile}-wal`, `${dbFile}-shm`]) fs.rmSync(f, { force: true });
+    }
+    const dupe = (await api('POST', `/api/outputs/${o.id}/clone`)).data;
+    assert.equal(dupe.light_enabled, true, 'duplicated with the output');
+    await api('DELETE', `/api/outputs/${dupe.id}`);
+    await api('PUT', '/api/settings', { light_encoder: 'auto', light_max: 4 });
+
+    // Without ffmpeg: a clear refusal, so the player keeps the full stream.
+    light.cmd = [path.join(os.tmpdir(), 'no-such-ffmpeg-here')];
+    light.reset();
+    assert.equal((await api('GET', '/api/light')).data.ffmpeg, null);
+    const e = await watch(lights[0]);
+    assert.equal(e.status, 503);
+    assert.match(e.text, /need ffmpeg/);
+  } finally {
+    light.stop();
+    light.cmd = realCmd;
+    light.reset();
+    delete process.env.FAKE_FFMPEG_LOG;
+    fs.rmSync(ffmpegLog, { force: true });
+    await api('DELETE', `/api/outputs/${o.id}`);
+  }
 });
 
 test('movies and series: loaded when a source includes them, filtered per output, served over the Xtream Codes login', async () => {

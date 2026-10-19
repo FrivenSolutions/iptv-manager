@@ -21,6 +21,7 @@ import { now } from './db.js';
 import { serveWatch } from './stream.js';
 import { newSecret, checkCode, otpauthUri, qrSvg, newRecoveryCodes, useRecoveryCode } from './totp.js';
 import { clientIp } from './viewers.js';
+import { ENCODERS, DEFAULT_LIGHT_MAX } from './light.js';
 
 const UPLOAD_LIMIT = 1024 * 1024 * 1024;
 const IMPORT_LIMIT = 50 * 1024 * 1024;
@@ -173,6 +174,7 @@ function outputView(req, ctx, o, withDetail = false) {
     epg_days: o.epg_days,
     xc_enabled: !!o.xc_enabled,
     vod_enabled: !!o.vod_enabled,
+    light_enabled: !!o.light_enabled,
     paused: !!o.paused,
     xc_username: o.xc_username,
     xc_password: o.xc_password,
@@ -358,6 +360,8 @@ export function registerApi(router, ctx) {
       guide_logo_fallback: db.getSetting('guide_logo_fallback') === '1',
       notify_type: db.getSetting('notify_type') || '',
       notify_url: db.getSetting('notify_url') || '',
+      light_encoder: ctx.light.setting(),
+      light_max: ctx.light.max(),
     });
   });
 
@@ -381,6 +385,12 @@ export function registerApi(router, ctx) {
       db.setSetting('notify_url', url);
     }
     if (body.guide_logo_fallback !== undefined) db.setSetting('guide_logo_fallback', bool(body.guide_logo_fallback));
+    if (body.light_encoder !== undefined) {
+      if (!ENCODERS.includes(body.light_encoder)) throw new HttpError(400, 'Unknown encoder');
+      db.setSetting('light_encoder', body.light_encoder);
+      ctx.light.reset();
+    }
+    if (body.light_max !== undefined) db.setSetting('light_max', int(body.light_max, DEFAULT_LIGHT_MAX, 1, 16));
     if (body.empty_event_patterns !== undefined) {
       // null restores the defaults; a list (possibly empty) replaces them.
       db.setSetting('empty_event_patterns', body.empty_event_patterns === null ? null : JSON.stringify(validatePatterns(body.empty_event_patterns)));
@@ -390,6 +400,18 @@ export function registerApi(router, ctx) {
       db.setSetting('guide_patterns', body.guide_patterns === null ? null : JSON.stringify(validatePatterns(body.guide_patterns)));
     }
     sendJson(res, 200, { ok: true, empty_event_patterns: emptyEventPatterns(db), guide_patterns: guidePatterns(db) });
+  });
+
+  // --- light streams ----------------------------------------------------------
+  // ffmpeg found or not, the encoder in use, and the light copies being made now.
+  router.get('/api/light', async (req, res) => sendJson(res, 200, await ctx.light.status()));
+  // A few seconds' test encode with the chosen encoder (or the one "auto" would pick).
+  router.post('/api/light/test', async (req, res) => {
+    const body = await readJson(req);
+    ctx.light.reset();
+    if (!(await ctx.light.ffmpeg())) return sendJson(res, 200, { ok: false, error: 'ffmpeg is not installed on this server' });
+    const encoder = ENCODERS.includes(body.encoder) && body.encoder !== 'auto' ? body.encoder : await ctx.light.encoder();
+    sendJson(res, 200, await ctx.light.test(encoder));
   });
 
   // --- alerts ------------------------------------------------------------------
@@ -840,6 +862,7 @@ export function registerApi(router, ctx) {
         ],
       );
       if (nameRules) db.run('UPDATE outputs SET name_rules = ? WHERE id = ?', [JSON.stringify(nameRules.rules), o.id]);
+      if (body.light_enabled !== undefined) db.run('UPDATE outputs SET light_enabled = ? WHERE id = ?', [bool(body.light_enabled), o.id]);
       for (const kind of ['movie', 'series']) {
         const key = `include_all_${kind}`;
         if (body[key] !== undefined) db.run(`UPDATE outputs SET ${key} = ? WHERE id = ?`, [bool(body[key]), o.id]);
@@ -890,9 +913,9 @@ export function registerApi(router, ctx) {
     const id = db.tx(() => {
       const copyId = db.get(
         `INSERT INTO outputs (name, token, stream_mode, include_all, include_all_movie, include_all_series, number_start, epg_days,
-                              xc_enabled, xc_username, xc_password, name_rules, vod_enabled, paused, created_at, updated_at)
+                              xc_enabled, xc_username, xc_password, name_rules, vod_enabled, light_enabled, paused, created_at, updated_at)
          SELECT ?, ?, stream_mode, include_all, include_all_movie, include_all_series, number_start, epg_days,
-                0, NULL, NULL, name_rules, vod_enabled, paused, ?, ?
+                0, NULL, NULL, name_rules, vod_enabled, light_enabled, paused, ?, ?
            FROM outputs WHERE id = ? RETURNING id`,
         [`${o.name} (copy)`.slice(0, 200), randomToken(), t, t, o.id],
       ).id;

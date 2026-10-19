@@ -16,6 +16,11 @@ ENV NODE_ENV=production \
     PORT=8080 \
     DATA_DIR=/data
 
+# ffmpeg for light streams (only runs while someone watches one), with Intel's VAAPI drivers
+# for Quick Sync on x86_64 (iHD for 2015+ CPUs such as the N100, i965 for older ones).
+RUN apk add --no-cache ffmpeg \
+ && if [ "$(apk --print-arch)" = x86_64 ]; then apk add --no-cache intel-media-driver libva-intel-driver; fi
+
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force

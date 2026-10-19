@@ -2,6 +2,7 @@
 // names/keys rather than database ids, so an export restores onto a fresh install.
 import { HttpError } from './http.js';
 import { OPS, compilePatterns, checkNameRules, parseNameRules, affixText } from './filters.js';
+import { ENCODERS, DEFAULT_LIGHT_MAX } from './light.js';
 import { parseJellyfin } from './outputs/epg.js';
 import { now } from './db.js';
 
@@ -53,6 +54,8 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
       guide_patterns: customGuide ? JSON.parse(customGuide) : null,
       advanced: db.getSetting('ui_advanced') === '1',
       guide_logo_fallback: db.getSetting('guide_logo_fallback') === '1',
+      light_encoder: db.getSetting('light_encoder') || 'auto',
+      light_max: Number(db.getSetting('light_max')) || DEFAULT_LIGHT_MAX,
       // An ntfy topic URL works like a password, so it only travels with secrets.
       notify_type: db.getSetting('notify_type') || '',
       notify_url: secrets ? db.getSetting('notify_url') || '' : '',
@@ -84,6 +87,7 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
       include_all_series: !!o.include_all_series,
       xc_enabled: !!o.xc_enabled,
       vod_enabled: !!o.vod_enabled,
+      light_enabled: !!o.light_enabled,
       paused: !!o.paused,
       xc_password: secrets ? o.xc_password : null,
       sources: db.all('SELECT source_id FROM output_sources WHERE output_id = ? ORDER BY sort', [o.id]).map((r) => r.source_id),
@@ -189,6 +193,8 @@ export function importSettings(db, data) {
     // Missing in older files: off, as it was then.
     db.setSetting('ui_advanced', data.settings?.advanced ? 1 : 0);
     db.setSetting('guide_logo_fallback', data.settings?.guide_logo_fallback ? 1 : 0);
+    db.setSetting('light_encoder', ENCODERS.includes(data.settings?.light_encoder) ? data.settings.light_encoder : null);
+    db.setSetting('light_max', Number.isInteger(data.settings?.light_max) && data.settings.light_max >= 1 && data.settings.light_max <= 16 ? data.settings.light_max : null);
     const nt = ['ntfy', 'webhook'].includes(data.settings?.notify_type) ? data.settings.notify_type : '';
     const nu = typeof data.settings?.notify_url === 'string' && /^https?:\/\//i.test(data.settings.notify_url) ? data.settings.notify_url : '';
     db.setSetting('notify_type', nt && nu ? nt : '');
@@ -262,13 +268,13 @@ export function importSettings(db, data) {
     for (const o of data.outputs) {
       const r = db.get(
         `INSERT INTO outputs (name, token, stream_mode, include_all, include_all_movie, include_all_series, number_start, epg_days,
-                              xc_enabled, xc_username, xc_password, name_rules, vod_enabled, paused, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+                              xc_enabled, xc_username, xc_password, name_rules, vod_enabled, light_enabled, paused, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         // Files from before these switches existed: movies and series followed the live TV one.
         [String(o.name || 'Output'), o.token, o.stream_mode, !!o.include_all, o.include_all_movie ?? !!o.include_all,
           o.include_all_series ?? !!o.include_all, o.number_start ?? null, Number(o.epg_days) || 7,
           !!o.xc_enabled && !!o.xc_username && !!o.xc_password, o.xc_username || null, o.xc_password || null,
-          JSON.stringify(checkNameRules(o.name_rules ?? []).rules), !!o.vod_enabled, !!o.paused, t, t],
+          JSON.stringify(checkNameRules(o.name_rules ?? []).rules), !!o.vod_enabled, !!o.light_enabled, !!o.paused, t, t],
       );
       summary.outputs++;
       (o.sources || []).forEach((ref, i) => {

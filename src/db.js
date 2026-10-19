@@ -343,6 +343,10 @@ const MIGRATIONS = [
   ALTER TABLE output_sources ADD COLUMN cat_prefix TEXT NOT NULL DEFAULT '';
   ALTER TABLE output_sources ADD COLUMN cat_suffix TEXT NOT NULL DEFAULT '';
   `,
+  `
+  -- Light streams: the M3U playlist offers a 720p copy of each channel (tileiptv-light).
+  ALTER TABLE outputs ADD COLUMN light_enabled INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.

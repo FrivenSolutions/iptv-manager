@@ -18,6 +18,7 @@ import { serveChannel, serveSegment, serveVod } from './stream.js';
 import { vodTarget } from './outputs/xcvod.js';
 import { Streams } from './streams.js';
 import { Viewers, clientIp } from './viewers.js';
+import { Light, serveLight } from './light.js';
 import { HDHR_API } from './hdhomerun.js';
 import { currentVersion } from './version.js';
 import { UpdateChecker, installType, DEFAULT_UPDATE_REPO } from './updates.js';
@@ -146,6 +147,7 @@ export function createApp({
   ctx.autoBackup = new AutoBackup(ctx, { firstDelayMs: autoBackupDelayMs });
   ctx.streams = new Streams(ctx);
   ctx.viewers = new Viewers();
+  ctx.light = new Light(ctx);
   ctx.updates = new UpdateChecker({
     db, commit: ctx.build.commit, apiBase: updateApiBase, repo: updateRepo, delayMs: updateCheckDelayMs, log,
   });
@@ -174,8 +176,8 @@ export function createApp({
   };
   const base = (req) => baseUrl(req, db.getSetting('base_url'));
 
-  const sendPlaylist = (req, res, sel, urlFor) => {
-    const body = buildM3U(sel.output, sel.channels, base(req), urlFor);
+  const sendPlaylist = (req, res, sel, urlFor, lightFor) => {
+    const body = buildM3U(sel.output, sel.channels, base(req), urlFor, lightFor);
     sendText(res, 200, body, 'audio/x-mpegurl; charset=utf-8', {
       'content-disposition': 'inline; filename="playlist.m3u"',
       'cache-control': 'no-cache',
@@ -246,6 +248,18 @@ export function createApp({
     return serveChannel(ctx, res, sel.output, ch, params.ext, liveViewer(req, sel, ch));
   });
 
+  // Light copies (light.js): always through this server, whatever the output's stream mode.
+  const lightViewer = (req, sel, ch, username = null) => viewerOf(req, sel, username, `${ch.name} (light)`, 'live', ch.source_id, ch.epg_id);
+  const lightOf = (sel, file) => {
+    if (!sel.output.light_enabled) throw new HttpError(404, 'This output does not offer light streams');
+    return channelOf(sel, String(file).replace(/\.ts$/i, ''));
+  };
+  router.get('/light/:token/:file', (req, res, { params }) => {
+    const sel = byToken(params.token);
+    const ch = lightOf(sel, params.file);
+    return serveLight(ctx, res, ch, lightViewer(req, sel, ch));
+  });
+
   // --- Xtream Codes compatible endpoints -----------------------------------
   const xcAuth = (username, password) => {
     const id = findXcOutput(db, username, password);
@@ -267,7 +281,8 @@ export function createApp({
   router.get('/get.php', (req, res, { query }) => {
     const sel = xcAuth(query.get('username'), query.get('password'));
     if (!sel) throw new HttpError(401, 'Invalid credentials');
-    sendPlaylist(req, res, sel, xcUrl(req, sel, query.get('username'), query.get('password')));
+    const [u, p] = [query.get('username'), query.get('password')];
+    sendPlaylist(req, res, sel, xcUrl(req, sel, u, p), (ch) => `${base(req)}/light/${encodeURIComponent(u)}/${encodeURIComponent(p)}/${ch.id}.ts`);
   });
   router.get('/xmltv.php', (req, res, { query }) => {
     const sel = xcAuth(query.get('username'), query.get('password'));
@@ -282,6 +297,12 @@ export function createApp({
     return serveChannel(ctx, res, sel.output, ch, ext, liveViewer(req, sel, ch, params.u));
   };
   router.get('/live/:u/:p/:file', xcStream);
+  router.get('/light/:u/:p/:file', (req, res, { params }) => {
+    const sel = xcAuth(params.u, params.p);
+    if (!sel) throw new HttpError(401, 'Invalid credentials');
+    const ch = lightOf(sel, params.file);
+    return serveLight(ctx, res, ch, lightViewer(req, sel, ch, params.u));
+  });
   // Movies and series episodes: ids are this server's, checked against the output's categories.
   for (const kind of ['movie', 'series']) {
     router.get(`/${kind}/:u/:p/:file`, (req, res, { params }) => {
@@ -344,6 +365,7 @@ export function createApp({
       ctx.alerts.stop();
       ctx.autoBackup.stop();
       ctx.streams.stop();
+      ctx.light.stop();
       await new Promise((r) => {
         server.close(() => r());
         server.closeAllConnections();
