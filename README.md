@@ -7,9 +7,7 @@ and others). Refreshes run on a schedule, and new provider categories that match
 are added automatically.
 
 It is a lighter alternative to tools like IPTV Boss or Dispatcharr: one Node.js process with an
-embedded SQLite database and a few small dependencies. It uses about 60 MB of RAM when idle. A
-refresh of a large provider (20k channels and a 260 MB guide) peaks at about 300 MB and takes
-around 25 seconds.
+embedded SQLite database and a few small dependencies.
 
 > **Note:** Simple IPTV Manager does not provide any channels, streams or guide data. It only
 > reorganizes playlists and guides from services you already have access to, such as your own
