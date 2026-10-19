@@ -68,7 +68,7 @@ Live TV comes first. **Movies and series** are optional, per source and per outp
 ### Docker Compose
 
 ```bash
-git clone https://github.com/FrivenSolutions/iptv-manager.git
+git clone https://github.com/FrivenSolutions/simple-iptv-manager.git
 cd iptv-manager
 docker compose up -d --build
 ```
@@ -82,7 +82,7 @@ optional environment variables are `IPTV_PORT` (the host port, default 8080), `T
 Without Compose:
 
 ```bash
-docker build -t iptv-manager https://github.com/FrivenSolutions/iptv-manager.git
+docker build -t iptv-manager https://github.com/FrivenSolutions/simple-iptv-manager.git
 docker run -d --name iptv-manager --restart unless-stopped -p 8080:8080 -v iptv-data:/data iptv-manager
 ```
 
@@ -96,7 +96,7 @@ Docker environment, not Swarm.
 
 1. **Stacks → Add stack.** Name it `iptv-manager` and choose **Repository**.
 2. Fill in the repository settings:
-   - **Repository URL:** `https://github.com/FrivenSolutions/iptv-manager`
+   - **Repository URL:** `https://github.com/FrivenSolutions/simple-iptv-manager`
    - **Repository reference:** `refs/heads/main`
    - **Compose path:** `docker-compose.yml`
 3. Leave **Authentication** off; the repository is public.
@@ -114,7 +114,7 @@ To update manually, open the stack and click **Pull and redeploy**. Your data st
 be installed on the host first, not even git:
 
 ```bash
-bash -c "$(wget -qO- https://raw.githubusercontent.com/FrivenSolutions/iptv-manager/main/proxmox/create-lxc.sh)"
+bash -c "$(wget -qO- https://raw.githubusercontent.com/FrivenSolutions/simple-iptv-manager/main/proxmox/create-lxc.sh)"
 ```
 
 The script creates an unprivileged Debian container (1 core, 512 MB RAM, 4 GB disk), installs
@@ -123,7 +123,7 @@ You can put settings in front of the command, for example a fixed container ID a
 nightly updates turned on:
 
 ```bash
-CTID=120 IP=192.168.1.50/24 GW=192.168.1.1 AUTO_UPDATE=1 bash -c "$(wget -qO- https://raw.githubusercontent.com/FrivenSolutions/iptv-manager/main/proxmox/create-lxc.sh)"
+CTID=120 IP=192.168.1.50/24 GW=192.168.1.1 AUTO_UPDATE=1 bash -c "$(wget -qO- https://raw.githubusercontent.com/FrivenSolutions/simple-iptv-manager/main/proxmox/create-lxc.sh)"
 ```
 
 The same script also works from a clone of the repository (`bash proxmox/create-lxc.sh`). Running it
@@ -133,7 +133,7 @@ Use `create-lxc.sh new` only if you really want a second container.
 **Option B – an existing Debian/Ubuntu LXC or VM.** Inside it, as root:
 
 ```bash
-bash -c "$(wget -qO- https://raw.githubusercontent.com/FrivenSolutions/iptv-manager/main/proxmox/install.sh)"
+bash -c "$(wget -qO- https://raw.githubusercontent.com/FrivenSolutions/simple-iptv-manager/main/proxmox/install.sh)"
 ```
 
 #### Updating a Proxmox install
@@ -181,7 +181,7 @@ Installs made before the updater existed need a one-time conversion. Run this on
 settings and data are kept:
 
 ```bash
-bash -c "$(wget -qO- https://raw.githubusercontent.com/FrivenSolutions/iptv-manager/main/proxmox/create-lxc.sh)" _ upgrade <container id>
+bash -c "$(wget -qO- https://raw.githubusercontent.com/FrivenSolutions/simple-iptv-manager/main/proxmox/create-lxc.sh)" _ upgrade <container id>
 ```
 
 **Option C – Docker.** Use the Docker instructions inside any VM or LXC that runs Docker.
@@ -601,7 +601,7 @@ the maintainer privately first.
 ## Development
 
 ```bash
-git clone https://github.com/FrivenSolutions/iptv-manager.git
+git clone https://github.com/FrivenSolutions/simple-iptv-manager.git
 cd iptv-manager
 npm install
 npm test                          # unit + end-to-end tests (fake provider included)
