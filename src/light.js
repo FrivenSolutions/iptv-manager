@@ -26,7 +26,9 @@ export function ffmpegArgs({ input, encoder, userAgent, device = DEVICE }) {
   if (input !== 'pipe:0') {
     a.push('-nostdin', '-user_agent', userAgent || DEFAULT_UA, '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
   }
-  a.push('-fflags', '+genpts+discardcorrupt');
+  // A second of stream is enough to find a live channel's tracks; ffmpeg's default (5 s)
+  // delays the first bytes, and players give up on a silent stream after about 10 s.
+  a.push('-fflags', '+genpts+discardcorrupt', '-analyzeduration', '1000000');
   if (encoder === 'vaapi') a.push('-hwaccel', 'vaapi', '-hwaccel_device', device, '-hwaccel_output_format', 'vaapi');
   a.push('-i', input, '-map', '0:v:0', '-map', '0:a:0?');
   if (encoder === 'vaapi') {
