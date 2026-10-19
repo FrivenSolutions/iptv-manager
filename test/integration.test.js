@@ -1426,6 +1426,12 @@ test('light streams: a 720p copy made by ffmpeg while watched, shared, capped, s
     const e = await watch(lights[0]);
     assert.equal(e.status, 503);
     assert.match(e.text, /need ffmpeg/);
+    // Installed afterwards: found on the next look, no restart or reset needed.
+    light.cmd = [process.execPath, fileURLToPath(new URL('./fake-ffmpeg.mjs', import.meta.url))];
+    assert.equal((await api('GET', '/api/light')).data.ffmpeg, '7.1-fake');
+    const f = await watch(lights[0]);
+    assert.equal(f.status, 200);
+    f.stop();
   } finally {
     light.stop();
     light.cmd = realCmd;

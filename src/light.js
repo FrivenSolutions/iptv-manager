@@ -152,7 +152,7 @@ export class Light {
     this.cmd = cmd;
     this.device = device;
     this.jobs = new Map(); // channel id -> Job
-    this.version = undefined; // ffmpeg's version, null when not found; checked once
+    this.version = null; // ffmpeg's version once found
     this.autoChoice = null; // what "auto" settled on: 'vaapi' or 'software'
   }
 
@@ -166,11 +166,16 @@ export class Light {
     return ENCODERS.includes(e) ? e : 'auto';
   }
 
-  /** ffmpeg's version string, or null when it isn't installed. */
+  /**
+   * ffmpeg's version string, or null when it isn't installed. Found once, it is remembered; until
+   * then every call looks again (quick when it's missing), so installing it needs no restart.
+   */
   async ffmpeg() {
-    if (this.version === undefined) {
+    if (!this.version) {
       const r = await run(this.cmd, ['-hide_banner', '-version'], 10_000);
       this.version = r.code === 0 ? (/version\s+(\S+)/.exec(r.out)?.[1] || 'unknown') : null;
+      // Found after "auto" settled without it: let it choose again.
+      if (this.version) this.autoChoice = null;
     }
     return this.version;
   }
@@ -230,7 +235,7 @@ export class Light {
   /** Forget what "auto" chose (after the setting changes or a GPU is added). */
   reset() {
     this.autoChoice = null;
-    this.version = undefined;
+    this.version = null;
   }
 
   stop() {

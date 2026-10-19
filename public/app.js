@@ -2447,7 +2447,7 @@ function lightCard(s, st) {
   const result = h('p', { class: 'hint' });
   const statusLine = () => (!st.ffmpeg
     ? h('p', { class: 'hint' }, h('b', { class: 'warn-text' }, 'ffmpeg is not installed on this server. '),
-      'The Docker image includes it. On a Proxmox or other Debian install, run: ', h('code', null, 'apt install --no-install-recommends ffmpeg'), '.')
+      'The Docker image includes it. On a Proxmox or other Debian install, run: ', h('code', null, 'apt install --no-install-recommends ffmpeg'), ', then reload this page (no restart needed).')
     : h('p', { class: 'hint' }, `ffmpeg ${st.ffmpeg} · encoding with ${ENCODER_LABELS[st.encoder] || st.encoder}`,
       st.setting === 'auto' && st.encoder === 'software' ? (st.device ? ' (the GPU is there but did not pass a test encode)' : ' (no GPU passed to this server)') : '',
       st.active.length ? ` · now making ${st.active.map((a) => `${a.channel} (${a.viewers})`).join(', ')}` : ' · none running now'));
