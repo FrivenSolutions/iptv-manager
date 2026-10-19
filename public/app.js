@@ -681,7 +681,7 @@ function sourceForm(src, onSaved = route) {
     xc_username: h('input', { value: v(src?.xc_username), autocomplete: 'off' }),
     xc_password: h('input', { type: 'password', autocomplete: 'new-password', placeholder: src?.has_password ? '(unchanged)' : '' }),
     xc_stream_ext: h('select', null, h('option', { value: 'ts', selected: src?.xc_stream_ext !== 'm3u8' }, 'MPEG-TS (.ts)'), h('option', { value: 'm3u8', selected: src?.xc_stream_ext === 'm3u8' }, 'HLS (.m3u8)')),
-    hdhr_host: h('input', { value: v(src?.hdhr_host), placeholder: '192.168.1.50' }),
+    hdhr_host: h('input', { value: v(src?.hdhr_host), placeholder: 'e.g. 192.168.1.100' }),
     user_agent: h('input', { value: v(src?.user_agent), placeholder: 'VLC/3.0.21 LibVLC/3.0.21 (default)' }),
     hours: h('input', { type: 'number', min: 0, step: 0.5, value: src ? src.refresh_minutes / 60 : 12 }),
     content: h('select', null,
@@ -705,7 +705,7 @@ function sourceForm(src, onSaved = route) {
     field('Stream format', f.xc_stream_ext));
   const hdhrPart = h('div', null,
     field('HDHomeRun address', f.hdhr_host,
-      'The box\'s IP address, e.g. 192.168.1.50. Give it a DHCP reservation so it doesn\'t change. "hdhomerun.local" usually does not work from inside Docker.'),
+      'The tuner\'s IP address on your network, e.g. 192.168.1.100. Give it a DHCP reservation so it doesn\'t change. "hdhomerun.local" usually does not work from inside Docker.'),
     h('p', { class: 'hint' },
       'Channels come from the box\'s lineup, so run a channel scan on it first. The guide comes from SiliconDust\'s guide service using the box\'s own authorization; no account needed.'));
   const typeSwitch = isNew ? h('div', { class: 'segmented' },

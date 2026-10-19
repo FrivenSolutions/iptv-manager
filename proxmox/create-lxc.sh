@@ -14,7 +14,8 @@ Usage: create-lxc.sh [command]
   help              show this help
 
 Settings for a new container can be given as environment variables, for example:
-  CTID=120 IP=192.168.1.50/24 GW=192.168.1.1 STORAGE=local-zfs bash proxmox/create-lxc.sh
+  CTID=120 IP=192.168.1.20/24 GW=192.168.1.1 STORAGE=local-zfs bash proxmox/create-lxc.sh
+  (IP is the container's own address; GW is your router)
   AUTO_UPDATE=1 bash proxmox/create-lxc.sh        (also turn on nightly updates)
 
 Inside the container the app updates itself: pct exec <ID> -- iptv-manager-update
@@ -25,7 +26,7 @@ CT_HOSTNAME="${CT_HOSTNAME:-iptv-manager}"
 STORAGE="${STORAGE:-local-lvm}"          # container root disk
 TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"
 BRIDGE="${BRIDGE:-vmbr0}"
-IP="${IP:-dhcp}"                         # "dhcp" or CIDR like 192.168.1.50/24
+IP="${IP:-dhcp}"                         # the container's address: "dhcp" or CIDR like 192.168.1.20/24
 GW="${GW:-}"                             # required with a static IP
 MEMORY="${MEMORY:-512}"                  # MB; large EPGs parse in a stream, 512 is plenty
 DISK="${DISK:-4}"                        # GB

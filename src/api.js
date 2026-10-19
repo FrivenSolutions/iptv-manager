@@ -106,7 +106,7 @@ function sourceFields(body, existing) {
   } else if (type === 'hdhr') {
     if (!f.hdhr_host) throw new HttpError(400, 'HDHomeRun sources need the box\'s IP address or hostname');
     if (/[\s?#]/.test(f.hdhr_host)) {
-      throw new HttpError(400, 'Enter just the HDHomeRun address, like 192.168.1.50');
+      throw new HttpError(400, 'Enter just the HDHomeRun\'s address, like 192.168.1.100');
     }
   } else if (f.url && !/^(https?:\/\/|upload:)/i.test(f.url)) {
     throw new HttpError(400, 'Playlist URL must start with http:// or https://');

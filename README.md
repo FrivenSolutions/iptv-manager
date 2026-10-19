@@ -123,11 +123,23 @@ bash -c "$(wget -qO- https://raw.githubusercontent.com/FrivenSolutions/simple-ip
 
 The script creates an unprivileged Debian container (1 core, 512 MB RAM, 4 GB disk), installs
 Node.js 24, git and ffmpeg inside it, and runs the app as a systemd service. It prints the URL when done.
-You can put settings in front of the command, for example a fixed container ID and address, and
-nightly updates turned on:
+Every setting is optional. To change one, put it in front of the command:
+
+| Setting | Default | What it sets |
+|---|---|---|
+| `CTID` | the next free ID | The container's ID |
+| `IP` | `dhcp` | The container's own address with its prefix, e.g. `192.168.1.20/24` |
+| `GW` | (none) | Your router's address, e.g. `192.168.1.1`; needed with a fixed `IP` |
+| `STORAGE`, `BRIDGE` | `local-lvm`, `vmbr0` | Where the disk lives, and the network bridge |
+| `CORES`, `MEMORY`, `DISK` | `1`, `512` (MB), `4` (GB) | Container size |
+| `PORT` | `8080` | The web port |
+| `AUTO_UPDATE` | off | `1` turns nightly updates on |
+
+For example, container 120 at a fixed address of your choosing, with nightly updates (use your
+own network's addresses):
 
 ```bash
-CTID=120 IP=192.168.1.50/24 GW=192.168.1.1 AUTO_UPDATE=1 bash -c "$(wget -qO- https://raw.githubusercontent.com/FrivenSolutions/simple-iptv-manager/main/proxmox/create-lxc.sh)"
+CTID=120 IP=192.168.1.20/24 GW=192.168.1.1 AUTO_UPDATE=1 bash -c "$(wget -qO- https://raw.githubusercontent.com/FrivenSolutions/simple-iptv-manager/main/proxmox/create-lxc.sh)"
 ```
 
 The same script also works from a clone of the repository (`bash proxmox/create-lxc.sh`). Running it
