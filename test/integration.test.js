@@ -1143,6 +1143,49 @@ test('name cleanup: per-output find/replace on channel and category names, in ev
   await api('DELETE', `/api/outputs/${o.id}`);
 });
 
+test('category prefix and suffix per source in an output: around renamed and cleaned names, kept, copied, backed up', async () => {
+  const o = (await api('POST', '/api/outputs', { name: 'Affixes' })).data;
+  let r = await api('PUT', `/api/outputs/${o.id}`, {
+    source_ids: [xcId, m3uId], rules: [{ action: 'include', op: 'equals', value: 'us| news' }],
+    source_affixes: { [xcId]: { cat_prefix: '  UK   | ', cat_suffix: '[Provider\nA]' }, [m3uId]: { cat_prefix: 'x'.repeat(60) } },
+  });
+  assert.equal(r.status, 200);
+  const view = (d) => Object.fromEntries(d.sources.filter((x) => [xcId, m3uId].includes(x.id)).map((x) => [x.id, [x.attached, x.cat_prefix, x.cat_suffix]]));
+  assert.deepEqual(view(r.data), { [xcId]: [true, 'UK |', '[Provider A]'], [m3uId]: [true, 'x'.repeat(40), ''] }, 'one line, trimmed, 40 characters at most');
+  const groups = async (token = o.token) => [...new Set([...(await (await fetch(`${base}/o/${token}/playlist.m3u`)).text())
+    .matchAll(/group-title="([^"]*)"/g)].map((m) => m[1]))];
+  // Both sources have a "US| NEWS"; now players can tell them apart.
+  const X = 'x'.repeat(40);
+  assert.deepEqual(await groups(), ['UK | US| NEWS [Provider A]', `${X} US| NEWS`]);
+
+  // Around the name after cleanup, and around a name set by hand.
+  await api('PUT', `/api/outputs/${o.id}`, { name_rules: [{ scope: 'category', find: '^US\\| ', replace: '' }] });
+  assert.deepEqual(await groups(), ['UK | NEWS [Provider A]', `${X} NEWS`]);
+  const news = (await api('GET', `/api/outputs/${o.id}/categories`)).data.find((c) => c.name === 'US| NEWS' && c.source_id === xcId);
+  await api('PUT', `/api/categories/${news.id}`, { custom_name: 'News' });
+  assert.deepEqual(await groups(), ['UK | News [Provider A]', `${X} NEWS`]);
+  const live = await (await fetch(`${base}/player_api.php?username=family&password=pw123&action=get_live_categories`)).json();
+  assert.ok(Array.isArray(live));
+
+  // Kept when the source list is saved without them (re-ordered here); copied with the output; backed up.
+  r = await api('PUT', `/api/outputs/${o.id}`, { source_ids: [m3uId, xcId] });
+  assert.deepEqual(view(r.data)[xcId], [true, 'UK |', '[Provider A]']);
+  const dupe = (await api('POST', `/api/outputs/${o.id}/clone`)).data;
+  assert.deepEqual(await groups(dupe.token), [`${X} NEWS`, 'UK | News [Provider A]']);
+  const saved = (await api('GET', '/api/export')).data.outputs.find((x) => x.name === 'Affixes');
+  assert.deepEqual(saved.category_affixes.find((a) => a.source === xcId), { source: xcId, prefix: 'UK |', suffix: '[Provider A]' });
+
+  // Detaching drops them; cleared ones go away.
+  r = await api('PUT', `/api/outputs/${o.id}`, { source_ids: [m3uId], source_affixes: { [xcId]: { cat_prefix: 'Z', cat_suffix: '' } } });
+  assert.deepEqual(view(r.data)[xcId], [false, '', '']);
+  r = await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId] });
+  assert.deepEqual(view(r.data)[xcId], [true, '', '']);
+  assert.deepEqual(await groups(), ['News']);
+  await api('PUT', `/api/categories/${news.id}`, { custom_name: '' });
+  await api('DELETE', `/api/outputs/${dupe.id}`);
+  await api('DELETE', `/api/outputs/${o.id}`);
+});
+
 test('proxy mode: viewers of a channel share one upstream stream; a source is capped at its connection limit', async () => {
   xcCats.push({ category_id: '33', category_name: 'US| LIVE' });
   xcStreams.push(...[950, 951, 952].map((id, i) => ({ num: 95 + i, name: `Live ${i + 1}`, stream_id: id, stream_icon: '', epg_channel_id: '', category_id: '33' })));
@@ -1302,6 +1345,11 @@ test('movies and series: loaded when a source includes them, filtered per output
   const renamed = (await api('GET', '/api/export')).data.sources.find((x) => x.ref === xcId).categories.find((c) => c.custom_name === 'Action');
   assert.deepEqual([renamed.name, renamed.kind], ['EN| ACTION', 'movie'], 'backed up with its kind');
   await api('PUT', `/api/categories/${vodCats[0].category_id}`, { custom_name: '' });
+  assert.deepEqual((await xc('get_vod_categories')).map((c) => c.category_name), ['EN| ACTION', 'EN| KIDS']);
+  // A source's category prefix and suffix apply to its movie and series categories too.
+  await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId, m3uId], source_affixes: { [xcId]: { cat_prefix: '', cat_suffix: '[P1]' } } });
+  assert.deepEqual((await xc('get_vod_categories')).map((c) => c.category_name), ['EN| ACTION [P1]', 'EN| KIDS [P1]']);
+  await api('PUT', `/api/outputs/${o.id}`, { source_ids: [xcId, m3uId], source_affixes: { [xcId]: { cat_prefix: '', cat_suffix: '' } } });
   assert.deepEqual((await xc('get_vod_categories')).map((c) => c.category_name), ['EN| ACTION', 'EN| KIDS']);
 
   // Titles picked in or out by hand, inside an included category.

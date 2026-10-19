@@ -1101,6 +1101,39 @@ async function outputEditor(main, id) {
       box, ' Hide excluded');
   };
   const attachedIds = () => draft.sources.filter((s) => s.attached).map((s) => s.id);
+  // Text around the names of a source's categories in this output ("UK | News"), set from its
+  // row under Sources or its heading in a category list, and saved with the output.
+  const affixed = (src, name) => [src.cat_prefix.trim(), name, src.cat_suffix.trim()].filter(Boolean).join(' ');
+  const affixNote = (src) => (src.cat_prefix.trim() || src.cat_suffix.trim() ? ` · shown as ${affixed(src, '…')}` : '');
+  const editAffix = (src) => {
+    const sample = cats.find((c) => c.source_id === src.id);
+    const name = sample ? sample.custom_name || sample.name : 'News';
+    const pre = h('input', { value: src.cat_prefix, maxlength: 40, placeholder: 'e.g. UK |' });
+    const suf = h('input', { value: src.cat_suffix, maxlength: 40, placeholder: 'e.g. [Provider A]' });
+    const example = h('span', { class: 'hint' });
+    const show = () => { example.textContent = `Example: ${affixed({ cat_prefix: pre.value, cat_suffix: suf.value }, name)}`; };
+    pre.oninput = show;
+    suf.oninput = show;
+    show();
+    const close = modal(`Category names: ${src.name}`, h('div', { class: 'form' },
+      h('p', { class: 'hint' }, `Added before and after the name of every ${src.name} category in this output (live TV, movies and series), with a space between. Filter rules still match the provider's names.`),
+      h('div', { class: 'two' }, field('Prefix', pre), field('Suffix', suf)),
+      example), [
+      h('button', { class: 'btn', onclick: () => close() }, 'Cancel'),
+      h('button', {
+        class: 'btn primary',
+        onclick: () => {
+          src.cat_prefix = pre.value.trim();
+          src.cat_suffix = suf.value.trim();
+          close();
+          markDirty();
+          drawSources();
+          drawCats();
+          redrawVod();
+        },
+      }, 'Done'),
+    ]);
+  };
   // Category rows, under a heading per provider when the output has more than one source, even if
   // only one of them has rows here (say, the only one with movies). Rows come in source order, so
   // each provider's categories are together.
@@ -1114,7 +1147,10 @@ async function outputEditor(main, id) {
       if (c.source_id !== last) {
         last = c.source_id;
         const n = counts.get(c.source_id);
-        out.push(h('div', { class: 'cat-group' }, h('b', null, sourceName(c.source_id)), h('span', { class: 'meta' }, ` · ${n} categor${n === 1 ? 'y' : 'ies'}`)));
+        const src = draft.sources.find((x) => x.id === c.source_id);
+        out.push(h('div', { class: 'cat-group' },
+          h('span', null, h('b', null, sourceName(c.source_id)), h('span', { class: 'meta' }, ` · ${n} categor${n === 1 ? 'y' : 'ies'}${src ? affixNote(src) : ''}`)),
+          src ? h('button', { class: 'icon-btn', title: 'Category name prefix and suffix', onclick: () => editAffix(src) }, '✎') : null));
       }
       out.push(render(c));
     }
@@ -1154,14 +1190,16 @@ async function outputEditor(main, id) {
   const sourcesBox = h('div', { class: 'source-list' });
   const drawSources = () => {
     fill(sourcesBox, ...draft.sources.map((s, i) => h('div', { class: 'source-row' },
-      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: s.attached, onchange: (e) => { s.attached = e.target.checked; markDirty(); } }), ' ', s.name, ' ', h('span', { class: 'meta' }, TYPE_LABELS[s.type])),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: s.attached, onchange: (e) => { s.attached = e.target.checked; markDirty(); drawSources(); } }), ' ', s.name, ' ',
+        h('span', { class: 'meta' }, TYPE_LABELS[s.type], s.attached ? affixNote(s) : '')),
       h('span', { class: 'row' },
+        s.attached ? h('button', { class: 'icon-btn', title: 'Category name prefix and suffix', onclick: () => editAffix(s) }, '✎') : null,
         h('button', { class: 'icon-btn', title: 'Move up', disabled: i === 0, onclick: () => { [draft.sources[i - 1], draft.sources[i]] = [draft.sources[i], draft.sources[i - 1]]; drawSources(); markDirty(); } }, '↑'),
         h('button', { class: 'icon-btn', title: 'Move down', disabled: i === draft.sources.length - 1, onclick: () => { [draft.sources[i + 1], draft.sources[i]] = [draft.sources[i], draft.sources[i + 1]]; drawSources(); markDirty(); } }, '↓')))),
     draft.sources.length ? '' : h('p', { class: 'meta' }, 'No sources exist yet.'));
   };
   drawSources();
-  const sourcesCard = h('section', { class: 'card' }, h('h2', null, 'Sources'), h('p', { class: 'hint' }, 'Channels are listed in this source order. Save to load categories from newly attached sources.'), sourcesBox);
+  const sourcesCard = h('section', { class: 'card' }, h('h2', null, 'Sources'), h('p', { class: 'hint' }, 'Channels are listed in this source order. Save to load categories from newly attached sources. ✎ adds a prefix or suffix to a source\'s category names.'), sourcesBox);
 
   // --- rules: one editor per kind of category (live TV, movies, series)
   const rulesEditor = (list, placeholder) => {
@@ -1757,6 +1795,7 @@ async function outputEditor(main, id) {
       xc_username: draft.xc_username,
       xc_password: draft.xc_password,
       source_ids: attachedIds(),
+      source_affixes: Object.fromEntries(draft.sources.map((s) => [s.id, { cat_prefix: s.cat_prefix, cat_suffix: s.cat_suffix }])),
       rules: [
         ...draft.rules.map((r) => ({ ...r, kind: 'live' })),
         ...draft.vod_rules.movie.map((r) => ({ ...r, kind: 'movie' })),

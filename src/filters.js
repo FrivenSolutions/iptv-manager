@@ -298,13 +298,25 @@ export function loadOutput(db, outputId) {
   const output = db.get('SELECT * FROM outputs WHERE id = ?', [outputId]);
   if (!output) return null;
   output.sources = db.all(
-    `SELECT s.id, s.name, s.epg_gen, s.user_agent, s.type, s.xc_stream_ext, os.sort
+    `SELECT s.id, s.name, s.epg_gen, s.user_agent, s.type, s.xc_stream_ext, os.sort, os.cat_prefix, os.cat_suffix
        FROM output_sources os JOIN sources s ON s.id = os.source_id
       WHERE os.output_id = ? ORDER BY os.sort, s.id`,
     [outputId],
   );
   output.rules = db.all('SELECT * FROM output_rules WHERE output_id = ? ORDER BY sort, id', [outputId]);
   return output;
+}
+
+/** A prefix or suffix as stored: one line, trimmed, at most 40 characters. */
+export const affixText = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+
+/** (sourceId, name) => the name with that source's category prefix and suffix in this output, space-separated. */
+export function categoryAffixer(output) {
+  const bySource = new Map(output.sources.map((s) => [s.id, s]));
+  return (sourceId, name) => {
+    const s = bySource.get(sourceId);
+    return [s?.cat_prefix, name, s?.cat_suffix].filter(Boolean).join(' ');
+  };
 }
 
 /** Categories from every source attached to the output, each with its decision. */
@@ -366,7 +378,8 @@ export function selectChannels(db, output) {
   const guide = guideHider(db, output, cats);
   const guideIcons = guideIconLookup(db, srcById);
   const clean = nameCleaner(checkNameRules(parseNameRules(output.name_rules)).rules || []);
-  const groupName = new Map(cats.map((c) => [c.id, c.custom_name || clean.category(c.name)]));
+  const affix = categoryAffixer(output);
+  const groupName = new Map(cats.map((c) => [c.id, affix(c.source_id, c.custom_name || clean.category(c.name))]));
   const ids = output.sources.map((s) => s.id);
   const rows = db.all(
     `SELECT * FROM channels WHERE active = 1 AND source_id IN (${ids.map(() => '?').join(',')})`,

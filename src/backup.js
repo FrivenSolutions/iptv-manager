@@ -1,7 +1,7 @@
 // Settings export/import. Categories and channels are referenced by source-relative
 // names/keys rather than database ids, so an export restores onto a fresh install.
 import { HttpError } from './http.js';
-import { OPS, compilePatterns, checkNameRules, parseNameRules } from './filters.js';
+import { OPS, compilePatterns, checkNameRules, parseNameRules, affixText } from './filters.js';
 import { parseJellyfin } from './outputs/epg.js';
 import { now } from './db.js';
 
@@ -87,6 +87,8 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
       paused: !!o.paused,
       xc_password: secrets ? o.xc_password : null,
       sources: db.all('SELECT source_id FROM output_sources WHERE output_id = ? ORDER BY sort', [o.id]).map((r) => r.source_id),
+      category_affixes: db.all("SELECT source_id, cat_prefix, cat_suffix FROM output_sources WHERE output_id = ? AND (cat_prefix <> '' OR cat_suffix <> '')", [o.id])
+        .map((r) => ({ source: r.source_id, prefix: r.cat_prefix, suffix: r.cat_suffix })),
       rules: db.all('SELECT source_id, kind, action, op, value FROM output_rules WHERE output_id = ? ORDER BY sort, id', [o.id])
         .map((r) => ({ source: r.source_id, ...kindOf(r), action: r.action, op: r.op, value: r.value })),
       name_rules: parseNameRules(o.name_rules),
@@ -272,6 +274,11 @@ export function importSettings(db, data) {
       (o.sources || []).forEach((ref, i) => {
         db.run('INSERT OR IGNORE INTO output_sources (output_id, source_id, sort) VALUES (?, ?, ?)', [r.id, ids.get(ref), i]);
       });
+      for (const a of o.category_affixes || []) {
+        if (!ids.has(a.source)) continue;
+        db.run('UPDATE output_sources SET cat_prefix = ?, cat_suffix = ? WHERE output_id = ? AND source_id = ?',
+          [affixText(a.prefix), affixText(a.suffix), r.id, ids.get(a.source)]);
+      }
       (o.rules || []).forEach((x, i) => {
         db.run('INSERT INTO output_rules (output_id, source_id, kind, action, op, value, sort) VALUES (?, ?, ?, ?, ?, ?, ?)', [
           r.id, x.source != null && ids.has(x.source) ? ids.get(x.source) : null, x.kind || 'live', x.action, x.op, x.value, i,

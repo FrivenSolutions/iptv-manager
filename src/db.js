@@ -338,6 +338,11 @@ const MIGRATIONS = [
   -- within them is kept (players reload playlists only now and then).
   ALTER TABLE output_category_settings ADD COLUMN unlisted_hours INTEGER NOT NULL DEFAULT 24;
   `,
+  `
+  -- Text put before and after the names of a source's categories in one output ("UK | News").
+  ALTER TABLE output_sources ADD COLUMN cat_prefix TEXT NOT NULL DEFAULT '';
+  ALTER TABLE output_sources ADD COLUMN cat_suffix TEXT NOT NULL DEFAULT '';
+  `,
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.

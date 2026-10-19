@@ -9,7 +9,7 @@ import {
   OPS, loadOutput, evaluateCategories, isNewCategory, channelState,
   DEFAULT_EMPTY_EVENT_PATTERNS, emptyEventPatterns, compilePatterns, isEmptyEvent,
   DEFAULT_GUIDE_PATTERNS, guidePatterns, guideHider, hiddenReason,
-  checkNameRules, parseNameRules, nameCleaner, nowTitles,
+  checkNameRules, parseNameRules, nameCleaner, nowTitles, affixText,
 } from './filters.js';
 import { rematchSource } from './ingest.js';
 import { JELLYFIN_CATEGORIES, parseJellyfin } from './outputs/epg.js';
@@ -182,10 +182,13 @@ function outputView(req, ctx, o, withDetail = false) {
     urls: outputUrls(req, ctx, o),
   };
   if (withDetail) {
-    const attached = new Map(ctx.db.all('SELECT source_id, sort FROM output_sources WHERE output_id = ?', [o.id])
-      .map((r) => [r.source_id, r.sort]));
+    const attached = new Map(ctx.db.all('SELECT source_id, sort, cat_prefix, cat_suffix FROM output_sources WHERE output_id = ?', [o.id])
+      .map((r) => [r.source_id, r]));
     view.sources = ctx.db.all('SELECT id, name, type FROM sources ORDER BY sort, id')
-      .map((s) => ({ ...s, attached: attached.has(s.id), sort: attached.get(s.id) ?? 999 }))
+      .map((s) => {
+        const a = attached.get(s.id);
+        return { ...s, attached: !!a, sort: a?.sort ?? 999, cat_prefix: a?.cat_prefix || '', cat_suffix: a?.cat_suffix || '' };
+      })
       .sort((a, b) => a.sort - b.sort || a.id - b.id);
     view.rules = ctx.db.all('SELECT id, source_id, kind, action, op, value FROM output_rules WHERE output_id = ? ORDER BY sort, id', [o.id]);
     view.name_rules = parseNameRules(o.name_rules);
@@ -842,10 +845,17 @@ export function registerApi(router, ctx) {
         if (body[key] !== undefined) db.run(`UPDATE outputs SET ${key} = ? WHERE id = ?`, [bool(body[key]), o.id]);
       }
       if (Array.isArray(body.source_ids)) {
+        // Category prefixes and suffixes: as sent (source_affixes, keyed by source id), else kept.
+        const sent = body.source_affixes && typeof body.source_affixes === 'object' ? body.source_affixes : {};
+        const kept = new Map(db.all('SELECT source_id, cat_prefix, cat_suffix FROM output_sources WHERE output_id = ?', [o.id])
+          .map((r) => [r.source_id, r]));
         db.run('DELETE FROM output_sources WHERE output_id = ?', [o.id]);
         body.source_ids.forEach((sid, i) => {
-          if (db.get('SELECT 1 FROM sources WHERE id = ?', [Number(sid)])) {
-            db.run('INSERT OR IGNORE INTO output_sources (output_id, source_id, sort) VALUES (?, ?, ?)', [o.id, Number(sid), i]);
+          sid = Number(sid);
+          if (db.get('SELECT 1 FROM sources WHERE id = ?', [sid])) {
+            const a = sent[sid] || kept.get(sid) || {};
+            db.run('INSERT OR IGNORE INTO output_sources (output_id, source_id, sort, cat_prefix, cat_suffix) VALUES (?, ?, ?, ?, ?)',
+              [o.id, sid, i, affixText(a.cat_prefix), affixText(a.cat_suffix)]);
           }
         });
       }
@@ -886,7 +896,8 @@ export function registerApi(router, ctx) {
            FROM outputs WHERE id = ? RETURNING id`,
         [`${o.name} (copy)`.slice(0, 200), randomToken(), t, t, o.id],
       ).id;
-      db.run('INSERT INTO output_sources (output_id, source_id, sort) SELECT ?, source_id, sort FROM output_sources WHERE output_id = ?', [copyId, o.id]);
+      db.run(`INSERT INTO output_sources (output_id, source_id, sort, cat_prefix, cat_suffix)
+              SELECT ?, source_id, sort, cat_prefix, cat_suffix FROM output_sources WHERE output_id = ?`, [copyId, o.id]);
       db.run(`INSERT INTO output_rules (output_id, source_id, kind, action, op, value, sort)
               SELECT ?, source_id, kind, action, op, value, sort FROM output_rules WHERE output_id = ? ORDER BY sort, id`, [copyId, o.id]);
       db.run(`INSERT INTO output_channel_rules (output_id, category_id, action, op, value, sort)

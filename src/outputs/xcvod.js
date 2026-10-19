@@ -22,8 +22,9 @@ function providerApi(src) {
   };
 }
 
-// Names as players see them: a name set by hand, else the provider's after the output's name cleanup.
-const catName = (vc, c) => c.custom_name || vc.clean.category(c.name);
+// Names as players see them: a name set by hand, else the provider's after the output's name
+// cleanup, then wrapped in the source's category prefix and suffix.
+const catName = (vc, c) => vc.affix(c.source_id, c.custom_name || vc.clean.category(c.name));
 const title = (vc, name) => vc.clean.channel(name);
 // A title's own display name (set by hand) wins over name cleanup.
 const itemName = (vc, r) => r.custom_name || title(vc, r.name);
