@@ -83,7 +83,7 @@ Without Compose:
 
 ```bash
 docker build -t simple-iptv-manager https://github.com/FrivenSolutions/simple-iptv-manager.git
-docker run -d --name iptv-manager --restart unless-stopped -p 8080:8080 -v iptv-data:/data simple-iptv-manager
+docker run -d --name simple-iptv-manager --restart unless-stopped -p 8080:8080 -v iptv-data:/data simple-iptv-manager
 ```
 
 The container runs as user 1000. If you bind-mount a host folder instead of a volume, run
@@ -94,7 +94,7 @@ The container runs as user 1000. If you bind-mount a host folder instead of a vo
 Portainer can build and run this repository straight from GitHub. This works with a standalone
 Docker environment, not Swarm.
 
-1. **Stacks → Add stack.** Name it `iptv-manager` and choose **Repository**.
+1. **Stacks → Add stack.** Name it `simple-iptv-manager` and choose **Repository**.
 2. Fill in the repository settings:
    - **Repository URL:** `https://github.com/FrivenSolutions/simple-iptv-manager`
    - **Repository reference:** `refs/heads/main`
@@ -106,7 +106,7 @@ Docker environment, not Swarm.
 6. Click **Deploy the stack**, then open `http://<docker-host>:8080`.
 
 To update manually, open the stack and click **Pull and redeploy**. Your data stays in the
-`iptv-manager_iptv-data` volume.
+`<stack name>_iptv-data` volume (`simple-iptv-manager_iptv-data` for a stack named as above).
 
 ### Proxmox
 

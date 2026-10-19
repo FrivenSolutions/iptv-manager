@@ -1,13 +1,15 @@
 # Works with `docker compose up -d --build` and as a Portainer Git stack.
 # Settings below can be overridden with environment variables (Portainer: "Environment variables").
 services:
+  # The service keeps its original name: renaming it would leave existing installs' container
+  # running beside the new one (same port), and the redeploy would fail.
   iptv-manager:
     build: .
     image: simple-iptv-manager:latest
     # Built from this repo, never pulled from a registry: keeps "re-pull image" in
     # Portainer (docker compose pull) from looking for it on Docker Hub.
     pull_policy: build
-    container_name: iptv-manager
+    container_name: simple-iptv-manager
     restart: unless-stopped
     ports:
       - "${IPTV_PORT:-8080}:8080"
