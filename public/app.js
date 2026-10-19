@@ -533,7 +533,9 @@ async function dashboard(main) {
     const watching = viewers.filter((v) => v.mode === 'proxy');
     const started = viewers.filter((v) => v.mode !== 'proxy');
     watchEmpty.hidden = watching.length > 0;
-    watchCount.textContent = watching.length ? `${watching.length} stream${watching.length === 1 ? '' : 's'}` : '';
+    const transcoding = watching.filter((v) => v.transcode).length;
+    watchCount.textContent = watching.length
+      ? `${watching.length} stream${watching.length === 1 ? '' : 's'}${transcoding ? ` · ${transcoding} transcoding` : ''}` : '';
     syncList(watchList, watching, (v) => v.key, watchRow, minuteTick);
     startedSection.hidden = !started.length;
     syncList(startedList, started, (v) => v.key, watchRow, minuteTick);
