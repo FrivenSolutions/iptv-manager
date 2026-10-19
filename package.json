@@ -5,7 +5,7 @@
   "type": "module",
   "private": true,
   "license": "GPL-3.0-or-later",
-  "author": "frittsasaurus",
+  "author": "FrivenSolutions",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/FrivenSolutions/simple-iptv-manager.git"

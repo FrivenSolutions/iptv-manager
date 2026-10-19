@@ -69,7 +69,7 @@ Live TV comes first. **Movies and series** are optional, per source and per outp
 
 ```bash
 git clone https://github.com/FrivenSolutions/simple-iptv-manager.git
-cd iptv-manager
+cd simple-iptv-manager
 docker compose up -d --build
 ```
 
@@ -82,8 +82,8 @@ optional environment variables are `IPTV_PORT` (the host port, default 8080), `T
 Without Compose:
 
 ```bash
-docker build -t iptv-manager https://github.com/FrivenSolutions/simple-iptv-manager.git
-docker run -d --name iptv-manager --restart unless-stopped -p 8080:8080 -v iptv-data:/data iptv-manager
+docker build -t simple-iptv-manager https://github.com/FrivenSolutions/simple-iptv-manager.git
+docker run -d --name iptv-manager --restart unless-stopped -p 8080:8080 -v iptv-data:/data simple-iptv-manager
 ```
 
 The container runs as user 1000. If you bind-mount a host folder instead of a volume, run
@@ -602,7 +602,7 @@ the maintainer privately first.
 
 ```bash
 git clone https://github.com/FrivenSolutions/simple-iptv-manager.git
-cd iptv-manager
+cd simple-iptv-manager
 npm install
 npm test                          # unit + end-to-end tests (fake provider included)
 node scripts/demo-provider.js     # fake provider on :9090 (M3U, XMLTV and XC login demo/demo)
@@ -638,7 +638,7 @@ so no extra script or container is needed.
 
 ## License
 
-Copyright (C) 2026 frittsasaurus
+Copyright (C) 2026 FrivenSolutions
 
 This program is free software: you can redistribute it and/or modify it under the terms of the
 GNU General Public License as published by the Free Software Foundation, either version 3 of the
