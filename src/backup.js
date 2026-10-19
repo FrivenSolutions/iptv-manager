@@ -132,7 +132,7 @@ function check(cond, msg) {
 }
 
 function validate(data) {
-  check(data && data.format === FORMAT, 'not an IPTV Manager settings export');
+  check(data && data.format === FORMAT, 'not a Simple IPTV Manager settings export');
   for (const [key, label] of [['empty_event_patterns', 'empty-event'], ['guide_patterns', 'guide']]) {
     const patterns = data.settings?.[key];
     if (patterns != null) {

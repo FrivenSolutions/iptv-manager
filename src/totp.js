@@ -72,7 +72,7 @@ export function checkCode(secret, code, lastStep = -1, t = Date.now()) {
   return null;
 }
 
-export function otpauthUri(secret, account = 'admin', issuer = 'IPTV Manager') {
+export function otpauthUri(secret, account = 'admin', issuer = 'Simple IPTV Manager') {
   const label = encodeURIComponent(`${issuer}:${account}`);
   return `otpauth://totp/${label}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=${DIGITS}&period=${STEP_S}`;
 }

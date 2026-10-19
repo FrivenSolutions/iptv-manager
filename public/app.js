@@ -1,4 +1,4 @@
-// IPTV Manager web UI: plain DOM, hash routing, no build step.
+// Simple IPTV Manager web UI: plain DOM, hash routing, no build step.
 
 // ---------------------------------------------------------------- helpers --
 
@@ -399,7 +399,7 @@ function ensureShell(view) {
     const links = [['dashboard', 'Dashboard'], ['sources', 'Sources'], ['outputs', 'Outputs'], ['watch', 'Watch'], ['settings', 'Settings']]
       .map(([v, label]) => h('a', { href: `#/${v}`, 'data-view': v }, label));
     const header = h('header', { class: 'topbar' },
-      h('a', { class: 'brand', href: '#/' }, h('img', { src: '/favicon.svg', alt: '' }), 'IPTV Manager'),
+      h('a', { class: 'brand', href: '#/' }, h('img', { src: '/favicon.svg', alt: '' }), 'Simple IPTV Manager'),
       h('nav', null, links),
       h('a', { class: 'update-badge', href: '#/settings', hidden: true }, 'Update available'),
       h('button', { class: 'btn ghost', onclick: async () => { await api('POST', '/api/logout'); route(); } }, 'Log out'));
@@ -484,7 +484,7 @@ function renderAuth(setup) {
       }
     },
   },
-  h('div', { class: 'brand big' }, h('img', { src: '/favicon.svg', alt: '' }), 'IPTV Manager'),
+  h('div', { class: 'brand big' }, h('img', { src: '/favicon.svg', alt: '' }), 'Simple IPTV Manager'),
   setup ? h('p', null, 'Welcome! Choose an admin password to protect this dashboard.') : null,
   field(setup ? 'New password' : 'Password', pw, setup ? 'At least 8 characters.' : null),
   setup ? field('Repeat password', pw2) : null,
@@ -2648,7 +2648,7 @@ function widgetCard(s, key) {
   const card = h('section', { class: 'card narrow' });
   const base = (s.base_url || s.detected_base_url || location.origin).replace(/\/+$/, '');
   const yaml = (k) => [
-    '- IPTV Manager:',
+    '- Simple IPTV Manager:',
     '    icon: mdi-television-classic',
     `    href: ${base}`,
     '    widget:',
@@ -2877,7 +2877,7 @@ function updatesCard(initial) {
     }
     fill(card,
       h('h2', null, 'Version & updates'),
-      h('p', null, `IPTV Manager ${u.version} · `,
+      h('p', null, `Simple IPTV Manager ${u.version} · `,
         u.commit ? h('a', { href: gh(u.commit), target: '_blank', rel: 'noopener', class: 'mono' }, short(u.commit)) : h('span', { class: 'meta' }, 'commit unknown')),
       status,
       webUpdate(u),

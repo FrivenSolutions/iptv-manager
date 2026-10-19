@@ -1909,7 +1909,7 @@ test('two-factor sign-in: setup, codes once each, recovery codes, turning off, D
   // Setup: a secret and a QR code; a wrong code doesn't turn it on.
   const setup = (await api('POST', '/api/2fa/setup')).data;
   assert.match(setup.secret, /^[A-Z2-7]{32}$/);
-  assert.match(setup.uri, /^otpauth:\/\/totp\/IPTV%20Manager%3Aadmin\?secret=/);
+  assert.match(setup.uri, /^otpauth:\/\/totp\/Simple%20IPTV%20Manager%3Aadmin\?secret=/);
   assert.match(setup.qr_svg, /^<svg/);
   assert.equal((await api('POST', '/api/2fa/enable', { code: '000000' })).status, 400);
   const oldCookie = cookie;
@@ -2137,7 +2137,7 @@ test('alerts: expiring account, failing source, empty guide; sent once, resolved
   assert.equal((await api('PUT', '/api/settings', { notify_type: 'ntfy', notify_url: 'not a url' })).status, 400);
   await api('PUT', '/api/settings', { notify_type: 'ntfy', notify_url: `${up}/notify` });
   assert.equal((await api('POST', '/api/alerts/test')).status, 200);
-  assert.deepEqual(sent().map((n) => n.title), ['IPTV Manager test alert']);
+  assert.deepEqual(sent().map((n) => n.title), ['Simple IPTV Manager test alert']);
 
   // Account expiring in 5 days: one reminder, not repeated on the next refresh.
   xcAccount.exp = Math.floor(Date.now() / 1000) + 5 * 86400 - 60;

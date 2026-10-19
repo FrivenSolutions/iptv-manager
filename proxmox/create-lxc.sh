@@ -8,7 +8,7 @@ usage() {
   cat <<'EOF'
 Usage: create-lxc.sh [command]
 
-  (no command)      create a new container and install IPTV Manager
+  (no command)      create a new container and install Simple IPTV Manager
   upgrade [ID]      update the app in an existing container (ID optional when only one exists)
   new               create another container even though one already exists
   help              show this help
@@ -100,8 +100,8 @@ if [ "$MODE" = upgrade ]; then
     sleep 3
   fi
   pct exec "$CTID" -- test -f /opt/iptv-manager/package.json \
-    || die "container $CTID has no IPTV Manager install (/opt/iptv-manager). Nothing was changed."
-  echo "==> Upgrading IPTV Manager in container $CTID ($(pct config "$CTID" | awk '/^hostname:/ { print $2 }'))"
+    || die "container $CTID has no Simple IPTV Manager install (/opt/iptv-manager). Nothing was changed."
+  echo "==> Upgrading Simple IPTV Manager in container $CTID ($(pct config "$CTID" | awk '/^hostname:/ { print $2 }'))"
   if pct exec "$CTID" -- test -x /usr/local/bin/iptv-manager-update; then
     pct exec "$CTID" -- /usr/local/bin/iptv-manager-update
     case "${AUTO_UPDATE:-}" in
@@ -119,7 +119,7 @@ fi
 
 mapfile -t FOUND < <(existing)
 if [ "${#FOUND[@]}" -gt 0 ] && [ "$MODE" != new ]; then
-  echo "IPTV Manager already has a container: ${FOUND[*]}" >&2
+  echo "Simple IPTV Manager already has a container: ${FOUND[*]}" >&2
   echo "  To upgrade it:            create-lxc.sh upgrade ${FOUND[0]}" >&2
   echo "  Or inside the container:  pct exec ${FOUND[0]} -- iptv-manager-update" >&2
   echo "  To create another anyway: create-lxc.sh new" >&2
@@ -148,7 +148,7 @@ pct create "$CTID" "$TEMPLATE_STORAGE:vztmpl/$TEMPLATE" \
   --hostname "$CT_HOSTNAME" --cores "$CORES" --memory "$MEMORY" --swap 256 \
   --rootfs "$STORAGE:$DISK" --net0 "$NET" \
   --unprivileged 1 --features nesting=1 --onboot 1 \
-  --description "IPTV Manager"
+  --description "Simple IPTV Manager"
 pct start "$CTID"
 
 echo "==> Waiting for the network"
@@ -157,9 +157,9 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 
-echo "==> Installing IPTV Manager"
+echo "==> Installing Simple IPTV Manager"
 run_installer
 
 echo
-echo "Done. Container $CTID is running IPTV Manager (address shown above)."
+echo "Done. Container $CTID is running Simple IPTV Manager (address shown above)."
 echo "Update later with: pct exec $CTID -- iptv-manager-update"

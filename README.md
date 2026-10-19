@@ -1,4 +1,4 @@
-# IPTV Manager
+# Simple IPTV Manager
 
 A small, self-hosted IPTV playlist manager for a homelab. It pulls your provider's playlist and
 guide, and you choose which categories and channels to keep with a few rules. It then publishes
@@ -11,9 +11,9 @@ embedded SQLite database and a single small dependency. It uses about 60 MB of R
 refresh of a large provider (20k channels and a 260 MB guide) peaks at about 300 MB and takes
 around 25 seconds.
 
-> **Note:** IPTV Manager does not provide any channels, streams or guide data. It only reorganizes
-> playlists and guides from services you already have access to, such as your own IPTV
-> subscription or an HDHomeRun tuner. Use it only with content you are entitled to.
+> **Note:** Simple IPTV Manager does not provide any channels, streams or guide data. It only
+> reorganizes playlists and guides from services you already have access to, such as your own
+> IPTV subscription or an HDHomeRun tuner. Use it only with content you are entitled to.
 
 ## Features
 
@@ -127,7 +127,7 @@ CTID=120 IP=192.168.1.50/24 GW=192.168.1.1 AUTO_UPDATE=1 bash -c "$(wget -qO- ht
 ```
 
 The same script also works from a clone of the repository (`bash proxmox/create-lxc.sh`). Running it
-again while an IPTV Manager container exists does nothing; it prints the update command instead.
+again while a Simple IPTV Manager container exists does nothing; it prints the update command instead.
 Use `create-lxc.sh new` only if you really want a second container.
 
 **Option B – an existing Debian/Ubuntu LXC or VM.** Inside it, as root:
@@ -575,7 +575,7 @@ name, for example), set **Settings → Base URL** so the published links use tha
 
 ## Security
 
-IPTV Manager is built for a home network.
+Simple IPTV Manager is built for a home network.
 
 - **Keep it on your LAN.** To reach it from outside, put it behind a VPN or a reverse proxy with
   HTTPS. Don't forward port 8080 straight to the internet.

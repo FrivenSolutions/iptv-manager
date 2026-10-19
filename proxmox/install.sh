@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs IPTV Manager as a systemd service on Debian/Ubuntu (typically inside a Proxmox LXC).
+# Installs Simple IPTV Manager as a systemd service on Debian/Ubuntu (typically inside a Proxmox LXC).
 # Run as root:  bash install.sh
 #
 # The app is kept as a git checkout of the GitHub repository in $APP_DIR, so later updates
@@ -84,7 +84,7 @@ echo "==> Installing dependencies"
 (cd "$APP_DIR" && npm ci --omit=dev --no-audit --no-fund --loglevel=error)
 
 cat > "$CONF" <<EOF
-# IPTV Manager settings, read by the service and by iptv-manager-update.
+# Simple IPTV Manager settings, read by the service and by iptv-manager-update.
 PORT=$PORT
 DATA_DIR=$DATA_DIR
 IPTV_BRANCH=$BRANCH
@@ -99,7 +99,7 @@ ln -sfn "$APP_DIR/proxmox/iptv-manager-update" /usr/bin/iptv-manager-update
 echo "==> Configuring systemd"
 cat > /etc/systemd/system/iptv-manager.service <<EOF
 [Unit]
-Description=IPTV Manager
+Description=Simple IPTV Manager
 After=network-online.target
 Wants=network-online.target
 
@@ -135,7 +135,7 @@ esac
 
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo
-echo "IPTV Manager is running: http://${IP:-<this-host>}:$PORT"
+echo "Simple IPTV Manager is running: http://${IP:-<this-host>}:$PORT"
 echo "Version:  $(git -C "$APP_DIR" log -1 --format='%h %s')"
 echo "Update:   iptv-manager-update            (nightly: iptv-manager-update --enable-auto)"
 echo "Logs:     journalctl -u iptv-manager -f"

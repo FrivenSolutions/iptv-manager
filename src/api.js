@@ -464,7 +464,7 @@ export function registerApi(router, ctx) {
     if (!type || !url) throw new HttpError(400, 'Save a notification address first');
     try {
       await ctx.alerts.send('alert', {
-        kind: 'test', level: 'warn', title: 'IPTV Manager test alert', message: 'Alerts from IPTV Manager will arrive here.',
+        kind: 'test', level: 'warn', title: 'Simple IPTV Manager test alert', message: 'Alerts from Simple IPTV Manager will arrive here.',
       });
     } catch (e) {
       throw new HttpError(502, `Sending failed: ${e.message}`);

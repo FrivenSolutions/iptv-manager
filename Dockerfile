@@ -7,7 +7,7 @@ RUN node src/version.js --write /version.json
 
 FROM node:24-alpine
 
-LABEL org.opencontainers.image.title="IPTV Manager" \
+LABEL org.opencontainers.image.title="Simple IPTV Manager" \
       org.opencontainers.image.description="Self-hosted IPTV playlist manager: trimmed M3U, XMLTV and Xtream Codes outputs" \
       org.opencontainers.image.source="https://github.com/FrivenSolutions/iptv-manager" \
       org.opencontainers.image.licenses="GPL-3.0-or-later"

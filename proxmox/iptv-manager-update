@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Update IPTV Manager in place from its git repository (installed by proxmox/install.sh).
+# Update Simple IPTV Manager in place from its git repository (installed by proxmox/install.sh).
 #
 #   iptv-manager-update                  fetch and apply the latest version, if there is one
 #   iptv-manager-update --check          only report whether an update is available
@@ -203,7 +203,7 @@ setup() {
   chown "$SERVICE_USER:$SERVICE_USER" "$UPDATE_DIR" 2>/dev/null || true
   local changed=""
   changed+="$(write_unit "$UPDATE_UNIT" "[Unit]
-Description=Update IPTV Manager from its git repository
+Description=Update Simple IPTV Manager from its git repository
 After=network-online.target
 Wants=network-online.target
 
@@ -212,7 +212,7 @@ Type=oneshot
 ExecStart=/bin/bash /usr/local/bin/iptv-manager-update")"
   # The timer is installed disabled; --enable-auto turns it on and sets its time.
   changed+="$(write_unit "$TIMER" "[Unit]
-Description=Nightly IPTV Manager update
+Description=Nightly Simple IPTV Manager update
 
 [Timer]
 OnCalendar=*-*-* 04:00:00
@@ -222,7 +222,7 @@ Persistent=true
 [Install]
 WantedBy=timers.target")"
   changed+="$(write_unit "$PATH_UNIT" "[Unit]
-Description=Run IPTV Manager updates requested from its web interface
+Description=Run Simple IPTV Manager updates requested from its web interface
 
 [Path]
 PathExists=$UPDATE_DIR/request

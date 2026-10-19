@@ -7,7 +7,7 @@ const dataDir = path.resolve(process.env.DATA_DIR || './data');
 
 const app = createApp({ dataDir, adminPassword: process.env.ADMIN_PASSWORD || '', disableTwoFactor: process.env.DISABLE_2FA === '1' });
 const addr = await app.start(port, host);
-app.ctx.log(`IPTV Manager ${app.ctx.appVersion} listening on http://${host}:${addr.port} (data: ${dataDir})`);
+app.ctx.log(`Simple IPTV Manager ${app.ctx.appVersion} listening on http://${host}:${addr.port} (data: ${dataDir})`);
 
 let stopping = false;
 for (const sig of ['SIGINT', 'SIGTERM']) {
