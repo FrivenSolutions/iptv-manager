@@ -476,6 +476,7 @@ Multi-view players such as TileIPTV show several channels at once, and some TVs 
 many full HD channels: a Chromecast with Google TV manages about two 1080p60 channels. Such a
 player can switch its side windows to a **light copy** of the channel: 720p, at most 30 fps,
 about 2.5 Mb/s, roughly a quarter of the decoding work. This server makes that copy with ffmpeg.
+What a player expects from the server is written up in [docs/light-streams.md](docs/light-streams.md).
 
 Tick **Light copies for multi-view (TileIPTV)** in an output's settings. Its M3U playlist (the
 playlist link, and `get.php` for an Xtream Codes login) then gives each channel a
