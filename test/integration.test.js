@@ -1361,7 +1361,12 @@ test('light streams: a 720p copy made by ffmpeg while watched, shared, capped, s
     st = (await api('GET', '/api/light')).data;
     assert.deepEqual(st.active, [{ channel: 'Live 1', viewers: 2 }]);
     const watching = (await api('GET', '/api/viewers')).data;
-    assert.ok(JSON.stringify(watching).includes('Live 1 (light)'), 'listed on the dashboard as a light copy');
+    const rows = watching.filter((v) => v.what === 'Live 1').map((v) => [v.who, v.transcode]).sort();
+    // Both light viewers are this machine on one channel: one row, named by the login.
+    assert.deepEqual(rows, [['Playlist link', null], ['multi', 'software']],
+      'light viewers flagged with their encoder, in a row apart from the full-quality viewer');
+    const widget = await (await fetch(`${base}/api/widget`)).status;
+    assert.ok([404, 401].includes(widget), 'widget stays closed without a key');
 
     // The light copy counts against the source's connections like any channel (2 on this account).
     const b = await watch(lights[1]);

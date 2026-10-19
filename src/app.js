@@ -249,7 +249,7 @@ export function createApp({
   });
 
   // Light copies (light.js): always through this server, whatever the output's stream mode.
-  const lightViewer = (req, sel, ch, username = null) => viewerOf(req, sel, username, `${ch.name} (light)`, 'live', ch.source_id, ch.epg_id);
+  const lightViewer = (req, sel, ch, username = null) => viewerOf(req, sel, username, ch.name, 'live', ch.source_id, ch.epg_id);
   const lightOf = (sel, file) => {
     if (!sel.output.light_enabled) throw new HttpError(404, 'This output does not offer light streams');
     return channelOf(sel, String(file).replace(/\.ts$/i, ''));

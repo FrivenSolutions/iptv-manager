@@ -504,7 +504,8 @@ export function registerApi(router, ctx) {
       watching: watching.length,
       recently_started: viewers.length - watching.length,
       // For Homepage's "dynamic-list" view: who on the left, what on the right.
-      watching_list: watching.map((v) => ({ name: v.who, label: v.what, output: v.output })),
+      watching_list: watching.map((v) => ({ name: v.who, label: v.transcode ? `${v.what} (transcoding)` : v.what, output: v.output })),
+      transcoding: watching.filter((v) => v.transcode).length,
       sources: sources.length,
       sources_ok: sources.filter((s) => s.enabled && s.last_status === 'ok').length,
       sources_warning: sources.filter((s) => s.enabled && s.last_status === 'warning').length,

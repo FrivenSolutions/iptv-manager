@@ -39,7 +39,8 @@ export class Viewers {
   /** A proxied connection (TS stream, movie or episode): listed while open. Returns the close function. */
   open(v) {
     const now = Date.now();
-    const e = this.#upsert(`proxy|${v.outputId}|${v.ip}|${v.what}`, { ...v, mode: 'proxy' }, now);
+    // A light copy is its own row, apart from the same device watching the channel in full.
+    const e = this.#upsert(`proxy|${v.outputId}|${v.ip}|${v.what}${v.transcode ? '|light' : ''}`, { ...v, mode: 'proxy' }, now);
     e.open++;
     e.ended = null;
     let closed = false;
@@ -96,6 +97,8 @@ export class Viewers {
       epg_id: e.epgId ?? null,
       started: Math.floor(e.started / 1000),
       ending: e.mode === 'proxy' && e.open === 0,
+      // A light copy being made by ffmpeg: 'vaapi' (Intel Quick Sync) or 'software'.
+      transcode: e.transcode || null,
     }));
   }
 }

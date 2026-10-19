@@ -271,5 +271,5 @@ export async function serveLight(ctx, res, ch, viewer = null) {
   if (job.closed) return res.writeHead(502).end();
   res.writeHead(200, { 'content-type': 'video/mp2t', 'cache-control': 'no-cache' });
   job.add(res);
-  if (viewer) res.on('close', ctx.viewers.open(viewer));
+  if (viewer) res.on('close', ctx.viewers.open({ ...viewer, transcode: job.encoder }));
 }

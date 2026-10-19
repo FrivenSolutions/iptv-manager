@@ -372,7 +372,7 @@ what. Other dashboards can read the same JSON:
 curl -H "X-API-Key: <key>" http://<host>:8080/api/widget
 ```
 
-It returns `watching`, `recently_started`, `watching_list`, `sources`, `sources_ok`,
+It returns `watching`, `recently_started`, `watching_list`, `transcoding`, `sources`, `sources_ok`,
 `sources_warning`, `sources_error`, `channels`, `movies`, `series`, `outputs`,
 `outputs_paused`, `alerts`, `update_available`, `version` and `commit`. The key only reads these
 numbers; **New key** replaces it, **Turn off** closes the endpoint. If Homepage reaches this server
@@ -490,7 +490,8 @@ playlist link, and `get.php` for an Xtream Codes login) then gives each channel 
   either limit, the player gets *503* and keeps the full stream. **Test encoder** encodes a few
   seconds of 1080p60 and says how much faster than real time it ran, which is roughly how many
   light streams fit at once.
-- Light copies show on the dashboard as the channel name with "(light)".
+- The dashboard flags light copies in **Watching now** with a *Transcoding · Quick Sync* (or
+  *software*) badge. The widget API counts them in `transcoding`.
 
 **Encoder.** *Auto* uses Intel Quick Sync (VAAPI) when the GPU is reachable and passes a short
 test encode, and software otherwise. Software works on any machine, at about 1–2 CPU cores per

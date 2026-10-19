@@ -584,6 +584,8 @@ function watchRow(v) {
       h('span', { class: 'meta' }, v.ip)),
     h('div', { class: 'watch-what' },
       badge(KIND_LABELS[v.kind] || v.kind, 'muted'), ' ', h('span', { class: 'strong' }, v.what),
+      v.transcode ? [' ', h('span', { class: 'badge info', title: `A 720p light copy for multi-view, made by ffmpeg with ${v.transcode === 'vaapi' ? 'Intel Quick Sync (GPU)' : 'the CPU'}` },
+        `Transcoding · ${v.transcode === 'vaapi' ? 'Quick Sync' : 'software'}`)] : null,
       v.program ? h('div', { class: 'watch-program', title: `On now: ${v.program}` }, `▸ ${v.program}`) : null,
       h('div', { class: 'meta' },
         h('a', { href: `#/outputs/${v.output_id}` }, v.output), v.source ? ` · ${v.source}` : '',
