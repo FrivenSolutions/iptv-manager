@@ -1560,6 +1560,57 @@ test('stall diagnostics: provider pauses and viewers falling behind, on the dash
   }
 });
 
+test('a light-stream encoder buried under a burst skips ahead to live instead of stopping; a dropped viewer is logged once', async () => {
+  const o = (await api('POST', '/api/outputs', { name: 'Skip' })).data;
+  await api('PUT', `/api/outputs/${o.id}`, { stream_mode: 'proxy', light_enabled: true, source_ids: [xcId], rules: [{ action: 'include', op: 'equals', value: 'us| checks' }] });
+  const text = await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text();
+  const lightOf = (name) => text.split('\n').find((l) => l.endsWith(`,${name}`)).match(/tileiptv-light="([^"]+)"/)[1];
+  const urlOf = (name) => text.split('\n')[text.split('\n').findIndex((l) => l.endsWith(`,${name}`)) + 1];
+  const { light, streams } = app.ctx;
+  const saved = [light.cmd, streams.maxBehindBytes, app.ctx.log];
+  const logs = [];
+  app.ctx.log = (m) => logs.push(m);
+  light.cmd = [process.execPath, fileURLToPath(new URL('./fake-ffmpeg.mjs', import.meta.url))];
+  light.reset();
+  streams.maxBehindBytes = 1024 * 1024;
+  process.env.FAKE_FFMPEG_NOREAD = '1';
+  const until = async (cond, what, ms = 10000) => {
+    for (const end = Date.now() + ms; Date.now() < end && !(await cond());) await new Promise((r) => setTimeout(r, 50));
+    assert.ok(await cond(), what);
+  };
+  try {
+    // The fast channel (64 KB every 20 ms) into an encoder that reads nothing.
+    const ac = new AbortController();
+    const r = await fetch(lightOf('Fast'), { signal: ac.signal });
+    assert.equal(r.status, 200);
+    const reader = r.body.getReader();
+    (async () => { for (;;) { const { done } = await reader.read().catch(() => ({ done: true })); if (done) break; } })();
+    await until(() => logs.some((l) => l.includes('skipping ahead to live')), 'skips ahead');
+    const job = [...light.jobs.values()][0];
+    await new Promise((res) => setTimeout(res, 1000));
+    assert.ok(job && !job.closed && job.proc.exitCode === null, 'the light copy keeps running');
+    assert.equal(logs.filter((l) => l.includes('skipping ahead')).length, 1, 'logged once');
+    assert.ok(!logs.some((l) => l.includes('dropped the light-stream encoder')));
+    ac.abort();
+    await until(() => !light.jobs.size, 'stopped with its viewer');
+
+    // An ordinary viewer that stops reading is still dropped, and logged once.
+    const req = http.get(urlOf('Fast'), (res) => res.pause());
+    req.on('error', () => {});
+    await until(() => logs.some((l) => l.includes('dropped Playlist link')), 'dropped');
+    await new Promise((res) => setTimeout(res, 500));
+    assert.equal(logs.filter((l) => l.includes('dropped Playlist link')).length, 1, 'one line, not one per chunk');
+    req.destroy();
+    await until(() => live.open.get('958') === 0, 'upstream closed');
+  } finally {
+    delete process.env.FAKE_FFMPEG_NOREAD;
+    light.stop();
+    [light.cmd, streams.maxBehindBytes, app.ctx.log] = saved;
+    light.reset();
+    await api('DELETE', `/api/outputs/${o.id}`);
+  }
+});
+
 test('a proxied stream the provider turns down is logged with why, once a minute, and shown on the source', async () => {
   const o = (await api('POST', '/api/outputs', { name: 'Refusals' })).data;
   await api('PUT', `/api/outputs/${o.id}`, { stream_mode: 'proxy', source_ids: [xcId, m3uId], rules: [{ action: 'include', op: 'equals', value: 'us| news' }] });

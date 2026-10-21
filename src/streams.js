@@ -165,10 +165,27 @@ class Hub {
           }
         }
         this.lastData = now;
+        const maxBehind = this.streams.maxBehindBytes;
         for (const res of this.clients) {
           const who = res.iptvmWho || 'a viewer';
-          if (res.writableLength > MAX_BEHIND_BYTES) {
-            log(`Stream "${this.ch.name}": dropped ${who} that fell ${Math.round(MAX_BEHIND_BYTES / 1048576)} MB behind, after ${mins()} min`);
+          // The light-stream encoder runs faster than real time, but not as fast as a provider's
+          // opening burst (it can send half a minute of video at once). Rather than stop the light
+          // copy, skip ahead to live: feed it nothing until it is down to a quarter, then go on.
+          if (res.iptvmEncoder && (res.writableLength > maxBehind || (res.iptvmSkipping && res.writableLength > maxBehind / 4))) {
+            if (!res.iptvmSkipping) {
+              res.iptvmSkipping = true;
+              if (!res.iptvmSkipLogged) {
+                res.iptvmSkipLogged = true;
+                log(`Stream "${this.ch.name}": the light-stream encoder fell ${mb(res.writableLength)} MB behind (a burst from the provider); skipping ahead to live, after ${mins()} min`);
+              }
+            }
+            continue;
+          }
+          res.iptvmSkipping = false;
+          if (res.writableLength > maxBehind) {
+            log(`Stream "${this.ch.name}": dropped ${who} that fell ${Math.round(maxBehind / 1048576)} MB behind, after ${mins()} min`);
+            // Out of the set now, not on its close event, so the next chunks don't log it again.
+            this.clients.delete(res);
             res.destroy();
             continue;
           }
@@ -216,6 +233,7 @@ export class Streams {
     this.lagShowBytes = LAG_SHOW_BYTES;
     this.lagLogBytes = LAG_LOG_BYTES;
     this.lagSustainMs = LAG_SUSTAIN_MS;
+    this.maxBehindBytes = MAX_BEHIND_BYTES;
   }
 
   /**

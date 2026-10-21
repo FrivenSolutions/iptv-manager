@@ -15,6 +15,10 @@ if (args.includes('-version')) {
   } else {
     process.stdout.write('frame=240\nspeed=3.50x\nprogress=end\n');
   }
+} else if (process.env.FAKE_FFMPEG_NOREAD) {
+  // An encoder buried under a burst: it never reads its input (until it is stopped).
+  process.stdout.write(`LIGHT[${args[args.indexOf('-c:v') + 1]}];`);
+  setInterval(() => process.stdout.write('.'), 100);
 } else {
   process.stdout.write(`LIGHT[${args[args.indexOf('-c:v') + 1]}];`);
   process.stdin.on('data', (d) => process.stdout.write(d));
