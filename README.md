@@ -87,7 +87,8 @@ Without Compose:
 
 ```bash
 docker build -t simple-iptv-manager https://github.com/FrivenSolutions/simple-iptv-manager.git
-docker run -d --name simple-iptv-manager --restart unless-stopped -p 8080:8080 -v iptv-data:/data simple-iptv-manager
+docker run -d --name simple-iptv-manager --restart unless-stopped -p 8080:8080 -v iptv-data:/data \
+  --log-opt max-size=10m --log-opt max-file=3 simple-iptv-manager
 ```
 
 The container runs as user 1000. If you bind-mount a host folder instead of a volume, run
