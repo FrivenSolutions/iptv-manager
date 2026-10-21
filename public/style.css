@@ -143,6 +143,10 @@ textarea { resize: vertical; }
 .link { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; font-size: 12px; padding: 0; }
 
 .form { display: flex; flex-direction: column; gap: 10px; }
+/* A form's own button keeps its size (a full-width button reads as part of the fields). */
+.form > .btn { align-self: flex-start; }
+.sign-out-others { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); align-items: center; gap: 10px; }
+.sign-out-others .hint { margin: 0; }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field-label { font-weight: 550; font-size: 13px; }
 .field .hint { margin: 0; }
