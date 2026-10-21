@@ -115,7 +115,12 @@ class Job {
       }
       this.close();
     });
-    if (r.ts) hub.add(p.stdin);
+    if (r.ts) {
+      this.hub = hub;
+      p.stdin.iptvmWho = 'the light-stream encoder (ffmpeg)';
+      p.stdin.iptvmEncoder = true;
+      hub.add(p.stdin);
+    }
     else p.stdin.end();
     return { ok: true };
   }
@@ -271,5 +276,16 @@ export async function serveLight(ctx, res, ch, viewer = null) {
   if (job.closed) return res.writeHead(502).end();
   res.writeHead(200, { 'content-type': 'video/mp2t', 'cache-control': 'no-cache' });
   job.add(res);
-  if (viewer) res.on('close', ctx.viewers.open({ ...viewer, transcode: job.encoder }));
+  if (viewer) {
+    res.on('close', ctx.viewers.open({
+      ...viewer,
+      transcode: job.encoder,
+      // The provider (through the shared stream), the encoder, and this viewer, each can fall behind.
+      health: () => ({
+        ...(job.hub ? job.hub.health() : { provider_pauses: 0, longest_pause_s: 0, silent_s: 0 }),
+        encoder_behind_mb: ctx.streams.behindMb(job.proc?.stdin),
+        behind_mb: ctx.streams.behindMb(res),
+      }),
+    }));
+  }
 }

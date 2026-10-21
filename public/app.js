@@ -578,6 +578,22 @@ function sourceCard(s) {
 
 const KIND_LABELS = { live: 'Live', movie: 'Movie', episode: 'Episode' };
 
+// Where a proxied stream is struggling, if anywhere: the provider pausing or silent now, this
+// viewer's device or network falling behind, or (light copies) the encoder falling behind.
+function healthLine(x) {
+  if (!x) return null;
+  const parts = [];
+  if (x.silent_s) parts.push(h('b', { class: 'warn-text' }, `provider silent for ${x.silent_s} s`));
+  if (x.provider_pauses) parts.push(`provider paused ${x.provider_pauses}× (longest ${x.longest_pause_s} s)`);
+  if (x.encoder_behind_mb) parts.push(h('b', { class: 'warn-text' }, `encoder ${x.encoder_behind_mb} MB behind`));
+  if (x.behind_mb) parts.push(h('b', { class: 'warn-text' }, `viewer ${x.behind_mb} MB behind`));
+  if (!parts.length) return null;
+  return h('div', {
+    class: 'meta watch-health',
+    title: 'Provider pauses: the provider sent nothing for 5 s or more (its side). Viewer behind: this device or its network is not taking the stream as fast as it comes. Encoder behind: ffmpeg cannot keep up (too many light streams for this server?).',
+  }, '⚠ ', parts.map((p, i) => [i ? ' · ' : '', p]));
+}
+
 // One stream on the dashboard: who (and which device), what, where from, since when.
 function watchRow(v) {
   return h('div', { class: `watch-row ${v.ending ? 'ending' : ''}` },
@@ -591,7 +607,8 @@ function watchRow(v) {
       v.program ? h('div', { class: 'watch-program', title: `On now: ${v.program}` }, `▸ ${v.program}`) : null,
       h('div', { class: 'meta' },
         h('a', { href: `#/outputs/${v.output_id}` }, v.output), v.source ? ` · ${v.source}` : '',
-        ` · ${v.mode === 'redirect' ? 'started' : 'since'} ${ago(v.started)}`)),
+        ` · ${v.mode === 'redirect' ? 'started' : 'since'} ${ago(v.started)}`),
+      healthLine(v.health)),
     v.mode === 'redirect' ? badge('start only', 'warn') : v.ending ? badge('stopping', 'muted') : badge('watching', 'ok'));
 }
 

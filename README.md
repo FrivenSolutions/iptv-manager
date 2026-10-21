@@ -578,6 +578,20 @@ after that: those are listed apart under **Recently started**, for an hour or un
 starts something else. A Direct M3U playlist never reaches this server. Nothing of this is
 stored; it lives in memory.
 
+**When a stream stalls (Proxy).** A ⚠ line on the stream's row says where the problem is:
+
+| Shown | Whose side | Logged as |
+|---|---|---|
+| *provider silent for 7 s*, *provider paused 3× (longest 9 s)* | The provider: it sent nothing for 5 s or more | `the provider sent nothing for 9 s (3rd pause in 42 min)` |
+| *viewer 4.2 MB behind* | That device or its network can't take the stream as fast as it comes | `<who> (<address>) is 4 MB behind`, then `dropped …` at 16 MB |
+| *encoder 3.1 MB behind* | Light streams: ffmpeg can't keep up (too many for this server?) | `the light-stream encoder (ffmpeg) is … MB behind` |
+
+Nothing shown while the player still stalls points at the player itself. When a stream ends, the
+log says whether the provider ended it. On Proxmox, read the log with
+`journalctl -u iptv-manager -f`; on Docker, `docker logs -f simple-iptv-manager`. For Redirect and
+Direct outputs the video doesn't pass through this server, so stalls there are between the player
+and the provider.
+
 **Connection limits (Proxy only).** Everyone watching the same channel shares one connection to
 the provider, which opens with the first viewer and closes with the last. Each source can be held
 to a number of channels playing at once: the source's **Advanced → Streams at once**. Blank means

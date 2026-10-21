@@ -93,8 +93,10 @@ async function proxy(ctx, res, url, output, ch, viewer) {
   // Live TS has no length; a late joiner starts wherever the shared stream is.
   res.writeHead(200, { 'content-type': r.ts, 'cache-control': 'no-cache' });
   if (hub.closed) return res.end();
+  if (viewer) res.iptvmWho = `${viewer.who} (${viewer.ip})`;
   hub.add(res);
-  if (viewer) res.on('close', ctx.viewers.open(viewer));
+  // For the dashboard: is the provider pausing, or is this viewer falling behind?
+  if (viewer) res.on('close', ctx.viewers.open({ ...viewer, health: () => ({ ...hub.health(), behind_mb: ctx.streams.behindMb(res) }) }));
 }
 
 // Headers passed back from the provider for a movie or episode, so players can seek.

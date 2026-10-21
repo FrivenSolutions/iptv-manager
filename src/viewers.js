@@ -99,6 +99,8 @@ export class Viewers {
       ending: e.mode === 'proxy' && e.open === 0,
       // A light copy being made by ffmpeg: 'vaapi' (Intel Quick Sync) or 'software'.
       transcode: e.transcode || null,
+      // Proxied TS streams: provider pauses and how far behind the viewer is (see streams.js).
+      health: e.health ? e.health() : null,
     }));
   }
 }

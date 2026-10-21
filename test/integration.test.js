@@ -67,7 +67,9 @@ const eventGuide = [];
 const xcAccount = { exp: 1900000000 };
 const notified = [];
 // Continuous live streams (XC stream ids 950-959): upstream connections open per id, and made.
-const live = { open: new Map(), requests: 0 };
+// Live channels 95x stream continuously; ids in live.paused send nothing until removed, and 958
+// sends 64 KB every 20 ms (a fast channel, for a viewer that falls behind).
+const live = { open: new Map(), requests: 0, paused: new Set() };
 
 const xmltvTime = (d) => d.toISOString().replace(/[-:T]/g, '').slice(0, 14) + ' +0000';
 function guide(ids) {
@@ -158,7 +160,10 @@ function startUpstream() {
       live.requests++;
       live.open.set(liveId, (live.open.get(liveId) || 0) + 1);
       res.writeHead(200, { 'content-type': 'video/mp2t' });
-      const timer = setInterval(() => res.write(`chunk-${liveId};`), 20);
+      const fat = liveId === '958' ? Buffer.alloc(65536, 0x47) : null;
+      const timer = setInterval(() => {
+        if (!live.paused.has(liveId)) res.write(fat || `chunk-${liveId};`);
+      }, 20);
       res.on('close', () => {
         clearInterval(timer);
         live.open.set(liveId, live.open.get(liveId) - 1);
@@ -1460,6 +1465,65 @@ test('light streams: a 720p copy made by ffmpeg while watched, shared, capped, s
     light.reset();
     delete process.env.FAKE_FFMPEG_LOG;
     fs.rmSync(ffmpegLog, { force: true });
+    await api('DELETE', `/api/outputs/${o.id}`);
+  }
+});
+
+test('stall diagnostics: provider pauses and viewers falling behind, on the dashboard and in the log', async () => {
+  xcCats.push({ category_id: '34', category_name: 'US| CHECKS' });
+  xcStreams.push(
+    { num: 97, name: 'Pausing', stream_id: 957, stream_icon: '', epg_channel_id: '', category_id: '34' },
+    { num: 98, name: 'Fast', stream_id: 958, stream_icon: '', epg_channel_id: '', category_id: '34' },
+  );
+  await api('POST', `/api/sources/${xcId}/refresh`);
+  await app.ctx.jobs.idle();
+  const o = (await api('POST', '/api/outputs', { name: 'Checks' })).data;
+  await api('PUT', `/api/outputs/${o.id}`, { stream_mode: 'proxy', source_ids: [xcId], rules: [{ action: 'include', op: 'equals', value: 'us| checks' }] });
+  const text = await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text();
+  const urlOf = (name) => text.split('\n')[text.split('\n').findIndex((l) => l.endsWith(`,${name}`)) + 1];
+  const streams = app.ctx.streams;
+  const saved = [streams.stallMs, streams.lagShowBytes, streams.lagLogBytes, app.ctx.log];
+  const logs = [];
+  Object.assign(streams, { stallMs: 300, lagShowBytes: 256 * 1024, lagLogBytes: 512 * 1024 });
+  app.ctx.log = (m) => logs.push(m);
+  const until = async (cond, what, ms = 8000) => {
+    for (const end = Date.now() + ms; Date.now() < end && !(await cond());) await new Promise((r) => setTimeout(r, 50));
+    assert.ok(await cond(), what);
+  };
+  const row = async (what) => (await api('GET', '/api/viewers')).data.find((v) => v.what === what);
+  try {
+    // A viewer that keeps reading; the provider goes quiet, then resumes.
+    const ac = new AbortController();
+    const r = await fetch(urlOf('Pausing'), { signal: ac.signal });
+    const reader = r.body.getReader();
+    let reading = true;
+    (async () => { while (reading) { const { done } = await reader.read().catch(() => ({ done: true })); if (done) break; } })();
+    await until(async () => (await row('Pausing'))?.health, 'listed with health');
+    assert.deepEqual((await row('Pausing')).health, { provider_pauses: 0, longest_pause_s: 0, silent_s: 0, behind_mb: 0 }, 'all well');
+    live.paused.add('957');
+    await until(async () => (await row('Pausing')).health.silent_s > 0, 'shown as silent while the provider sends nothing');
+    live.paused.delete('957');
+    await until(async () => (await row('Pausing')).health.provider_pauses === 1, 'counted once data flows again');
+    const h = (await row('Pausing')).health;
+    assert.deepEqual([h.silent_s, h.longest_pause_s >= 1, h.behind_mb], [0, true, 0], 'the viewer kept up: not its fault');
+    assert.ok(logs.some((l) => /^Stream "Pausing": the provider sent nothing for \d+ s \(1st pause in [\d.]+ min\)$/.test(l)), logs.join('\n'));
+    reading = false;
+    ac.abort();
+
+    // A viewer that stops reading a fast channel falls behind; the provider is fine.
+    const req = http.get(urlOf('Fast'), (res) => res.pause());
+    req.on('error', () => {});
+    await until(async () => (await row('Fast'))?.health?.behind_mb > 0, 'shown as behind', 15000);
+    const f = (await row('Fast')).health;
+    assert.deepEqual([f.provider_pauses, f.silent_s], [0, 0]);
+    await until(() => logs.some((l) => /^Stream "Fast": Playlist link \(.+\) is [\d.]+ MB behind \(their device or network is not keeping up\)/.test(l)),
+      'logged once, naming who', 15000);
+    assert.equal(logs.filter((l) => l.includes('MB behind')).length, 1, 'only once per connection');
+    req.destroy();
+    await until(() => live.open.get('958') === 0 && live.open.get('957') === 0, 'upstreams closed');
+  } finally {
+    [streams.stallMs, streams.lagShowBytes, streams.lagLogBytes, app.ctx.log] = saved;
+    live.paused.clear();
     await api('DELETE', `/api/outputs/${o.id}`);
   }
 });

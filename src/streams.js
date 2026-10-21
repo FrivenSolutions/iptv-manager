@@ -9,6 +9,17 @@ import { DEFAULT_UA } from './fetch.js';
 const HLS_IDLE_MS = 30_000;
 // A client this far behind the shared stream is dropped rather than slowing everyone down.
 const MAX_BEHIND_BYTES = 16 * 1024 * 1024;
+// Stall diagnostics (the defaults; Streams carries them, so tests can shorten them):
+// - the provider sending nothing this long is a pause;
+// - a viewer this far behind is shown as lagging on the dashboard, and logged at the second mark.
+const STALL_MS = 5000;
+const LAG_SHOW_BYTES = 2 * 1024 * 1024;
+const LAG_LOG_BYTES = 4 * 1024 * 1024;
+const mb = (n) => Math.round((n / 1048576) * 10) / 10;
+const ordinal = (n) => {
+  const teen = n % 100 >= 11 && n % 100 <= 13;
+  return `${n}${teen ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`;
+};
 
 const isHls = (ct, url) => /mpegurl/i.test(ct) || /\.m3u8$/i.test(new URL(url).pathname);
 
@@ -33,7 +44,24 @@ class Hub {
     this.clients = new Set();
     this.ac = new AbortController();
     this.closed = false;
+    this.started = Date.now();
+    this.lastData = null; // when the provider last sent anything (null until the first chunk)
+    this.pauses = 0;
+    this.longestPause = 0;
     this.result = this.open(url);
+  }
+
+  /**
+   * How the provider side of this stream is doing: pauses so far (each 5 s or more with no data),
+   * the longest, and how long it has been silent right now (0 when data is flowing).
+   */
+  health() {
+    const silent = this.lastData && !this.closed ? Date.now() - this.lastData : 0;
+    return {
+      provider_pauses: this.pauses,
+      longest_pause_s: this.pauses ? Math.max(1, Math.round(this.longestPause / 1000)) : 0,
+      silent_s: silent >= this.streams.stallMs ? Math.max(1, Math.floor(silent / 1000)) : 0,
+    };
   }
 
   async open(url) {
@@ -77,11 +105,28 @@ class Hub {
         // Clients attach as soon as the response starts; by the first chunk, none left means
         // everyone who asked has gone.
         if (!this.clients.size) break;
+        const now = Date.now();
+        if (this.lastData) {
+          const gap = now - this.lastData;
+          if (gap >= this.streams.stallMs) {
+            this.pauses++;
+            this.longestPause = Math.max(this.longestPause, gap);
+            log(`Stream "${this.ch.name}": the provider sent nothing for ${Math.max(1, Math.round(gap / 1000))} s (${ordinal(this.pauses)} pause in ${mins()} min)`);
+          }
+        }
+        this.lastData = now;
         for (const res of this.clients) {
+          const who = res.iptvmWho || 'a viewer';
           if (res.writableLength > MAX_BEHIND_BYTES) {
-            log(`Stream "${this.ch.name}": dropped a viewer that fell ${Math.round(MAX_BEHIND_BYTES / 1048576)} MB behind, after ${mins()} min`);
+            log(`Stream "${this.ch.name}": dropped ${who} that fell ${Math.round(MAX_BEHIND_BYTES / 1048576)} MB behind, after ${mins()} min`);
             res.destroy();
-          } else res.write(chunk);
+            continue;
+          }
+          if (res.writableLength > this.streams.lagLogBytes && !res.iptvmLagLogged) {
+            res.iptvmLagLogged = true;
+            log(`Stream "${this.ch.name}": ${who} is ${mb(res.writableLength)} MB behind (${res.iptvmEncoder ? 'the encoder' : 'their device or network'} is not keeping up), after ${mins()} min`);
+          }
+          res.write(chunk);
         }
       }
     } catch (e) {
@@ -111,6 +156,15 @@ export class Streams {
     this.hls = new Map(); // channelId -> { source_id, at }
     this.vod = new Map(); // "movie:id" / "episode:id" -> { source_id, n } (open proxied requests)
     this.refusedLogged = new Map(); // sourceId -> time of the last "all in use" log line
+    this.stallMs = STALL_MS;
+    this.lagShowBytes = LAG_SHOW_BYTES;
+    this.lagLogBytes = LAG_LOG_BYTES;
+  }
+
+  /** How far behind a client is, in MB (0 while under the dashboard's threshold). */
+  behindMb(res) {
+    const n = res?.writableLength || 0;
+    return n >= this.lagShowBytes ? mb(n) : 0;
   }
 
   /** How many channels a source may have open at once; 0 means no limit. */
