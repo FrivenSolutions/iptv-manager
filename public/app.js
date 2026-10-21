@@ -2642,26 +2642,53 @@ function twoFactorCard(state) {
         }, 'Set up two-factor sign-in'));
       return;
     }
-    const code = codeInput('Code or recovery code');
+    // Both actions need a current code, asked for only once one is chosen.
+    const step = h('div');
+    const ask = ({ label, hint, placeholder, button, cls, run }) => {
+      const code = codeInput(placeholder);
+      fill(step, h('form', {
+        class: 'form two-factor-step',
+        onsubmit: async (e) => {
+          e.preventDefault();
+          await run(code.value);
+        },
+      },
+      field(label, code, hint),
+      h('div', { class: 'row' },
+        h('button', { class: `btn ${cls}` }, button),
+        h('button', { class: 'btn', type: 'button', onclick: () => fill(step) }, 'Cancel'))));
+      code.focus();
+    };
     fill(card,
       h('h2', null, 'Two-factor sign-in'),
       h('p', null, badge('on', 'ok'), ` Signing in asks for a code from your authenticator app. ${s.recovery_left} recovery code${s.recovery_left === 1 ? '' : 's'} left.`),
       s.recovery_left < 3 ? h('p', { class: 'hint warn-text' }, 'Running low on recovery codes: make new ones.') : null,
-      h('div', { class: 'form' },
-        field('Code from your authenticator app', code, 'Needed to turn it off (a recovery code works too) or to make new recovery codes.'),
-        h('div', { class: 'row' },
-          h('button', {
-            class: 'btn',
-            onclick: async () => showRecovery((await attempt(() => api('POST', '/api/2fa/recovery', { code: code.value }), 'New recovery codes; the old ones no longer work')).recovery_codes),
-          }, 'New recovery codes'),
-          h('button', {
-            class: 'btn danger-text',
-            onclick: async () => {
-              if (!(await confirmBox('Turn off two-factor sign-in? Signing in will only need the password.', 'Turn off'))) return;
-              await attempt(() => api('POST', '/api/2fa/disable', { code: code.value }), 'Two-factor sign-in is off');
+      h('div', { class: 'row' },
+        h('button', {
+          class: 'btn',
+          onclick: () => ask({
+            label: 'Code from your authenticator app',
+            hint: 'New codes replace the old ones, which stop working.',
+            button: 'Make new recovery codes',
+            cls: 'primary',
+            run: async (c) => showRecovery((await attempt(() => api('POST', '/api/2fa/recovery', { code: c }), 'New recovery codes; the old ones no longer work')).recovery_codes),
+          }),
+        }, 'New recovery codes'),
+        h('button', {
+          class: 'btn danger-text',
+          onclick: () => ask({
+            label: 'Code from your authenticator app, or a recovery code',
+            hint: 'Signing in will then only need the password.',
+            placeholder: 'Code or recovery code',
+            button: 'Turn off two-factor sign-in',
+            cls: 'danger',
+            run: async (c) => {
+              await attempt(() => api('POST', '/api/2fa/disable', { code: c }), 'Two-factor sign-in is off');
               draw(await api('GET', '/api/2fa'));
             },
-          }, 'Turn off'))));
+          }),
+        }, 'Turn off')),
+      step);
   };
   draw(state);
   return card;
