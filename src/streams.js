@@ -11,10 +11,13 @@ const HLS_IDLE_MS = 30_000;
 const MAX_BEHIND_BYTES = 16 * 1024 * 1024;
 // Stall diagnostics (the defaults; Streams carries them, so tests can shorten them):
 // - the provider sending nothing this long is a pause;
-// - a viewer this far behind is shown as lagging on the dashboard, and logged at the second mark.
+// - a viewer this far behind is shown as lagging on the dashboard, and logged at the second mark,
+//   but only once it has stayed behind for LAG_SUSTAIN_MS: a provider that sends video in bursts
+//   (several MB at once) puts every viewer briefly "behind" while the burst drains.
 const STALL_MS = 5000;
 const LAG_SHOW_BYTES = 2 * 1024 * 1024;
 const LAG_LOG_BYTES = 4 * 1024 * 1024;
+const LAG_SUSTAIN_MS = 5000;
 const mb = (n) => Math.round((n / 1048576) * 10) / 10;
 const ordinal = (n) => {
   const teen = n % 100 >= 11 && n % 100 <= 13;
@@ -139,9 +142,13 @@ class Hub {
             res.destroy();
             continue;
           }
-          if (res.writableLength > this.streams.lagLogBytes && !res.iptvmLagLogged) {
+          // Since when this client has been behind; cleared as soon as it catches up.
+          if (res.writableLength >= this.streams.lagShowBytes) res.iptvmBehindSince ??= now;
+          else res.iptvmBehindSince = null;
+          const behindFor = res.iptvmBehindSince == null ? 0 : now - res.iptvmBehindSince;
+          if (behindFor >= this.streams.lagSustainMs && res.writableLength > this.streams.lagLogBytes && !res.iptvmLagLogged) {
             res.iptvmLagLogged = true;
-            log(`Stream "${this.ch.name}": ${who} is ${mb(res.writableLength)} MB behind (${res.iptvmEncoder ? 'the encoder' : 'their device or network'} is not keeping up), after ${mins()} min`);
+            log(`Stream "${this.ch.name}": ${who} has been behind for ${Math.round(behindFor / 1000)} s, now ${mb(res.writableLength)} MB (${res.iptvmEncoder ? 'the encoder' : 'their device or network'} is not keeping up), after ${mins()} min`);
           }
           res.write(chunk);
         }
@@ -178,6 +185,7 @@ export class Streams {
     this.stallMs = STALL_MS;
     this.lagShowBytes = LAG_SHOW_BYTES;
     this.lagLogBytes = LAG_LOG_BYTES;
+    this.lagSustainMs = LAG_SUSTAIN_MS;
   }
 
   /**
@@ -195,10 +203,11 @@ export class Streams {
     this.lastRefusal.set(sourceId, { what, reason, at: Math.floor(now / 1000) });
   }
 
-  /** How far behind a client is, in MB (0 while under the dashboard's threshold). */
+  /** How far behind a client is, in MB: 0 unless it has been over the threshold for a while. */
   behindMb(res) {
     const n = res?.writableLength || 0;
-    return n >= this.lagShowBytes ? mb(n) : 0;
+    const since = res?.iptvmBehindSince;
+    return n >= this.lagShowBytes && since != null && Date.now() - since >= this.lagSustainMs ? mb(n) : 0;
   }
 
   /** How many channels a source may have open at once; 0 means no limit. */

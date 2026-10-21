@@ -4,6 +4,9 @@ import { Readable } from 'node:stream';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
+import zlib from 'node:zlib';
+import { download, fetchJson, isFetchInternalError } from '../src/fetch.js';
 import { readGitCommit, currentVersion } from '../src/version.js';
 import { parseM3U, isVod } from '../src/m3u.js';
 import { parseXmltv, parseXmltvTime } from '../src/xmltv.js';
@@ -255,4 +258,44 @@ test('parseEpisodeName finds the show, season and episode in playlist names', ()
   assert.deepEqual(parseEpisodeName('EN - Dark - S2E10 - Title'), { show: 'EN - Dark', season: 2, episode: 10 });
   assert.equal(parseEpisodeName('Some Movie (2020)'), null);
   assert.equal(parseEpisodeName('S01 E01'), null, 'no show name');
+});
+
+test('isFetchInternalError recognizes only Node fetch\'s internal assertion', () => {
+  const undici = Object.assign(new Error('The expression evaluated to a falsy value:\n\n  assert(!this.paused)\n'), { code: 'ERR_ASSERTION' });
+  undici.stack = `AssertionError [ERR_ASSERTION]: ${undici.message}\n    at Parser.finish (node:internal/deps/undici/undici:7388:9)\n    at TLSSocket.onHttpSocketEnd (node:internal/deps/undici/undici:7827:34)`;
+  assert.equal(isFetchInternalError(undici), true);
+  const ours = Object.assign(new Error('x'), { code: 'ERR_ASSERTION' });
+  ours.stack = 'AssertionError: x\n    at file:///app/src/ingest.js:10:3';
+  assert.equal(isFetchInternalError(ours), false, 'an assertion elsewhere still counts as a crash');
+  assert.equal(isFetchInternalError(new TypeError('boom')), false);
+  assert.equal(isFetchInternalError(undefined), false);
+});
+
+test('downloads and JSON calls: redirects, compressed responses, HTTP errors, user agent', async () => {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push(req.headers['user-agent']);
+    if (req.url === '/hop') return res.writeHead(302, { location: '/json' }).end();
+    if (req.url === '/json') {
+      res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'gzip' });
+      return res.end(zlib.gzipSync(JSON.stringify({ ok: 'yes', list: [1, 2, 3] })));
+    }
+    if (req.url === '/file') return res.writeHead(200).end('#EXTM3U\nplain body\n');
+    res.writeHead(404).end('nope');
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-dl-'));
+  try {
+    assert.deepEqual(await fetchJson(`${base}/hop`, { userAgent: 'Agent/9' }), { ok: 'yes', list: [1, 2, 3] });
+    assert.deepEqual(seen, ['Agent/9', 'Agent/9'], 'the user agent goes along with the redirect');
+    const file = await download(`${base}/file`, path.join(dir, 'f.m3u'), {});
+    assert.equal(fs.readFileSync(file, 'utf8'), '#EXTM3U\nplain body\n');
+    await assert.rejects(fetchJson(`${base}/missing?username=me&password=secret`), /HTTP 404 .*password=\*\*\*/);
+    await assert.rejects(download(`${base}/missing`, path.join(dir, 'x'), {}), /HTTP 404/);
+    await assert.rejects(fetchJson('http://127.0.0.1:1/'), /ECONNREFUSED/);
+  } finally {
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

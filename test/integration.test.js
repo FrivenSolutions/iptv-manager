@@ -1482,9 +1482,9 @@ test('stall diagnostics: provider pauses and viewers falling behind, on the dash
   const text = await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text();
   const urlOf = (name) => text.split('\n')[text.split('\n').findIndex((l) => l.endsWith(`,${name}`)) + 1];
   const streams = app.ctx.streams;
-  const saved = [streams.stallMs, streams.lagShowBytes, streams.lagLogBytes, app.ctx.log];
+  const saved = [streams.stallMs, streams.lagShowBytes, streams.lagLogBytes, streams.lagSustainMs, app.ctx.log];
   const logs = [];
-  Object.assign(streams, { stallMs: 300, lagShowBytes: 256 * 1024, lagLogBytes: 512 * 1024 });
+  Object.assign(streams, { stallMs: 300, lagShowBytes: 256 * 1024, lagLogBytes: 512 * 1024, lagSustainMs: 1000 });
   app.ctx.log = (m) => logs.push(m);
   const until = async (cond, what, ms = 8000) => {
     for (const end = Date.now() + ms; Date.now() < end && !(await cond());) await new Promise((r) => setTimeout(r, 50));
@@ -1510,19 +1510,35 @@ test('stall diagnostics: provider pauses and viewers falling behind, on the dash
     reading = false;
     ac.abort();
 
-    // A viewer that stops reading a fast channel falls behind; the provider is fine.
+    // A viewer that keeps up with a fast channel is never flagged, even if a burst is briefly queued.
+    const ac2 = new AbortController();
+    const r2 = await fetch(urlOf('Fast'), { signal: ac2.signal });
+    const reader2 = r2.body.getReader();
+    let reading2 = true;
+    (async () => { while (reading2) { const { done } = await reader2.read().catch(() => ({ done: true })); if (done) break; } })();
+    await until(async () => (await row('Fast'))?.health, 'listed');
+    for (let i = 0; i < 6; i++) {
+      assert.equal((await row('Fast')).health.behind_mb, 0, 'keeping up');
+      await new Promise((res) => setTimeout(res, 250));
+    }
+    assert.ok(!logs.some((l) => l.includes('has been behind')));
+    reading2 = false;
+    ac2.abort();
+    await until(() => live.open.get('958') === 0, 'that one closed');
+
+    // A viewer that stops reading falls behind, and stays behind; the provider is fine.
     const req = http.get(urlOf('Fast'), (res) => res.pause());
     req.on('error', () => {});
     await until(async () => (await row('Fast'))?.health?.behind_mb > 0, 'shown as behind', 15000);
     const f = (await row('Fast')).health;
     assert.deepEqual([f.provider_pauses, f.silent_s], [0, 0]);
-    await until(() => logs.some((l) => /^Stream "Fast": Playlist link \(.+\) is [\d.]+ MB behind \(their device or network is not keeping up\)/.test(l)),
+    await until(() => logs.some((l) => /^Stream "Fast": Playlist link \(.+\) has been behind for \d+ s, now [\d.]+ MB \(their device or network is not keeping up\)/.test(l)),
       'logged once, naming who', 15000);
-    assert.equal(logs.filter((l) => l.includes('MB behind')).length, 1, 'only once per connection');
+    assert.equal(logs.filter((l) => l.includes('has been behind')).length, 1, 'only once per connection');
     req.destroy();
     await until(() => live.open.get('958') === 0 && live.open.get('957') === 0, 'upstreams closed');
   } finally {
-    [streams.stallMs, streams.lagShowBytes, streams.lagLogBytes, app.ctx.log] = saved;
+    [streams.stallMs, streams.lagShowBytes, streams.lagLogBytes, streams.lagSustainMs, app.ctx.log] = saved;
     live.paused.clear();
     await api('DELETE', `/api/outputs/${o.id}`);
   }
