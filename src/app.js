@@ -18,6 +18,7 @@ import { serveChannel, serveSegment, serveVod } from './stream.js';
 import { vodTarget } from './outputs/xcvod.js';
 import { Streams } from './streams.js';
 import { Viewers, clientIp } from './viewers.js';
+import { Attempts, isPrivateAddress } from './guard.js';
 import { Light, serveLight } from './light.js';
 import { HDHR_API } from './hdhomerun.js';
 import { currentVersion } from './version.js';
@@ -28,6 +29,9 @@ import { AutoBackup } from './autobackup.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PUBLIC = path.join(ROOT, 'public');
+// Wrong Xtream Codes logins allowed from one address before it is blocked, and for how long.
+const XC_MAX_FAILS = 10;
+const XC_BLOCK_MS = 10 * 60 * 1000;
 const APP_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 
 const STATIC_TYPES = {
@@ -266,9 +270,21 @@ export function createApp({
   });
 
   // --- Xtream Codes compatible endpoints -----------------------------------
-  const xcAuth = (username, password) => {
+  // Wrong Xtream Codes logins per visitor address: blocked for a while after XC_MAX_FAILS, so the
+  // usernames and passwords can't be guessed. Devices on the local network aren't limited (a TV
+  // with an old password keeps retrying; that's not an attack).
+  const xcFails = new Attempts({ max: XC_MAX_FAILS, windowMs: XC_BLOCK_MS });
+  const xcAuth = (req, username, password) => {
+    const ip = clientIp(req);
+    const limited = !isPrivateAddress(ip);
+    if (limited && xcFails.blocked(ip)) throw new HttpError(429, 'Too many wrong logins; try again later');
     const id = findXcOutput(db, username, password);
-    return id ? ctx.selection(id) : null;
+    if (id) {
+      if (limited) xcFails.ok(ip);
+      return ctx.selection(id);
+    }
+    if (limited && xcFails.fail(ip)) ctx.log(`Xtream Codes login: ${XC_MAX_FAILS} wrong attempts from ${ip}; blocked for ${XC_BLOCK_MS / 60_000} minutes`);
+    return null;
   };
   // Stream links carry the credentials of the login that asked for the playlist, never another's.
   const xcUrl = (req, sel, username, password) => (ch) => {
@@ -277,25 +293,25 @@ export function createApp({
   };
 
   const xcApi = async (req, res, { query }) => {
-    const sel = xcAuth(query.get('username'), query.get('password'));
+    const sel = xcAuth(req, query.get('username'), query.get('password'));
     if (!sel) return sendJson(res, 200, { user_info: { auth: 0 } });
     sendJson(res, 200, await playerApi(db, sel.output, sel, base(req), query, ctx.vod(sel.output.id)));
   };
   router.get('/player_api.php', xcApi);
   router.post('/player_api.php', xcApi);
   router.get('/get.php', (req, res, { query }) => {
-    const sel = xcAuth(query.get('username'), query.get('password'));
+    const sel = xcAuth(req, query.get('username'), query.get('password'));
     if (!sel) throw new HttpError(401, 'Invalid credentials');
     const [u, p] = [query.get('username'), query.get('password')];
     sendPlaylist(req, res, sel, xcUrl(req, sel, u, p), (ch) => `${base(req)}/light/${encodeURIComponent(u)}/${encodeURIComponent(p)}/${ch.id}.ts`);
   });
   router.get('/xmltv.php', (req, res, { query }) => {
-    const sel = xcAuth(query.get('username'), query.get('password'));
+    const sel = xcAuth(req, query.get('username'), query.get('password'));
     if (!sel) throw new HttpError(401, 'Invalid credentials');
     return sendEpg(req, res, sel, false);
   });
   const xcStream = (req, res, { params, query }) => {
-    const sel = xcAuth(params.u, params.p);
+    const sel = xcAuth(req, params.u, params.p);
     if (!sel) throw new HttpError(401, 'Invalid credentials');
     const [id, ext = 'ts'] = params.file.split('.');
     const ch = channelOf(sel, id);
@@ -304,7 +320,7 @@ export function createApp({
   };
   router.get('/live/:u/:p/:file', xcStream);
   router.get('/light/:u/:p/:file', (req, res, { params }) => {
-    const sel = xcAuth(params.u, params.p);
+    const sel = xcAuth(req, params.u, params.p);
     if (!sel) throw new HttpError(401, 'Invalid credentials');
     const ch = lightOf(sel, params.file);
     return serveLight(ctx, res, ch, lightViewer(req, sel, ch, params.u));
@@ -312,7 +328,7 @@ export function createApp({
   // Movies and series episodes: ids are this server's, checked against the output's categories.
   for (const kind of ['movie', 'series']) {
     router.get(`/${kind}/:u/:p/:file`, (req, res, { params }) => {
-      const sel = xcAuth(params.u, params.p);
+      const sel = xcAuth(req, params.u, params.p);
       if (!sel) throw new HttpError(401, 'Invalid credentials');
       const vod = ctx.vod(sel.output.id);
       const target = vod && vodTarget(db, vod, kind, params.file.split('.')[0]);

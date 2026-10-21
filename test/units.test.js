@@ -7,6 +7,7 @@ import path from 'node:path';
 import http from 'node:http';
 import zlib from 'node:zlib';
 import { download, fetchJson, isFetchInternalError } from '../src/fetch.js';
+import { clientAddress, trustedProxies, isPrivateAddress, Attempts } from '../src/guard.js';
 import { readGitCommit, currentVersion } from '../src/version.js';
 import { parseM3U, isVod } from '../src/m3u.js';
 import { parseXmltv, parseXmltvTime } from '../src/xmltv.js';
@@ -298,4 +299,37 @@ test('downloads and JSON calls: redirects, compressed responses, HTTP errors, us
     server.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('clientAddress believes X-Forwarded-For only through trusted proxies, read from the right', () => {
+  const req = (socket, xff) => ({ socket: { remoteAddress: socket }, headers: xff ? { 'x-forwarded-for': xff } : {} });
+  const local = trustedProxies('');
+  // Through a proxy on the local network: the visitor is the proxy's last entry, not a forged one.
+  assert.equal(clientAddress(req('::ffff:192.168.1.1', '1.2.3.4, 203.0.113.9'), local), '203.0.113.9');
+  assert.equal(clientAddress(req('127.0.0.1', '192.168.1.50'), local), '192.168.1.50', 'a LAN visitor through the proxy');
+  assert.equal(clientAddress(req('127.0.0.1'), local), '127.0.0.1');
+  // Straight from the internet: the header is ignored.
+  assert.equal(clientAddress(req('198.51.100.7', '10.0.0.1'), local), '198.51.100.7');
+  // TRUSTED_PROXIES: none, or a list.
+  assert.equal(clientAddress(req('192.168.1.1', '203.0.113.9'), trustedProxies('none')), '192.168.1.1');
+  const listed = trustedProxies('203.0.113.0/24, 10.1.1.1');
+  assert.equal(clientAddress(req('203.0.113.5', '8.8.8.8'), listed), '8.8.8.8');
+  assert.equal(clientAddress(req('10.1.1.1', '8.8.4.4'), listed), '8.8.4.4');
+  assert.equal(clientAddress(req('192.168.1.1', '8.8.8.8'), listed), '192.168.1.1', 'not on the list');
+  assert.equal(clientAddress(req('::1', 'garbage, 2001:db8::5'), local), '2001:db8::5');
+  for (const ip of ['10.2.3.4', '172.20.0.1', '192.168.0.9', '127.0.0.1', '::1', 'fd00::1', '::ffff:192.168.1.5']) assert.ok(isPrivateAddress(ip), ip);
+  for (const ip of ['8.8.8.8', '172.32.0.1', '2001:db8::1', 'not an ip', '']) assert.ok(!isPrivateAddress(ip), ip);
+});
+
+test('Attempts blocks a key at its limit until the window passes; a success clears it', async () => {
+  const a = new Attempts({ max: 3, windowMs: 80 });
+  assert.deepEqual([a.fail('x'), a.fail('x'), a.blocked('x')], [false, false, false]);
+  assert.equal(a.fail('x'), true, 'the one that reaches the limit says so');
+  assert.equal(a.blocked('x'), true);
+  assert.equal(a.blocked('y'), false);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(a.blocked('x'), false, 'until the window passes');
+  a.fail('z');
+  a.ok('z');
+  assert.equal(a.map.has('z'), false);
 });

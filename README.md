@@ -621,6 +621,7 @@ through this server, so they count in any mode.
 | `IPTV_UPDATE_REPO` | `FrivenSolutions/simple-iptv-manager` | GitHub repository the update check compares against (`owner/name`), for forks |
 | `FFMPEG_PATH` | `ffmpeg` | ffmpeg program for light streams |
 | `LIGHT_VAAPI_DEVICE` | `/dev/dri/renderD128` | GPU device for Intel Quick Sync |
+| `TRUSTED_PROXIES` | the local network | Reverse proxies whose `X-Forwarded-For` is believed: addresses or CIDR ranges, comma-separated, or `none` (see [Security](#security)) |
 
 If players reach the server by a different name than your browser does (a reverse proxy or DNS
 name, for example), set **Settings → Base URL** so the published links use that address.
@@ -637,8 +638,16 @@ Simple IPTV Manager is built for a home network.
   replaces the URL token only, so also change the output's Xtream Codes password if it has one.
   To share an output, give each person their own login (**Other logins**), so you can remove one
   without changing anything for anyone else.
-- **The admin UI** needs a password (at least 8 characters). Changing it signs out every other
-  session. If you forget it, start the app once with `ADMIN_PASSWORD` set.
+- **The admin UI** needs a password (at least 8 characters), stored as a salted scrypt hash.
+  Changing it signs out every other session, and so does **Sign out other devices** under it. If
+  you forget it, start the app once with `ADMIN_PASSWORD` set. The first password can only be set
+  from your local network (or with `ADMIN_PASSWORD`), so an install reachable from the internet
+  can't be claimed by a stranger.
+- **Guessing is limited.** 5 wrong passwords or codes lock that address out of signing in for a
+  minute. Many wrong attempts from many addresses (50 in 15 minutes) limit sign-in to addresses
+  that signed in before, and the local network, for 15 minutes. 10 wrong Xtream Codes logins from
+  one address block it for 10 minutes; devices on your local network are never blocked. Each
+  lock is logged.
 - **Two-factor sign-in** (Settings → Two-factor sign-in) adds a 6-digit code from an
   authenticator app (Google or Microsoft Authenticator, 1Password, Bitwarden and the like) after
   the password. Each code works once. Setup gives 8 one-time recovery codes for a lost phone;
@@ -646,6 +655,12 @@ Simple IPTV Manager is built for a home network.
   Proxmox: add it to `/etc/default/iptv-manager` and restart the service, then remove it).
 - **Settings exports** can contain provider passwords, if you tick that option. Store them like
   any other credential.
+- **Behind a reverse proxy**, every request comes from the proxy, and the visitor's address is in
+  `X-Forwarded-For`. The app believes that header only from a trusted proxy: by default anything on
+  your local network or the same machine (nginx, Caddy, Nginx Proxy Manager, Traefik, a Cloudflare
+  tunnel), so limits and the dashboard see each visitor. To trust only your proxy, set
+  `TRUSTED_PROXIES` to its address (e.g. `192.168.1.5`), or `none` to trust no proxy. Have the
+  proxy send `X-Forwarded-Proto: https` (most do), so sign-in cookies are marked `Secure`.
 
 To report a security problem, please open a GitHub issue without exploit details, or contact
 the maintainer privately first.

@@ -1970,7 +1970,8 @@ test('who is watching what: proxy streams start to stop, redirected ones by thei
   const stop1 = await watch(`${base}/live/watcher/w/${id1}.ts`);
   const stop2 = await watch(`${base}/live/mom2/m/${id2}.ts`);
   let v = await viewers();
-  const byWho = (who) => v.find((x) => x.who === who);
+  // This test's outputs only: an earlier test's viewer of the same name may still be ending.
+  const byWho = (who) => v.find((x) => x.who === who && ['Proxy room', 'Redirect room', 'HLS room'].includes(x.output));
   assert.deepEqual(
     [byWho('watcher')?.what, byWho('watcher')?.mode, byWho('watcher')?.output, byWho('watcher')?.source, byWho('watcher')?.kind],
     [name1, 'proxy', 'Proxy room', 'XC', 'live'],
@@ -2132,6 +2133,75 @@ test('two-factor sign-in: setup, codes once each, recovery codes, turning off, D
   assert.equal(app2.ctx.db.getSetting('totp_secret'), null);
   await app2.close();
   fs.rmSync(dir2, { recursive: true, force: true });
+});
+
+test('behind a reverse proxy: sign-in and Xtream Codes guesses are limited per visitor; setup only from the local network; sign out other devices', async () => {
+  // The test talks to the app from 127.0.0.1, which counts as a trusted proxy, so X-Forwarded-For
+  // stands in for visitors on the internet.
+  const as = (ip, p, init = {}) => fetch(base + p, {
+    ...init,
+    headers: { 'content-type': 'application/json', 'x-requested-with': 'fetch', ...(ip ? { 'x-forwarded-for': ip } : {}), ...(init.headers || {}) },
+  });
+  const login = (ip, password) => as(ip, '/api/login', { method: 'POST', body: JSON.stringify({ password }) });
+  const logs = [];
+  const savedLog = app.ctx.log;
+  app.ctx.log = (m) => logs.push(m);
+  try {
+    // Admin sign-in: 5 wrong from one visitor locks that visitor only, even with the right password.
+    for (let i = 0; i < 5; i++) assert.equal((await login('203.0.113.10', 'wrong')).status, 401);
+    assert.equal((await login('203.0.113.10', PASSWORD)).status, 429);
+    assert.ok(logs.includes('Sign-in: 5 wrong attempts from 203.0.113.10; blocked for 60 s'), logs.join('\n'));
+    assert.equal((await login('203.0.113.11', 'wrong')).status, 401, 'another visitor is not affected');
+    assert.equal((await login('203.0.113.12', PASSWORD)).status, 200, 'and can sign in');
+    // A visitor can't fake its way out: the proxy appends the real address, which is read first.
+    assert.equal((await login('198.18.0.1, 203.0.113.10', PASSWORD)).status, 429);
+
+    // Many wrong sign-ins from many addresses: only known addresses and the local network get in.
+    for (let i = 0; i < 50; i++) await login(`198.51.100.${i + 1}`, 'wrong');
+    assert.ok(logs.some((l) => l.startsWith('Sign-in: many wrong attempts from different addresses')));
+    assert.equal((await login('198.51.100.200', PASSWORD)).status, 429, 'a new address waits');
+    assert.equal((await login('203.0.113.12', PASSWORD)).status, 200, 'one that signed in before still can');
+    assert.equal((await login(null, PASSWORD)).status, 200, 'the local network still can');
+
+    // Xtream Codes: 10 wrong logins block that visitor for a while, even with right credentials.
+    const xc = (ip, u, p) => as(ip, `/player_api.php?username=${u}&password=${p}`);
+    for (let i = 0; i < 10; i++) assert.deepEqual(await (await xc('192.0.2.5', 'family', 'nope')).json(), { user_info: { auth: 0 } });
+    assert.equal((await xc('192.0.2.5', 'family', 'pw123')).status, 429);
+    assert.equal((await as('192.0.2.5', '/get.php?username=family&password=pw123')).status, 429, 'every login route');
+    assert.ok(logs.includes('Xtream Codes login: 10 wrong attempts from 192.0.2.5; blocked for 10 minutes'));
+    assert.equal((await (await xc('192.0.2.6', 'family', 'pw123')).json()).user_info.auth, 1, 'others are not affected');
+    // Devices on the local network are never blocked (a TV with an old password keeps retrying).
+    for (let i = 0; i < 12; i++) await xc(null, 'family', 'nope');
+    assert.equal((await (await xc(null, 'family', 'pw123')).json()).user_info.auth, 1);
+
+    // Sign out other devices: an older session stops working, this one carries on.
+    const other = (await login(null, PASSWORD)).headers.get('set-cookie').split(';')[0];
+    assert.equal((await fetch(`${base}/api/settings`, { headers: { cookie: other } })).status, 200);
+    assert.equal((await api('POST', '/api/sessions/revoke')).status, 200);
+    assert.equal((await fetch(`${base}/api/settings`, { headers: { cookie: other } })).status, 401, 'the other session is signed out');
+    assert.equal((await api('GET', '/api/settings')).status, 200, 'this one carries on');
+  } finally {
+    app.ctx.log = savedLog;
+  }
+
+  // The first admin password can only be set from the local network.
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'iptvm-setup-'));
+  const app2 = createApp({ dataDir: dir2, log: () => {} });
+  const base2 = `http://127.0.0.1:${(await app2.start(0, '127.0.0.1')).port}`;
+  try {
+    const setup = (ip) => fetch(`${base2}/api/setup`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-requested-with': 'fetch', ...(ip ? { 'x-forwarded-for': ip } : {}) },
+      body: JSON.stringify({ password: 'a long password' }),
+    });
+    const r = await setup('203.0.113.50');
+    assert.equal(r.status, 403);
+    assert.match((await r.json()).error, /from your local network/);
+    assert.equal((await setup('192.168.1.40')).status, 200, 'through the proxy from the local network');
+  } finally {
+    await app2.close();
+    fs.rmSync(dir2, { recursive: true, force: true });
+  }
 });
 
 test('dashboard widget API: off until a key is made, read-only numbers with that key only', async () => {

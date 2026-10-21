@@ -21,6 +21,7 @@ import { now } from './db.js';
 import { serveWatch } from './stream.js';
 import { newSecret, checkCode, otpauthUri, qrSvg, newRecoveryCodes, useRecoveryCode } from './totp.js';
 import { clientIp } from './viewers.js';
+import { Attempts, isPrivateAddress } from './guard.js';
 import { ENCODERS, DEFAULT_LIGHT_MAX } from './light.js';
 
 const UPLOAD_LIMIT = 1024 * 1024 * 1024;
@@ -211,7 +212,12 @@ function outputView(req, ctx, o, withDetail = false) {
 
 export function registerApi(router, ctx) {
   const { db } = ctx;
-  const failures = new Map();
+  // Wrong passwords and codes, per visitor address: a short lock after LOGIN_LOCK_AFTER of them.
+  const failures = new Attempts({ max: LOGIN_LOCK_AFTER, windowMs: LOGIN_LOCK_S * 1000 });
+  // And from everyone together: many in a short time means a spread-out guessing attack, so for a
+  // while only addresses that signed in before, and the local network, may try at all.
+  const everyone = new Attempts({ max: 50, windowMs: 15 * 60 * 1000 });
+  const knownGood = new Set();
 
   const touch = () => ctx.bump();
 
@@ -222,6 +228,10 @@ export function registerApi(router, ctx) {
 
   router.post('/api/setup', async (req, res) => {
     if (db.getSetting('admin_hash')) throw new HttpError(409, 'Already set up');
+    // Whoever sets the first password owns the app: not someone who found it on the internet.
+    if (!isPrivateAddress(clientIp(req))) {
+      throw new HttpError(403, 'Set the first admin password from your local network, or with the ADMIN_PASSWORD setting.');
+    }
     const { password } = await readJson(req);
     if (str(password).length < 8) throw new HttpError(400, 'Use at least 8 characters');
     db.setSetting('admin_hash', hashPassword(password));
@@ -258,12 +268,16 @@ export function registerApi(router, ctx) {
   };
 
   router.post('/api/login', async (req, res) => {
-    const ip = req.socket.remoteAddress || '';
-    const f = failures.get(ip);
-    if (f && f.count >= LOGIN_LOCK_AFTER && f.until > Date.now()) throw new HttpError(429, 'Too many attempts; wait a minute');
+    const ip = clientIp(req);
+    if (failures.blocked(ip)) throw new HttpError(429, 'Too many attempts; wait a minute');
+    if (everyone.blocked('all') && !knownGood.has(ip) && !isPrivateAddress(ip)) {
+      throw new HttpError(429, 'Too many failed sign-ins recently; try again later');
+    }
     const fail = (message) => {
-      const n = (f && f.until > Date.now() ? f.count : 0) + 1;
-      failures.set(ip, { count: n, until: Date.now() + LOGIN_LOCK_S * 1000 });
+      if (failures.fail(ip)) ctx.log(`Sign-in: ${LOGIN_LOCK_AFTER} wrong attempts from ${ip}; blocked for ${LOGIN_LOCK_S} s`);
+      if (everyone.fail('all')) {
+        ctx.log('Sign-in: many wrong attempts from different addresses; for 15 minutes only addresses that signed in before, and the local network, can sign in');
+      }
       throw new HttpError(401, message);
     };
     const { password, code } = await readJson(req);
@@ -273,9 +287,19 @@ export function registerApi(router, ctx) {
       if (!code) return sendJson(res, 200, { two_factor_required: true });
       if (!useSecondFactor(code)) fail('That code is not right (or was already used)');
     }
-    failures.delete(ip);
+    failures.ok(ip);
+    knownGood.add(ip);
     const s = makeSession(ctx.secret, ctx.sessionGen());
     res.setHeader('set-cookie', sessionCookie(s.value, s.maxAge, ctx.secureCookies(req)));
+    sendJson(res, 200, { ok: true });
+  });
+
+  // Every other signed-in browser is signed out (sessions carry a generation number); this one stays.
+  router.post('/api/sessions/revoke', (req, res) => {
+    db.setSetting('session_gen', ctx.sessionGen() + 1);
+    const s = makeSession(ctx.secret, ctx.sessionGen());
+    res.setHeader('set-cookie', sessionCookie(s.value, s.maxAge, ctx.secureCookies(req)));
+    ctx.log('Signed out all other sessions');
     sendJson(res, 200, { ok: true });
   });
 

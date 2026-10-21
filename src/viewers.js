@@ -8,14 +8,17 @@
 //   until it starts something else.
 // - Direct through the M3U playlist: players never contact this server, so nothing is seen.
 
+import { clientAddress, trustedProxies } from './guard.js';
+
 const ENDED_GRACE_MS = 10_000; // players reopen connections when seeking or switching quality
 const HLS_IDLE_MS = 30_000;
 const REDIRECT_KEEP_MS = 3600_000;
 
-/** The address a request came from (the first proxy hop's client, when behind a reverse proxy). */
+const trusted = trustedProxies();
+
+/** The address a request came from: the visitor's, also behind a trusted reverse proxy (guard.js). */
 export function clientIp(req) {
-  const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return (fwd || req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  return clientAddress(req, trusted);
 }
 
 export class Viewers {

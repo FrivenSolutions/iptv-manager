@@ -2445,7 +2445,13 @@ async function settingsView(main) {
           await attempt(() => api('POST', '/api/password', { current: cur.value, next: next.value }), 'Password changed; other sessions were signed out');
           cur.value = next.value = '';
         },
-      }, field('Current password', cur), field('New password', next, 'At least 8 characters.'), h('button', { class: 'btn primary' }, 'Change password'))),
+      }, field('Current password', cur), field('New password', next, 'At least 8 characters.'), h('button', { class: 'btn primary' }, 'Change password')),
+      h('div', { class: 'row sign-out-others' },
+        h('button', {
+          class: 'btn small',
+          onclick: () => attempt(() => api('POST', '/api/sessions/revoke'), 'Other browsers and devices were signed out'),
+        }, 'Sign out other devices'),
+        h('span', { class: 'hint' }, 'Signs out every browser except this one, e.g. after using a shared or lost computer.'))),
     twoFactorCard(await api('GET', '/api/2fa')),
     updatesCard(await api('GET', '/api/updates')),
     alertsCard(s),
