@@ -14,7 +14,10 @@ const MAX_BEHIND_BYTES = 16 * 1024 * 1024;
 // - a viewer this far behind is shown as lagging on the dashboard, and logged at the second mark,
 //   but only once it has stayed behind for LAG_SUSTAIN_MS: a provider that sends video in bursts
 //   (several MB at once) puts every viewer briefly "behind" while the burst drains.
+// Pauses are judged against each stream's own rhythm (see Hub.rhythm); until it is known, only a
+// gap of BOOTSTRAP_FACTOR x STALL_MS counts, so a bursty stream's first gaps aren't flagged.
 const STALL_MS = 5000;
+const BOOTSTRAP_FACTOR = 3;
 const LAG_SHOW_BYTES = 2 * 1024 * 1024;
 const LAG_LOG_BYTES = 4 * 1024 * 1024;
 const LAG_SUSTAIN_MS = 5000;
@@ -65,19 +68,40 @@ class Hub {
     this.lastData = null; // when the provider last sent anything (null until the first chunk)
     this.pauses = 0;
     this.longestPause = 0;
+    this.gaps = []; // recent gaps between bursts (not pauses), to learn the provider's rhythm
     this.result = this.open(url);
   }
 
   /**
-   * How the provider side of this stream is doing: pauses so far (each 5 s or more with no data),
-   * the longest, and how long it has been silent right now (0 when data is flowing).
+   * The provider's usual gap between bursts, in ms (0 until 3 gaps are seen). Providers that build
+   * a channel from HLS segments send each segment at once: a 6 s rhythm is how they deliver, not
+   * a stall.
+   */
+  rhythm() {
+    if (this.gaps.length < 3) return 0;
+    const sorted = [...this.gaps].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)];
+  }
+
+  /** A gap this long is a pause: well past the usual rhythm, and never under stallMs. */
+  pauseAfter() {
+    const r = this.rhythm();
+    return r ? Math.max(this.streams.stallMs, 1.5 * r) : BOOTSTRAP_FACTOR * this.streams.stallMs;
+  }
+
+  /**
+   * How the provider side of this stream is doing: real pauses so far and the longest, how long it
+   * has been silent right now (0 unless that is already a pause), and its burst rhythm in seconds
+   * (0 when it streams steadily).
    */
   health() {
     const silent = this.lastData && !this.closed ? Date.now() - this.lastData : 0;
+    const r = this.rhythm();
     return {
       provider_pauses: this.pauses,
       longest_pause_s: this.pauses ? Math.max(1, Math.round(this.longestPause / 1000)) : 0,
-      silent_s: silent >= this.streams.stallMs ? Math.max(1, Math.floor(silent / 1000)) : 0,
+      silent_s: silent >= this.pauseAfter() ? Math.max(1, Math.floor(silent / 1000)) : 0,
+      burst_s: r >= 2 * this.streams.burstMinMs() ? Math.max(1, Math.round(r / 1000)) : 0,
     };
   }
 
@@ -128,10 +152,16 @@ class Hub {
         const now = Date.now();
         if (this.lastData) {
           const gap = now - this.lastData;
-          if (gap >= this.streams.stallMs) {
+          if (gap >= this.pauseAfter()) {
             this.pauses++;
             this.longestPause = Math.max(this.longestPause, gap);
-            log(`Stream "${this.ch.name}": the provider sent nothing for ${Math.max(1, Math.round(gap / 1000))} s (${ordinal(this.pauses)} pause in ${mins()} min)`);
+            const r = this.rhythm();
+            const usual = r >= 2 * this.streams.burstMinMs() ? `it usually sends every ~${Math.max(1, Math.round(r / 1000))} s; ` : '';
+            log(`Stream "${this.ch.name}": the provider sent nothing for ${Math.max(1, Math.round(gap / 1000))} s (${usual}${ordinal(this.pauses)} pause in ${mins()} min)`);
+          } else if (gap >= this.streams.burstMinMs()) {
+            // A gap between bursts: part of the rhythm (the last 9 are kept).
+            this.gaps.push(gap);
+            if (this.gaps.length > 9) this.gaps.shift();
           }
         }
         this.lastData = now;
@@ -201,6 +231,11 @@ export class Streams {
       this.ctx.log?.(`Stream "${what}": ${reason}`);
     }
     this.lastRefusal.set(sourceId, { what, reason, at: Math.floor(now / 1000) });
+  }
+
+  /** Shorter gaps than this are a steady stream; longer ones are bursts (1 s by default). */
+  burstMinMs() {
+    return this.stallMs / 5;
   }
 
   /** How far behind a client is, in MB: 0 unless it has been over the threshold for a while. */

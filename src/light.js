@@ -282,7 +282,7 @@ export async function serveLight(ctx, res, ch, viewer = null) {
       transcode: job.encoder,
       // The provider (through the shared stream), the encoder, and this viewer, each can fall behind.
       health: () => ({
-        ...(job.hub ? job.hub.health() : { provider_pauses: 0, longest_pause_s: 0, silent_s: 0 }),
+        ...(job.hub ? job.hub.health() : { provider_pauses: 0, longest_pause_s: 0, silent_s: 0, burst_s: 0 }),
         encoder_behind_mb: ctx.streams.behindMb(job.proc?.stdin),
         behind_mb: ctx.streams.behindMb(res),
       }),

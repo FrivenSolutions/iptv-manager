@@ -587,11 +587,13 @@ function healthLine(x) {
   if (x.provider_pauses) parts.push(`provider paused ${x.provider_pauses}× (longest ${x.longest_pause_s} s)`);
   if (x.encoder_behind_mb) parts.push(h('b', { class: 'warn-text' }, `encoder ${x.encoder_behind_mb} MB behind`));
   if (x.behind_mb) parts.push(h('b', { class: 'warn-text' }, `viewer ${x.behind_mb} MB behind`));
-  if (!parts.length) return null;
+  // How this provider delivers, not a problem by itself: shown plainly, or after the warnings.
+  const rhythm = x.burst_s ? `provider sends in ~${x.burst_s} s bursts` : null;
+  if (!parts.length && !rhythm) return null;
   return h('div', {
     class: 'meta watch-health',
-    title: 'Provider pauses: the provider sent nothing for 5 s or more (its side). Viewer behind: this device or its network is not taking the stream as fast as it comes. Encoder behind: ffmpeg cannot keep up (too many light streams for this server?).',
-  }, '⚠ ', parts.map((p, i) => [i ? ' · ' : '', p]));
+    title: 'Bursts: the provider sends the stream a few seconds at a time (usually built from HLS segments); a player with a bigger buffer rides that out. Provider pauses: gaps well past that usual rhythm (its side). Viewer behind: this device or its network is not taking the stream as fast as it comes. Encoder behind: ffmpeg cannot keep up (too many light streams for this server?).',
+  }, parts.length ? ['⚠ ', parts.map((p, i) => [i ? ' · ' : '', p]), rhythm ? ` · ${rhythm}` : ''] : rhythm);
 }
 
 // One stream on the dashboard: who (and which device), what, where from, since when.

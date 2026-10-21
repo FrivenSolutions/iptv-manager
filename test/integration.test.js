@@ -69,7 +69,9 @@ const notified = [];
 // Continuous live streams (XC stream ids 950-959): upstream connections open per id, and made.
 // Live channels 95x stream continuously; ids in live.paused send nothing until removed, and 958
 // sends 64 KB every 20 ms (a fast channel, for a viewer that falls behind).
-const live = { open: new Map(), requests: 0, paused: new Set() };
+// Ids in live.bursty send only in the first 40 ms of every 400 ms, like a provider that delivers
+// a channel segment by segment.
+const live = { open: new Map(), requests: 0, paused: new Set(), bursty: new Set() };
 
 const xmltvTime = (d) => d.toISOString().replace(/[-:T]/g, '').slice(0, 14) + ' +0000';
 function guide(ids) {
@@ -162,7 +164,8 @@ function startUpstream() {
       res.writeHead(200, { 'content-type': 'video/mp2t' });
       const fat = liveId === '958' ? Buffer.alloc(65536, 0x47) : null;
       const timer = setInterval(() => {
-        if (!live.paused.has(liveId)) res.write(fat || `chunk-${liveId};`);
+        if (live.paused.has(liveId) || (live.bursty.has(liveId) && Date.now() % 400 >= 40)) return;
+        res.write(fat || `chunk-${liveId};`);
       }, 20);
       res.on('close', () => {
         clearInterval(timer);
@@ -1499,7 +1502,7 @@ test('stall diagnostics: provider pauses and viewers falling behind, on the dash
     let reading = true;
     (async () => { while (reading) { const { done } = await reader.read().catch(() => ({ done: true })); if (done) break; } })();
     await until(async () => (await row('Pausing'))?.health, 'listed with health');
-    assert.deepEqual((await row('Pausing')).health, { provider_pauses: 0, longest_pause_s: 0, silent_s: 0, behind_mb: 0 }, 'all well');
+    assert.deepEqual((await row('Pausing')).health, { provider_pauses: 0, longest_pause_s: 0, silent_s: 0, burst_s: 0, behind_mb: 0 }, 'all well');
     live.paused.add('957');
     await until(async () => (await row('Pausing')).health.silent_s > 0, 'shown as silent while the provider sends nothing');
     live.paused.delete('957');
@@ -1507,6 +1510,19 @@ test('stall diagnostics: provider pauses and viewers falling behind, on the dash
     const h = (await row('Pausing')).health;
     assert.deepEqual([h.silent_s, h.longest_pause_s >= 1, h.behind_mb], [0, true, 0], 'the viewer kept up: not its fault');
     assert.ok(logs.some((l) => /^Stream "Pausing": the provider sent nothing for \d+ s \(1st pause in [\d.]+ min\)$/.test(l)), logs.join('\n'));
+
+    // A provider that sends in bursts: the rhythm is learned and shown, its gaps aren't pauses,
+    // and only a gap well past it counts.
+    live.bursty.add('957');
+    await until(async () => (await row('Pausing')).health.burst_s > 0, 'rhythm learned');
+    await new Promise((res) => setTimeout(res, 1500));
+    assert.equal((await row('Pausing')).health.provider_pauses, 1, 'bursts are not pauses');
+    live.paused.add('957');
+    await new Promise((res) => setTimeout(res, 1300));
+    live.paused.delete('957');
+    await until(async () => (await row('Pausing')).health.provider_pauses === 2, 'a gap well past the rhythm is');
+    assert.ok(logs.some((l) => l.startsWith('Stream "Pausing": the provider sent nothing for') && l.includes('it usually sends every ~1 s; 2nd pause')), logs.join('\n'));
+    live.bursty.delete('957');
     reading = false;
     ac.abort();
 
