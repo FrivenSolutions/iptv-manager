@@ -587,7 +587,11 @@ stored; it lives in memory.
 | *encoder 3.1 MB behind* | Light streams: ffmpeg can't keep up (too many for this server?) | `the light-stream encoder (ffmpeg) is … MB behind` |
 
 Nothing shown while the player still stalls points at the player itself. When a stream ends, the
-log says whether the provider ended it. On Proxmox, read the log with
+log says whether the provider ended it. When the provider turns a stream down, the log says why,
+such as `the provider refused it (HTTP 403, access refused: user agent, IP lock or account?)` or
+`couldn't reach the provider (ENOTFOUND)`, and the source's page shows the latest one. A 403 that
+only happens through Proxy usually means the provider wants your player's user agent: set it
+under the source's **Advanced → User agent**. On Proxmox, read the log with
 `journalctl -u iptv-manager -f`; on Docker, `docker logs -f simple-iptv-manager`. For Redirect and
 Direct outputs the video doesn't pass through this server, so stalls there are between the player
 and the provider.

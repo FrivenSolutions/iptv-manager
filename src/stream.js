@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { DEFAULT_UA } from './fetch.js';
+import { refusalReason } from './streams.js';
 
 /** Upstream URL for a channel, honoring the extension a client asked for on XC sources. */
 export function upstreamUrl(ch, ext) {
@@ -47,12 +48,14 @@ async function relay(ctx, res, url, output, ch) {
   let up;
   try {
     up = await fetch(url, { headers: { 'user-agent': ch.user_agent || DEFAULT_UA }, signal: ac.signal, redirect: 'follow' });
-  } catch {
+  } catch (e) {
+    if (!ac.signal.aborted) ctx.streams.refused(ch.source_id, ch.name, refusalReason(e));
     if (!res.headersSent) res.writeHead(502).end();
     return;
   }
   if (!up.ok || !up.body) {
     up.body?.cancel().catch(() => {});
+    ctx.streams.refused(ch.source_id, ch.name, refusalReason(null, up.status));
     if (!res.headersSent) res.writeHead(up.status === 404 ? 404 : 502).end();
     return;
   }
@@ -128,12 +131,15 @@ export async function serveVod(ctx, req, res, output, target, viewer = null) {
   let up;
   try {
     up = await fetch(target.url, { headers, signal: ac.signal, redirect: 'follow' });
-  } catch {
+  } catch (e) {
+    if (!ac.signal.aborted) ctx.streams.refused(target.src.id, target.title, refusalReason(e));
     if (!res.headersSent) res.writeHead(502).end();
     return;
   }
   if (!up.ok || !up.body) {
     up.body?.cancel().catch(() => {});
+    // 416: a seek past the end, which players do on purpose; not a refusal.
+    if (up.status !== 416) ctx.streams.refused(target.src.id, target.title, refusalReason(null, up.status));
     if (!res.headersSent) res.writeHead(up.status === 404 || up.status === 416 ? up.status : 502).end();
     return;
   }

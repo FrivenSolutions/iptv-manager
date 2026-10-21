@@ -1238,7 +1238,7 @@ test('proxy mode: viewers of a channel share one upstream stream; a source is ca
   assert.deepEqual([a.status, b.status], [200, 200]);
   assert.match(a.first + b.first, /chunk-950;/);
   assert.equal(live.requests - before, 1, 'two viewers, one upstream connection');
-  assert.deepEqual(await streams(), { open: 1, limit: 2, auto: 2 }, 'the limit comes from the XC account (max_connections 2)');
+  assert.deepEqual(await streams(), { open: 1, limit: 2, auto: 2, refused: null }, 'the limit comes from the XC account (max_connections 2)');
 
   const c = await watch(urls[1]);
   assert.equal(c.status, 200);
@@ -1265,7 +1265,7 @@ test('proxy mode: viewers of a channel share one upstream stream; a source is ca
   await setMax(xcId, 0);
   const all = await Promise.all(urls.map(watch));
   assert.deepEqual(all.map((x) => x.status), [200, 200, 200]);
-  assert.deepEqual(await streams(), { open: 3, limit: 0, auto: 2 });
+  assert.deepEqual(await streams(), { open: 3, limit: 0, auto: 2, refused: null });
   all.forEach((x) => x.stop());
   await until(() => [...live.open.values()].every((n) => n === 0), 'all upstreams closed');
   await setMax(xcId, 1);
@@ -1524,6 +1524,40 @@ test('stall diagnostics: provider pauses and viewers falling behind, on the dash
   } finally {
     [streams.stallMs, streams.lagShowBytes, streams.lagLogBytes, app.ctx.log] = saved;
     live.paused.clear();
+    await api('DELETE', `/api/outputs/${o.id}`);
+  }
+});
+
+test('a proxied stream the provider turns down is logged with why, once a minute, and shown on the source', async () => {
+  const o = (await api('POST', '/api/outputs', { name: 'Refusals' })).data;
+  await api('PUT', `/api/outputs/${o.id}`, { stream_mode: 'proxy', source_ids: [xcId, m3uId], rules: [{ action: 'include', op: 'equals', value: 'us| news' }] });
+  const lines = (await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text()).split('\n');
+  const urlOf = (name) => lines[lines.findIndex((l) => l.endsWith(`,${name}`)) + 1];
+  const logs = [];
+  const savedLog = app.ctx.log;
+  app.ctx.log = (m) => logs.push(m);
+  const src = (await api('GET', `/api/sources/${xcId}`)).data;
+  try {
+    // The fake provider only serves its own user agent; anything else gets 403.
+    assert.equal(src.streams.refused, null);
+    await api('PUT', `/api/sources/${xcId}`, { ...src, user_agent: 'SomethingElse/1' });
+    for (let i = 0; i < 2; i++) assert.equal((await fetch(urlOf('US: NewsNet HD'))).status, 502);
+    const refused = logs.filter((l) => l.startsWith('Stream "US: NewsNet HD"'));
+    assert.deepEqual(refused, ['Stream "US: NewsNet HD": the provider refused it (HTTP 403, access refused: user agent, IP lock or account?)'],
+      'logged with the status and a hint, once for a quick retry');
+    const after = (await api('GET', `/api/sources/${xcId}`)).data.streams.refused;
+    assert.deepEqual([after.what, after.reason.startsWith('the provider refused it (HTTP 403'), typeof after.at], ['US: NewsNet HD', true, 'number']);
+
+    // A provider address that can't be reached: the connection error is named.
+    assert.equal((await fetch(urlOf('NewsNet'))).status, 502);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(logs.some((l) => /^Stream "NewsNet": couldn't reach the provider \(\w+\)$/.test(l)), logs.join('\n'));
+    assert.match((await api('GET', `/api/sources/${m3uId}`)).data.streams.refused.reason, /^couldn't reach the provider/);
+  } finally {
+    app.ctx.log = savedLog;
+    await app.ctx.jobs.idle();
+    await api('PUT', `/api/sources/${xcId}`, src);
+    await app.ctx.jobs.idle();
     await api('DELETE', `/api/outputs/${o.id}`);
   }
 });

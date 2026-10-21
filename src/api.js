@@ -74,7 +74,11 @@ function sourceView(ctx, s) {
     job: ctx.jobs.status(s.id),
     next_refresh_at: ctx.jobs.nextDue(s),
     counts,
-    streams: { open: ctx.streams.open(s.id).size, limit: ctx.streams.limitFor(s.id), auto: autoLimit(s) },
+    streams: {
+      open: ctx.streams.open(s.id).size, limit: ctx.streams.limitFor(s.id), auto: autoLimit(s),
+      // The latest stream the provider turned down (since the app started), and why.
+      refused: ctx.streams.lastRefusal.get(s.id) || null,
+    },
   };
 }
 

@@ -23,6 +23,20 @@ const ordinal = (n) => {
 
 const isHls = (ct, url) => /mpegurl/i.test(ct) || /\.m3u8$/i.test(new URL(url).pathname);
 
+/**
+ * Why the provider turned a stream down, for the log: the connection error, or the HTTP status
+ * with what it usually means.
+ */
+export function refusalReason(err, status) {
+  if (err) return `couldn't reach the provider (${err.cause?.code || err.code || err.message})`;
+  const hint = status === 401 || status === 403 ? 'access refused: user agent, IP lock or account?'
+    : status === 404 ? 'no such stream at the provider'
+    : [429, 458, 509].includes(status) ? 'too many connections on the account?'
+    : status >= 500 ? "an error on the provider's side"
+    : null;
+  return `the provider refused it (HTTP ${status}${hint ? `, ${hint}` : ''})`;
+}
+
 function parseJson(s) {
   try {
     return s ? JSON.parse(s) : null;
@@ -68,12 +82,15 @@ class Hub {
     let up;
     try {
       up = await fetch(url, { headers: { 'user-agent': this.ch.user_agent || DEFAULT_UA }, signal: this.ac.signal, redirect: 'follow' });
-    } catch {
+    } catch (e) {
+      // Aborted means everyone who asked gave up while it was opening: not the provider's doing.
+      if (!this.ac.signal.aborted) this.streams.refused(this.ch.source_id, this.ch.name, refusalReason(e));
       this.close();
       return { status: 502 };
     }
     if (!up.ok || !up.body) {
       up.body?.cancel().catch(() => {});
+      this.streams.refused(this.ch.source_id, this.ch.name, refusalReason(null, up.status));
       this.close();
       return { status: up.status === 404 ? 404 : 502 };
     }
@@ -156,9 +173,26 @@ export class Streams {
     this.hls = new Map(); // channelId -> { source_id, at }
     this.vod = new Map(); // "movie:id" / "episode:id" -> { source_id, n } (open proxied requests)
     this.refusedLogged = new Map(); // sourceId -> time of the last "all in use" log line
+    this.refusalLogged = new Map(); // "source|title|reason" -> time last logged
+    this.lastRefusal = new Map(); // sourceId -> { what, reason, at } (for the Sources page)
     this.stallMs = STALL_MS;
     this.lagShowBytes = LAG_SHOW_BYTES;
     this.lagLogBytes = LAG_LOG_BYTES;
+  }
+
+  /**
+   * The provider turned a stream down. Logged (the same reason for the same title at most once a
+   * minute: HLS players retry segments quickly) and kept as the source's latest refusal.
+   */
+  refused(sourceId, what, reason) {
+    const key = `${sourceId}|${what}|${reason}`;
+    const now = Date.now();
+    if (now - (this.refusalLogged.get(key) || 0) > 60_000) {
+      if (this.refusalLogged.size > 500) this.refusalLogged.clear();
+      this.refusalLogged.set(key, now);
+      this.ctx.log?.(`Stream "${what}": ${reason}`);
+    }
+    this.lastRefusal.set(sourceId, { what, reason, at: Math.floor(now / 1000) });
   }
 
   /** How far behind a client is, in MB (0 while under the dashboard's threshold). */

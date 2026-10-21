@@ -885,7 +885,9 @@ async function sourceDetail(main, id) {
         src.streams?.limit || src.streams?.open
           ? stat(`${src.streams.open}${src.streams.limit ? ` of ${src.streams.limit}` : ''}`, 'streams in use') : null,
         st.epg?.hdhr ? h('div', { class: 'stat' }, h('span', null, `Guide: ${st.epg.hdhr}`)) : null),
-      src.last_error ? h('div', { class: `card ${src.last_status === 'error' ? 'error-card' : 'warn-card'}` }, src.last_error) : null);
+      src.last_error ? h('div', { class: `card ${src.last_status === 'error' ? 'error-card' : 'warn-card'}` }, src.last_error) : null,
+      src.streams?.refused ? h('p', { class: 'note warn', title: 'Proxied streams only. The log has every refusal.' },
+        `Last stream the provider turned down: ${src.streams.refused.what}, ${src.streams.refused.reason.replace(/^the provider /, '')} (${ago(src.streams.refused.at)}).`) : null);
   };
   const refreshSource = async () => {
     const wasBusy = !!src.job;
