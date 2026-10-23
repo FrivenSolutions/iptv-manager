@@ -2403,6 +2403,8 @@ async function watchView(main, outputId, channelId) {
   const search = h('input', { type: 'search', placeholder: 'Search channels or what\'s on', oninput: (e) => { q = e.target.value; drawList(); } });
 
   await loadOutput();
+  // Wide screens: the page takes the whole window, the player all the height (see .watch-page).
+  main.classList.add('watch-page');
   fill(main,
     h('div', { class: 'page-head' }, h('h1', null, 'Watch'), select),
     h('div', { class: 'watch' },

@@ -487,6 +487,18 @@ code { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; backgr
   .watch { grid-template-columns: 1fr; }
   .watch-channels { position: static; max-height: 60vh; }
 }
+/* Wide screens: the Watch page fills the window under the top bar. The player takes all the height
+   left (the picture scaled to fit, black around it), the channel list beside it scrolls. */
+@media (min-width: 1101px) {
+  .content.watch-page { max-width: none; height: calc(100vh - 56px); padding-bottom: 24px; display: flex; flex-direction: column; }
+  .watch-page .page-head { margin-bottom: 14px; }
+  .watch-page .watch { flex: 1; min-height: 0; align-items: stretch; }
+  .watch-page .watch-player { display: flex; flex-direction: column; min-height: 0; }
+  .watch-page .watch-stage { flex: 1; min-height: 0; aspect-ratio: auto; }
+  .watch-page .watch-channels { position: static; max-height: none; min-height: 0; }
+  .watch-page .watch-list-body { flex: 1; min-height: 0; }
+}
+.watch-video { object-fit: contain; }
 
 /* Two-factor sign-in */
 .code-input { font-variant-numeric: tabular-nums; letter-spacing: .08em; max-width: 220px; }
