@@ -2161,7 +2161,7 @@ function loadScript(src, global) {
 }
 
 const CODEC_HINT = 'Browsers play H.264 or H.265 video with AAC audio. Channels in MPEG-2 video or with Dolby (AC-3) audio, '
-  + 'common on HDHomeRun, need a player app such as VLC, TiviMate or Jellyfin.';
+  + 'common on HDHomeRun, are converted on the server when it has ffmpeg; otherwise use Copy link and a player app such as VLC.';
 
 async function watchView(main, outputId, channelId) {
   const outputs = await api('GET', '/api/outputs');
@@ -2177,6 +2177,8 @@ async function watchView(main, outputId, channelId) {
   let oid = [outputId, remembered, outputs[0].id].find((x) => x && outputs.some((o) => o.id === x));
   let lineup = { channels: [] };
   let current = null;
+  // Channels the browser couldn't decode: they play as a copy converted on the server from now on.
+  const convertIds = new Set();
   let player = null;
   let q = '';
 
@@ -2276,16 +2278,27 @@ async function watchView(main, outputId, channelId) {
     showMessage([h('b', null, 'Playback failed. '), 'If it keeps happening, the details below say why.', more]);
   };
 
+  // The browser can't decode this channel: switch to the server's converted copy (once).
+  const convertInstead = (ch) => {
+    if (convertIds.has(ch.id) || !window.MediaSource) return false;
+    convertIds.add(ch.id);
+    play(ch);
+    return true;
+  };
+
   // retry: why this is a reconnect (keeps a small note up until the picture moves again).
   const play = async (ch, retry = null) => {
     stop();
     if (!retry || current !== ch) retries = 0;
     current = ch;
+    const convert = convertIds.has(ch.id);
     wantPlaying = true;
     lastTime = 0;
-    progressAt = Date.now() + 6000; // time to start before the watchdog looks
-    retryNote = !!retry;
-    showMessage(retry ? `Reconnecting (${retry})…` : null, 'warn');
+    // Time to start before the watchdog looks (ffmpeg needs a little longer).
+    progressAt = Date.now() + (convert ? 10_000 : 6000);
+    retryNote = !!retry || convert;
+    showMessage(retry ? `Reconnecting (${retry})…`
+      : convert ? 'Converting on the server: this channel\'s video or sound isn\'t one the browser plays…' : null, 'warn');
     try {
       history.replaceState(null, '', `#/watch/${oid}/${ch.id}`);
     } catch {}
@@ -2296,7 +2309,7 @@ async function watchView(main, outputId, channelId) {
     // The browser's own HLS player only where the libraries can't run (iPhone: no Media Source).
     const nativeHls = !window.MediaSource && !!video.canPlayType('application/vnd.apple.mpegurl');
     try {
-      if (nativeHls && ch.hls_available) {
+      if (nativeHls && ch.hls_available && !convert) {
         // Safari and iPhone: their own HLS player.
         video.src = `${base}?format=m3u8`;
         video.onerror = () => {
@@ -2305,7 +2318,7 @@ async function watchView(main, outputId, channelId) {
           // 3: couldn't decode; 4: format not supported (or the address failed, which explain() tells apart).
           failed(video.src, code === 2 ? 'network' : code === 3 ? 'media' : 'other', [`MediaError ${code}`, video.error?.message].filter(Boolean).join(': '));
         };
-      } else if (ch.format === 'm3u8') {
+      } else if (ch.format === 'm3u8' && !convert) {
         const Hls = await loadScript('/vendor/hls.js', 'Hls');
         if (current !== ch) return;
         if (!Hls.isSupported()) throw new Error('This browser cannot play HLS streams.');
@@ -2315,6 +2328,7 @@ async function watchView(main, outputId, channelId) {
           if (!d.fatal) return;
           const kind = d.type === Hls.ErrorTypes.MEDIA_ERROR ? 'media' : d.type === Hls.ErrorTypes.NETWORK_ERROR ? 'network' : 'other';
           if (kind === 'network' && retries < 3) return reconnect('the connection dropped');
+          if (kind === 'media' && convertInstead(ch)) return;
           failed(`${base}?format=m3u8`, kind, [d.type, d.details, d.reason].filter(Boolean).join(': '));
         });
         hls.loadSource(`${base}?format=m3u8`);
@@ -2324,7 +2338,8 @@ async function watchView(main, outputId, channelId) {
         const mpegts = await loadScript('/vendor/mpegts.js', 'mpegts');
         if (current !== ch) return;
         if (!mpegts.getFeatureList().mseLivePlayback) throw new Error('This browser cannot play live MPEG-TS streams.');
-        const p = mpegts.createPlayer({ type: 'mpegts', isLive: true, url: `${base}?format=ts` },
+        const url = convert ? `${base}?convert=1` : `${base}?format=ts`;
+        const p = mpegts.createPlayer({ type: 'mpegts', isLive: true, url },
           {
             // Decode off the page's thread, and keep a buffer instead of chasing the live edge:
             // streams arrive in bursts, and chasing them skips and stalls.
@@ -2338,7 +2353,8 @@ async function watchView(main, outputId, channelId) {
         p.on(mpegts.Events.ERROR, (type, detail, info) => {
           const kind = type === mpegts.ErrorTypes.MEDIA_ERROR ? 'media' : type === mpegts.ErrorTypes.NETWORK_ERROR ? 'network' : 'other';
           if (kind === 'network' && retries < 3) return reconnect('the connection dropped');
-          failed(`${base}?format=ts`, kind, [type, detail, info?.msg].filter(Boolean).join(': '));
+          if (kind === 'media' && convertInstead(ch)) return;
+          failed(url, kind, [type, detail, info?.msg].filter(Boolean).join(': '));
         });
         p.attachMediaElement(video);
         p.load();
@@ -2416,6 +2432,11 @@ async function watchView(main, outputId, channelId) {
             h('button', { class: 'btn small', title: 'Previous channel', onclick: () => step(-1) }, '‹ Prev'),
             h('button', { class: 'btn small', title: 'Next channel', onclick: () => step(1) }, 'Next ›'),
             h('button', { class: 'btn small', title: 'Full screen (or double-click the picture)', onclick: fullscreen }, 'Full screen'),
+            h('button', {
+              class: 'btn small',
+              title: 'Copy this channel\'s stream link, to play it in VLC or another player app',
+              onclick: () => (current ? copy(`${lineup.stream_base}${current.id}.ts`) : toast('Pick a channel first')),
+            }, 'Copy link'),
             h('button', { class: 'btn small', onclick: () => { wantPlaying = false; stop(); current = null; drawList(); fill(nowLine, h('span', { class: 'meta' }, 'Stopped.')); } }, 'Stop'))),
         message),
       h('section', { class: 'card flush watch-channels' }, h('div', { class: 'pad' }, search), list)));

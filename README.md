@@ -466,8 +466,17 @@ browser can't play a provider's URLs itself. They count toward the source's stre
 on the dashboard as "Web player". MPEG-TS plays through [mpegts.js](https://github.com/xqq/mpegts.js),
 HLS through [hls.js](https://github.com/video-dev/hls.js), and on iPhone through Safari's own
 player. Browsers play H.264 or H.265 video with AAC audio, which is what most providers send.
-Channels in MPEG-2 video or with Dolby (AC-3) audio, common on HDHomeRun, need a player app; the
-page says so when a channel can't play.
+
+Channels in MPEG-2 video or with Dolby (AC-3) audio, common on HDHomeRun, are converted on the
+server when the browser can't decode them: ffmpeg (the same one as for [light
+streams](#light-streams-multi-view)) makes H.264 up to 1080p at the channel's frame rate with AAC
+stereo sound, and the page switches to it by itself and remembers the channel. It counts toward
+**Settings → Light streams → At most at once**, and shows on the dashboard as *Transcoding*.
+Without ffmpeg, or on an iPhone (no Media Source), the page says the channel can't play here.
+
+**Copy link** copies the channel's stream link from the output (`/s/<token>/<channel>.ts`), to
+open in VLC or another player app. It follows the output's stream mode, and anyone with the link
+can play the channel, like the output's playlist link.
 
 ### Movies and series
 

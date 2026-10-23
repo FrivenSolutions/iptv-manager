@@ -22,7 +22,7 @@ import { serveWatch } from './stream.js';
 import { newSecret, checkCode, otpauthUri, qrSvg, newRecoveryCodes, useRecoveryCode } from './totp.js';
 import { clientIp } from './viewers.js';
 import { Attempts, isPrivateAddress } from './guard.js';
-import { ENCODERS, DEFAULT_LIGHT_MAX } from './light.js';
+import { ENCODERS, DEFAULT_LIGHT_MAX, serveLight } from './light.js';
 
 const UPLOAD_LIMIT = 1024 * 1024 * 1024;
 const IMPORT_LIMIT = 50 * 1024 * 1024;
@@ -467,6 +467,9 @@ export function registerApi(router, ctx) {
     const onNow = nowTitles(db, sel.output.sources);
     sendJson(res, 200, {
       paused: !!sel.output.paused,
+      // A channel's stream for player apps (VLC and the like) is this plus "<id>.ts": the output's
+      // own stream link, following its stream mode.
+      stream_base: `${baseUrl(req, db.getSetting('base_url'))}/s/${sel.output.token}/`,
       channels: sel.channels.map((ch) => ({
         id: ch.id, name: ch.name, logo: ch.logo, group: ch.group, chno: ch.chno, source_type: ch.source_type,
         format: watchFormat(sel, ch),
@@ -481,11 +484,15 @@ export function registerApi(router, ctx) {
     const ch = sel?.byId.get(Number(params.chId));
     if (!ch) throw new HttpError(404, 'Channel is not in this output');
     const ext = ['ts', 'm3u8'].includes(query.get('format')) ? query.get('format') : watchFormat(sel, ch);
-    return serveWatch(ctx, res, sel.output, ch, ext, {
+    const viewer = {
       outputId: sel.output.id, output: sel.output.name, who: 'Web player', username: null, ip: clientIp(req),
       what: ch.name, kind: 'live', source: sel.output.sources.find((s) => s.id === ch.source_id)?.name || null,
       sourceId: ch.source_id, epgId: ch.epg_id,
-    });
+    };
+    // ?convert=1: a copy the browser can play (H.264 and AAC), made by ffmpeg, for channels in
+    // MPEG-2 video or Dolby (AC-3) sound.
+    if (query.get('convert') === '1') return serveLight(ctx, res, ch, viewer, { profile: 'browser' });
+    return serveWatch(ctx, res, sel.output, ch, ext, viewer);
   });
   router.post('/api/alerts/test', async (req, res) => {
     const { type, url } = ctx.alerts.target;

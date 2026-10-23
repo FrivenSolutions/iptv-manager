@@ -20,8 +20,21 @@ const MAX_BEHIND_BYTES = 16 * 1024 * 1024;
 // 50/60 fps halves to 25/30; 25/30 fps is left alone.
 const FPS = "fps=fps='if(gt(source_fps,31),source_fps/2,source_fps)'";
 
+/**
+ * What ffmpeg makes:
+ * - light: a 720p copy at no more than 30 fps for multi-view side windows; the sound as it was.
+ * - browser: for the Watch page when the browser can't decode a channel (MPEG-2 video, Dolby AC-3
+ *   sound): H.264 up to 1080p at the channel's own frame rate, and AAC stereo sound.
+ */
+export const PROFILES = {
+  light: { height: 720, halveFps: true, rate: ['2500k', '3000k', '6000k'], audio: ['-c:a', 'copy'] },
+  browser: { height: 1080, halveFps: false, rate: ['6000k', '8000k', '12000k'], audio: ['-c:a', 'aac', '-b:a', '160k', '-ac', '2'] },
+};
+
 /** ffmpeg arguments: input is 'pipe:0' (fed from the shared stream) or a URL ffmpeg fetches itself. */
-export function ffmpegArgs({ input, encoder, userAgent, device = DEVICE }) {
+export function ffmpegArgs({ input, encoder, userAgent, device = DEVICE, profile = 'light' }) {
+  const P = PROFILES[profile] || PROFILES.light;
+  const fps = P.halveFps ? `${FPS},` : '';
   const a = ['-hide_banner', '-loglevel', 'error'];
   if (input !== 'pipe:0') {
     a.push('-nostdin', '-user_agent', userAgent || DEFAULT_UA, '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
@@ -32,12 +45,12 @@ export function ffmpegArgs({ input, encoder, userAgent, device = DEVICE }) {
   if (encoder === 'vaapi') a.push('-hwaccel', 'vaapi', '-hwaccel_device', device, '-hwaccel_output_format', 'vaapi');
   a.push('-i', input, '-map', '0:v:0', '-map', '0:a:0?');
   if (encoder === 'vaapi') {
-    a.push('-vf', `deinterlace_vaapi=rate=frame:auto=1,${FPS},scale_vaapi=w=-2:h='min(720,ih)'`, '-c:v', 'h264_vaapi', '-profile:v', 'main');
+    a.push('-vf', `deinterlace_vaapi=rate=frame:auto=1,${fps}scale_vaapi=w=-2:h='min(${P.height},ih)'`, '-c:v', 'h264_vaapi', '-profile:v', 'main');
   } else {
-    a.push('-vf', `yadif=mode=0:deint=interlaced,${FPS},scale=-2:'min(720,ih)',format=yuv420p`,
+    a.push('-vf', `yadif=mode=0:deint=interlaced,${fps}scale=-2:'min(${P.height},ih)',format=yuv420p`,
       '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-profile:v', 'main');
   }
-  a.push('-b:v', '2500k', '-maxrate', '3000k', '-bufsize', '6000k', '-g', '60', '-bf', '0', '-c:a', 'copy',
+  a.push('-b:v', P.rate[0], '-maxrate', P.rate[1], '-bufsize', P.rate[2], '-g', '60', '-bf', '0', ...P.audio,
     '-f', 'mpegts', '-flush_packets', '1', 'pipe:1');
   return a;
 }
@@ -66,11 +79,14 @@ function run(cmd, args, timeoutMs = 30_000) {
 
 const lastLine = (s) => String(s || '').trim().split(/\r?\n/).filter(Boolean).pop() || '';
 
-/** One channel's ffmpeg and everyone watching its output. */
+/** One channel's ffmpeg (for one profile) and everyone watching its output. */
 class Job {
-  constructor(light, ch) {
+  constructor(light, ch, profile = 'light') {
     this.light = light;
     this.ch = ch;
+    this.profile = profile;
+    this.key = `${ch.id}|${profile}`;
+    this.label = profile === 'browser' ? 'Browser copy' : 'Light stream';
     this.clients = new Set();
     this.closed = false;
     this.stopping = false;
@@ -97,7 +113,7 @@ class Job {
     const input = r.hls ? r.url : 'pipe:0';
     if (r.hls) this.release = ctx.streams.hold({ id: ch.id, source_id: ch.source_id });
     const [bin, ...pre] = this.light.cmd;
-    const p = spawn(bin, [...pre, ...ffmpegArgs({ input, encoder, userAgent: ch.user_agent })], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const p = spawn(bin, [...pre, ...ffmpegArgs({ input, encoder, userAgent: ch.user_agent, profile: this.profile })], { stdio: ['pipe', 'pipe', 'pipe'] });
     this.proc = p;
     this.encoder = encoder;
     p.stdin.on('error', () => {}); // ffmpeg gone while the shared stream still writes
@@ -111,13 +127,13 @@ class Job {
     });
     p.on('close', (code) => {
       if (!this.stopping && this.clients.size) {
-        this.light.ctx.log?.(`Light stream "${ch.name}": ffmpeg stopped${code ? ` (${lastLine(this.err) || `exit ${code}`})` : ''}`);
+        this.light.ctx.log?.(`${this.label} "${ch.name}": ffmpeg stopped${code ? ` (${lastLine(this.err) || `exit ${code}`})` : ''}`);
       }
       this.close();
     });
     if (r.ts) {
       this.hub = hub;
-      p.stdin.iptvmWho = 'the light-stream encoder (ffmpeg)';
+      p.stdin.iptvmWho = this.profile === 'browser' ? 'the browser-copy encoder (ffmpeg)' : 'the light-stream encoder (ffmpeg)';
       p.stdin.iptvmEncoder = true;
       hub.add(p.stdin);
     }
@@ -137,7 +153,7 @@ class Job {
     if (this.closed) return;
     this.closed = true;
     this.stopping = true;
-    if (this.light.jobs.get(this.ch.id) === this) this.light.jobs.delete(this.ch.id);
+    if (this.light.jobs.get(this.key) === this) this.light.jobs.delete(this.key);
     const p = this.proc;
     if (p && p.exitCode == null && p.signalCode == null) {
       p.stdin.destroy(); // leaves the shared stream (which closes if no one else watches)
@@ -232,7 +248,7 @@ export class Light {
       setting: this.setting(),
       device: this.hasDevice(),
       encoder: version ? await this.encoder() : null,
-      active: [...this.jobs.values()].map((j) => ({ channel: j.ch.name, viewers: j.clients.size })),
+      active: [...this.jobs.values()].map((j) => ({ channel: j.ch.name, viewers: j.clients.size, profile: j.profile })),
       max: this.max(),
     };
   }
@@ -252,19 +268,30 @@ function refuse(res, status, message) {
   res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8', 'retry-after': '10', 'cache-control': 'no-cache' }).end(message);
 }
 
-/** A channel's light copy: join the one being made, or start ffmpeg if there's room. */
-export async function serveLight(ctx, res, ch, viewer = null) {
+/**
+ * A channel's light copy (or, profile 'browser', its copy for the Watch page): join the one being
+ * made, or start ffmpeg if there's room. Both kinds count toward the same limit.
+ */
+export async function serveLight(ctx, res, ch, viewer = null, { profile = 'light' } = {}) {
   const light = ctx.light;
-  let job = light.jobs.get(ch.id);
-  if (!job && !(await light.ffmpeg())) return refuse(res, 503, 'Light streams need ffmpeg, which is not installed on this server.');
-  job = light.jobs.get(ch.id);
+  const key = `${ch.id}|${profile}`;
+  const browser = profile === 'browser';
+  let job = light.jobs.get(key);
+  if (!job && !(await light.ffmpeg())) {
+    return refuse(res, 503, `${browser ? 'Converting a channel' : 'Light streams'} need${browser ? 's' : ''} ffmpeg, which is not installed on this server.`);
+  }
+  job = light.jobs.get(key);
   if (!job) {
     const max = light.max();
-    if (light.jobs.size >= max) return refuse(res, 503, `Light streams are all in use (${max} at a time).`);
+    if (light.jobs.size >= max) {
+      return refuse(res, 503, browser
+        ? `The server is already converting ${max} stream${max === 1 ? '' : 's'}, its limit (Settings → Light streams).`
+        : `Light streams are all in use (${max} at a time).`);
+    }
     const admit = ctx.streams.admit(ch);
     if (!admit.ok) return refuse(res, 503, `All ${admit.limit} stream${admit.limit === 1 ? '' : 's'} for this source are in use.`);
-    job = new Job(light, ch);
-    light.jobs.set(ch.id, job);
+    job = new Job(light, ch, profile);
+    light.jobs.set(key, job);
     job.ready = job.start(ctx);
   }
   const r = await job.ready;

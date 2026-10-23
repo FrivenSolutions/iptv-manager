@@ -1378,13 +1378,13 @@ test('light streams: a 720p copy made by ffmpeg while watched, shared, capped, s
     for (const u of [`${base}/live/multi/mv/${chId}.ts?light=1`, `${base}/multi/mv/${chId}.ts?light=1`, `${fullUrls[0]}?light=1`]) {
       const x = await watch(u);
       assert.equal(x.status, 200, u);
-      assert.equal(light.jobs.get(chId).clients.size, 3, `${u} joins the light copy`);
+      assert.equal(light.jobs.get(`${chId}|light`).clients.size, 3, `${u} joins the light copy`);
       x.stop();
-      await until(() => light.jobs.get(chId).clients.size === 2, 'and leaves it');
+      await until(() => light.jobs.get(`${chId}|light`).clients.size === 2, 'and leaves it');
     }
     assert.equal(runs().length, 1, 'still one ffmpeg');
     st = (await api('GET', '/api/light')).data;
-    assert.deepEqual(st.active, [{ channel: 'Live 1', viewers: 2 }]);
+    assert.deepEqual(st.active, [{ channel: 'Live 1', viewers: 2, profile: 'light' }]);
     const watching = (await api('GET', '/api/viewers')).data;
     const rows = watching.filter((v) => v.what === 'Live 1').map((v) => [v.who, v.transcode]).sort();
     // Both light viewers are this machine on one channel: one row, named by the login.
@@ -1410,7 +1410,7 @@ test('light streams: a 720p copy made by ffmpeg while watched, shared, capped, s
     await api('PUT', '/api/settings', { light_max: 4 });
 
     // Stopped as soon as its last viewer leaves; the provider connection stays for the full viewer.
-    const proc = light.jobs.get(chId).proc;
+    const proc = light.jobs.get(`${chId}|light`).proc;
     a.stop();
     await new Promise((res) => setTimeout(res, 100));
     assert.equal(proc.exitCode, null, 'still running for the other light viewer');
@@ -1419,6 +1419,25 @@ test('light streams: a 720p copy made by ffmpeg while watched, shared, capped, s
     assert.equal(live.open.get(provider[0]), 1, 'the full-quality viewer keeps watching');
     full.stop();
     await until(() => live.open.get(provider[0]) === 0, 'provider connection closed with the last viewer');
+
+    // The Watch page's converted copy (?convert=1), for channels the browser can't decode: H.264 up
+    // to 1080p at the channel's own frame rate, with AAC sound.
+    const conv = await fetch(`${base}/api/outputs/${o.id}/watch/${chId}?convert=1`, { headers: { cookie } });
+    assert.equal(conv.status, 200);
+    const convReader = conv.body.getReader();
+    assert.match(new TextDecoder().decode((await convReader.read()).value), /^LIGHT\[libx264\];/);
+    const convArgs = runs().at(-1).join(' ');
+    assert.ok(convArgs.includes('-c:a aac') && convArgs.includes("min(1080,ih)") && !convArgs.includes('source_fps'), convArgs);
+    assert.equal(light.jobs.get(`${chId}|browser`).clients.size, 1, 'its own copy, apart from the light one');
+    await convReader.cancel();
+    await until(() => !light.jobs.has(`${chId}|browser`), 'stopped when the page stops watching');
+    assert.equal((await fetch(`${base}/api/outputs/${o.id}/watch/${chId}?convert=1`)).status, 401, 'signed-in only');
+    // Copy link: the output's own stream link for the channel.
+    const lineup = (await api('GET', `/api/outputs/${o.id}/lineup`)).data;
+    assert.equal(lineup.stream_base, `${base}/s/${o.token}/`);
+    const linked = await fetch(`${lineup.stream_base}${chId}.ts`);
+    assert.equal(linked.status, 200, 'it plays');
+    await linked.body.cancel();
 
     // Settings, the test encode, and backups.
     assert.equal((await api('PUT', '/api/settings', { light_encoder: 'gpu' })).status, 400);
