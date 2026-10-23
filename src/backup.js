@@ -88,6 +88,7 @@ export function exportSettings(db, { secrets = true, appVersion = null } = {}) {
       xc_enabled: !!o.xc_enabled,
       vod_enabled: !!o.vod_enabled,
       light_enabled: !!o.light_enabled,
+      convert_mode: o.convert_mode || 'off',
       paused: !!o.paused,
       xc_password: secrets ? o.xc_password : null,
       sources: db.all('SELECT source_id FROM output_sources WHERE output_id = ? ORDER BY sort', [o.id]).map((r) => r.source_id),
@@ -268,13 +269,14 @@ export function importSettings(db, data) {
     for (const o of data.outputs) {
       const r = db.get(
         `INSERT INTO outputs (name, token, stream_mode, include_all, include_all_movie, include_all_series, number_start, epg_days,
-                              xc_enabled, xc_username, xc_password, name_rules, vod_enabled, light_enabled, paused, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+                              xc_enabled, xc_username, xc_password, name_rules, vod_enabled, light_enabled, convert_mode, paused, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         // Files from before these switches existed: movies and series followed the live TV one.
         [String(o.name || 'Output'), o.token, o.stream_mode, !!o.include_all, o.include_all_movie ?? !!o.include_all,
           o.include_all_series ?? !!o.include_all, o.number_start ?? null, Number(o.epg_days) || 7,
           !!o.xc_enabled && !!o.xc_username && !!o.xc_password, o.xc_username || null, o.xc_password || null,
-          JSON.stringify(checkNameRules(o.name_rules ?? []).rules), !!o.vod_enabled, !!o.light_enabled, !!o.paused, t, t],
+          JSON.stringify(checkNameRules(o.name_rules ?? []).rules), !!o.vod_enabled, !!o.light_enabled,
+          ['needed', 'always'].includes(o.convert_mode) ? o.convert_mode : 'off', !!o.paused, t, t],
       );
       summary.outputs++;
       (o.sources || []).forEach((ref, i) => {

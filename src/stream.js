@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { DEFAULT_UA } from './fetch.js';
 import { refusalReason } from './streams.js';
+import { serveLight } from './light.js';
 
 /** Upstream URL for a channel, honoring the extension a client asked for on XC sources. */
 export function upstreamUrl(ch, ext) {
@@ -164,9 +165,29 @@ export function serveWatch(ctx, res, output, ch, ext, viewer) {
   return proxy(ctx, res, upstreamUrl(ch, ext), output, ch, viewer);
 }
 
-/** Serve a channel according to the output's stream mode. */
+/**
+ * Convert for playback: channels whose video or sound doesn't play everywhere (MPEG-2, Dolby,
+ * MPEG audio; see tsprobe.js) go out as an H.264 + AAC copy made by ffmpeg, shared by everyone on
+ * the channel; the rest pass through unchanged on the shared connection. 'always' converts every
+ * channel. Without ffmpeg, everything passes through as it is.
+ */
+async function serveConverted(ctx, res, output, ch, url, viewer) {
+  const canConvert = !!(await ctx.light.ffmpeg());
+  if (output.convert_mode === 'always' && canConvert) return serveLight(ctx, res, ch, viewer, { profile: 'browser' });
+  const probe = canConvert ? await ctx.streams.probe(ch, upstreamUrl(ch, 'ts')) : { info: null, release: () => {} };
+  try {
+    if (probe.info?.convert) return await serveLight(ctx, res, ch, viewer, { profile: 'browser' });
+    return await proxy(ctx, res, url, output, ch, viewer);
+  } finally {
+    probe.release();
+  }
+}
+
+/** Serve a channel according to the output's stream mode (and its Convert for playback). */
 export async function serveChannel(ctx, res, output, ch, ext, viewer = null) {
   const url = upstreamUrl(ch, ext);
+  // An HLS request stays HLS (players asking for .m3u8 get the playlist); MPEG-TS can be converted.
+  if (output.convert_mode && output.convert_mode !== 'off' && ext !== 'm3u8') return serveConverted(ctx, res, output, ch, url, viewer);
   if (output.stream_mode === 'proxy') return proxy(ctx, res, url, output, ch, viewer);
   if (viewer) ctx.viewers.redirect(viewer);
   res.writeHead(302, { location: url, 'cache-control': 'no-cache' }).end();

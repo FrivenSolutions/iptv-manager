@@ -52,6 +52,8 @@ embedded SQLite database and a few small dependencies.
   guide has run out.
 - **Movies and series** (optional) through an output's Xtream Codes login, picked with the same
   kind of rules on their own tabs.
+- **Convert for playback** (optional, per output): channels in MPEG-2 video or Dolby sound go out
+  as H.264 + AAC, made once on the server, for recorders, browsers and phones.
 - **Light streams** (optional, per output): a 720p copy of each channel made with ffmpeg while it's
   watched, for multi-view players such as TileIPTV on TVs that can't decode several full channels.
 - **Sharing:** extra Xtream Codes logins per output, each removable on its own. Outputs can be
@@ -567,6 +569,31 @@ apt install intel-media-va-driver
 
 If **Test encoder** still fails with Quick Sync, install `intel-media-va-driver-non-free` instead
 (it needs Debian's `non-free` component in the apt sources).
+
+### Convert for playback (recorders, browsers, phones)
+
+Some channels come in codecs that not everything plays: MPEG-2 video and Dolby (AC-3/E-AC-3) or
+MPEG audio, common on HDHomeRun and some providers. Recorded as they are, they're large (an
+HDHomeRun channel runs 6–9 GB an hour), and Jellyfin, a NAS or Plex transcodes them again on every
+playback. **Convert for playback**, in an output's settings, makes them once on this server
+instead:
+
+- **Only channels that need it** (recommended): each channel's codecs are read from the first bytes
+  of its stream (within a fraction of a second) and remembered. H.264 or H.265 with AAC passes
+  through untouched. Anything else goes out as **H.264 up to 1080p at the channel's own frame rate,
+  deinterlaced, with AAC stereo sound**, about 6 Mb/s (2.7 GB an hour).
+- **Always**: every channel is converted. Rarely worth it; re-encoding H.264 loses a little.
+
+The output's streams then go through this server, as with Proxy, whatever its stream mode. Each
+channel is converted once and shared: a recording and someone watching the same channel use one
+ffmpeg and one provider connection. Conversions count toward **Settings → Light streams → At most
+at once** (an N100 with Quick Sync manages about 4 at 1080p), and show on the dashboard as
+*Transcoding*. Without ffmpeg, everything passes through as it is. Players asking for HLS
+(`.m3u8`) get HLS, unconverted.
+
+**For a recorder** (Tvheadend, Jellyfin's DVR, Channels): make an output for it with this set to
+*Only channels that need it*, and give the recorder its M3U and XMLTV (or its Xtream Codes login).
+Everything it records is then H.264 + AAC, ready to play anywhere without transcoding.
 
 ### Stream modes
 

@@ -1083,6 +1083,7 @@ async function outputEditor(main, id) {
     vod_rules: { movie: o.rules.filter((r) => r.kind === 'movie').map((r) => ({ ...r })), series: o.rules.filter((r) => r.kind === 'series').map((r) => ({ ...r })) },
     vod_enabled: o.vod_enabled,
     light_enabled: o.light_enabled,
+    convert_mode: o.convert_mode || 'off',
     name_rules: o.name_rules.map((r) => ({ ...r })),
   };
   let dirty = false;
@@ -1219,7 +1220,16 @@ async function outputEditor(main, id) {
         'Adds a tileiptv-light link to each channel in the M3U playlist: a 720p copy this server makes with ffmpeg while it is watched. Other players ignore it. ',
         lightStatus.ffmpeg ? 'Encoder and limits are under ' : null,
         lightStatus.ffmpeg ? h('a', { href: '#/settings' }, 'Settings') : h('b', { class: 'warn-text' }, 'ffmpeg is not installed on this server, so the links won\'t play yet (see Settings).'),
-        lightStatus.ffmpeg ? '.' : null)));
+        lightStatus.ffmpeg ? '.' : null),
+      field('Convert for playback', h('select', { onchange: (e) => { draft.convert_mode = e.target.value; markDirty(); } },
+        [['off', 'Off: streams as the provider sends them'],
+          ['needed', 'Only channels that need it (MPEG-2 video, Dolby or MPEG sound)'],
+          ['always', 'Always: every channel']].map(([v, l]) => h('option', { value: v, selected: draft.convert_mode === v }, l))),
+      [
+        'Channels in codecs that don\'t play everywhere go out as H.264 video with AAC sound, made once on this server (ffmpeg): ready for browsers, phones and recorders such as Tvheadend or Jellyfin, with nothing to transcode later. ',
+        'Other channels pass through unchanged. This output\'s streams then go through this server, as with Proxy. ',
+        lightStatus.ffmpeg ? null : h('b', { class: 'warn-text' }, 'ffmpeg is not installed on this server, so nothing is converted yet.'),
+      ])));
 
   // --- sources
   const sourcesBox = h('div', { class: 'source-list' });
@@ -1838,6 +1848,7 @@ async function outputEditor(main, id) {
       ].filter((r) => r.value !== ''),
       vod_enabled: draft.vod_enabled,
       light_enabled: draft.light_enabled,
+      convert_mode: draft.convert_mode,
       // Only sent when shown, so an output's rules are never touched with advanced options off.
       name_rules: settings.advanced ? draft.name_rules.filter((r) => r.find !== '') : undefined,
     };
@@ -2410,6 +2421,7 @@ async function watchView(main, outputId, channelId) {
       localStorage.setItem('iptvm.watchOutput', String(oid));
     } catch {}
     lineup = await api('GET', `/api/outputs/${oid}/lineup`);
+    if (window.MediaSource) for (const c of lineup.channels) if (c.codecs?.convert) convertIds.add(c.id);
     drawList();
     if (lineup.paused) showMessage('This output is paused; resume it under Manage output to watch.', 'warn');
   };

@@ -4,6 +4,13 @@
 // Direct and Redirect outputs hand the provider's URL to the player, so they can't be counted.
 import { Readable } from 'node:stream';
 import { DEFAULT_UA } from './fetch.js';
+import { TsProbe } from './tsprobe.js';
+
+// The codecs are read from the first this-many bytes of a stream at most (the tables repeat
+// several times a second, so they're usually in the first few KB).
+const PROBE_BYTES = 2 * 1024 * 1024;
+// At most this much of a stream's start is kept for the first viewer to join.
+const EARLY_BYTES = 8 * 1024 * 1024;
 
 // An HLS channel counts as open this long after its last playlist or segment request.
 const HLS_IDLE_MS = 30_000;
@@ -69,6 +76,15 @@ class Hub {
     this.pauses = 0;
     this.longestPause = 0;
     this.gaps = []; // recent gaps between bursts (not pauses), to learn the provider's rhythm
+    // Kept open without viewers while something is about to join (codec check, ffmpeg starting).
+    this.holds = 0;
+    this.early = []; // the stream's start, read while held open with nobody on it
+    this.earlyBytes = 0;
+    // The stream's codecs (tsprobe.js), read from its first bytes; codecs resolves to them, or
+    // null if they weren't found (not MPEG-TS, or the stream ended first).
+    this.probe = new TsProbe();
+    this.probed = 0;
+    this.codecs = new Promise((resolve) => { this.codecsFound = resolve; });
     this.result = this.open(url);
   }
 
@@ -131,7 +147,21 @@ class Hub {
     return { ts: ct || 'video/mp2t' };
   }
 
+  /** Reads the codecs from the stream's first bytes, then stops looking. */
+  sniff(chunk) {
+    this.probed += chunk.length;
+    const info = this.probe.push(chunk);
+    if (info) this.streams.codecs.set(this.ch.id, info);
+    if (info || this.probed > PROBE_BYTES) {
+      this.probe = null;
+      this.codecsFound(info);
+    }
+  }
+
   add(res) {
+    for (const chunk of this.early) res.write(chunk);
+    this.early = [];
+    this.earlyBytes = 0;
     this.clients.add(res);
     res.on('close', () => {
       this.clients.delete(res);
@@ -148,7 +178,17 @@ class Hub {
       for await (const chunk of Readable.fromWeb(body)) {
         // Clients attach as soon as the response starts; by the first chunk, none left means
         // everyone who asked has gone.
-        if (!this.clients.size) break;
+        if (!this.clients.size && !this.holds) break;
+        if (this.probe) this.sniff(chunk);
+        // Held open with nobody on it yet (codecs being read, ffmpeg starting): keep the start of
+        // the stream for whoever joins first. It usually begins on a whole picture, which a
+        // recording or a player needs; joining later would start mid-picture.
+        if (!this.clients.size) {
+          this.early.push(chunk);
+          this.earlyBytes += chunk.length;
+          while (this.earlyBytes > EARLY_BYTES && this.early.length > 1) this.earlyBytes -= this.early.shift().length;
+          continue;
+        }
         const now = Date.now();
         if (this.lastData) {
           const gap = now - this.lastData;
@@ -213,6 +253,7 @@ class Hub {
   close() {
     if (this.closed) return;
     this.closed = true;
+    this.codecsFound(null);
     this.ac.abort();
     if (this.streams.hubs.get(this.key) === this) this.streams.hubs.delete(this.key);
     for (const res of this.clients) res.end();
@@ -226,6 +267,7 @@ export class Streams {
     this.hubs = new Map(); // "channelId|url" -> Hub (opening, or streaming TS)
     this.hls = new Map(); // channelId -> { source_id, at }
     this.vod = new Map(); // "movie:id" / "episode:id" -> { source_id, n } (open proxied requests)
+    this.codecs = new Map(); // channel id -> { video, audio, convert } (tsprobe.js), as last seen
     this.refusedLogged = new Map(); // sourceId -> time of the last "all in use" log line
     this.refusalLogged = new Map(); // "source|title|reason" -> time last logged
     this.lastRefusal = new Map(); // sourceId -> { what, reason, at } (for the Sources page)
@@ -317,6 +359,33 @@ export class Streams {
 
   touchHls(ch) {
     this.hls.set(ch.id, { source_id: ch.source_id, at: Date.now() });
+  }
+
+  /**
+   * A channel's codecs, read from its stream: remembered from the last time it played, else from
+   * a new shared connection (taking one of the source's slots, like watching). Returns
+   * { info, release }: info is null when unknown (over the limit, HLS, not found in time).
+   * release() lets the connection go; call it once a viewer or ffmpeg has joined, or given up.
+   */
+  async probe(ch, url, timeoutMs = 5000) {
+    const none = { info: null, release: () => {} };
+    const known = this.codecs.get(ch.id);
+    if (known) return { ...none, info: known };
+    if (!this.admit(ch).ok) return none;
+    const hub = this.hub(ch, url);
+    hub.holds++;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      hub.holds--;
+    };
+    const r = await hub.result;
+    if (!r.ts) return { info: null, release };
+    let timer;
+    const info = await Promise.race([hub.codecs, new Promise((res) => { timer = setTimeout(() => res(null), timeoutMs); })]);
+    clearTimeout(timer);
+    return { info, release };
   }
 
   /** Join the shared request for this channel and URL, or start one. */

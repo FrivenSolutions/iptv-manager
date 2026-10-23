@@ -8,6 +8,7 @@ import http from 'node:http';
 import zlib from 'node:zlib';
 import { download, fetchJson, isFetchInternalError } from '../src/fetch.js';
 import { clientAddress, trustedProxies, isPrivateAddress, Attempts } from '../src/guard.js';
+import { TsProbe } from '../src/tsprobe.js';
 import { readGitCommit, currentVersion } from '../src/version.js';
 import { parseM3U, isVod } from '../src/m3u.js';
 import { parseXmltv, parseXmltvTime } from '../src/xmltv.js';
@@ -332,4 +333,24 @@ test('Attempts blocks a key at its limit until the window passes; a success clea
   a.fail('z');
   a.ok('z');
   assert.equal(a.map.has('z'), false);
+});
+
+test('TsProbe reads the codecs from the PAT and PMT, and judges what needs converting', async () => {
+  const { tsStart } = await import('./ts.mjs');
+  const probe = (tracks, split = 0) => {
+    const bytes = Buffer.concat([Buffer.from([1, 2, 3]), tsStart(tracks)]); // a misaligned start
+    const p = new TsProbe();
+    if (!split) return p.push(bytes);
+    let r = null;
+    for (let i = 0; i < bytes.length && !r; i += split) r = p.push(bytes.subarray(i, i + split));
+    return r;
+  };
+  assert.deepEqual(probe([{ type: 0x02 }, { type: 0x81 }]), { video: 'mpeg2', audio: 'ac3', convert: true }, 'an ATSC tuner channel');
+  assert.deepEqual(probe([{ type: 0x1b }, { type: 0x0f }], 61), { video: 'h264', audio: 'aac', convert: false }, 'read across small chunks');
+  assert.deepEqual(probe([{ type: 0x1b }, { type: 0x06, descriptors: [0x6a, 1, 0] }]), { video: 'h264', audio: 'ac3', convert: true }, 'DVB Dolby');
+  assert.deepEqual(probe([{ type: 0x24 }, { type: 0x0f }]), { video: 'hevc', audio: 'aac', convert: false });
+  assert.deepEqual(probe([{ type: 0x1b }, { type: 0x03 }]), { video: 'h264', audio: 'mp2', convert: true }, 'MPEG audio');
+  assert.deepEqual(probe([{ type: 0x03 }]), { video: null, audio: 'mp2', convert: false }, 'radio is left alone');
+  assert.deepEqual(probe([{ type: 0x1b }]), { video: 'h264', audio: null, convert: false });
+  assert.equal(new TsProbe().push(Buffer.from('not a transport stream at all, just text '.repeat(40))), null);
 });

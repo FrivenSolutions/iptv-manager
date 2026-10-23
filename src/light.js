@@ -98,9 +98,21 @@ class Job {
   async start(ctx) {
     const { ch } = this;
     const hub = ctx.streams.hub(ch, upstreamUrl(ch, 'ts'));
+    // Held open until ffmpeg joins: picking the encoder can take a moment (a test encode, the first
+    // time), and a shared stream with nobody on it would close at its first data.
+    hub.holds++;
+    try {
+      return await this.attach(ctx, hub);
+    } finally {
+      hub.holds--;
+    }
+  }
+
+  async attach(ctx, hub) {
+    const { ch } = this;
     const r = await hub.result;
     if (this.closed) {
-      setImmediate(() => { if (!hub.clients.size) hub.close(); });
+      setImmediate(() => { if (!hub.clients.size && !hub.holds) hub.close(); });
       return { status: 503 };
     }
     if (r.status) {

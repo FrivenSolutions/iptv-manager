@@ -11,7 +11,7 @@ import { checkSession, hashPassword, randomToken } from './auth.js';
 import { Jobs } from './jobs.js';
 import { registerApi } from './api.js';
 import { loadOutput, selectChannels, evaluateCategories, nameCleaner, checkNameRules, parseNameRules, categoryAffixer } from './filters.js';
-import { buildM3U, streamUrl, streamExt } from './outputs/m3u.js';
+import { buildM3U, streamUrl, streamExt, converts } from './outputs/m3u.js';
 import { writeEpg, EpgCache } from './outputs/epg.js';
 import { findXcOutput, playerApi } from './outputs/xc.js';
 import { serveChannel, serveSegment, serveVod } from './stream.js';
@@ -288,7 +288,7 @@ export function createApp({
   };
   // Stream links carry the credentials of the login that asked for the playlist, never another's.
   const xcUrl = (req, sel, username, password) => (ch) => {
-    if (sel.output.stream_mode === 'direct') return ch.url;
+    if (sel.output.stream_mode === 'direct' && !converts(sel.output)) return ch.url;
     return `${base(req)}/live/${encodeURIComponent(username)}/${encodeURIComponent(password)}/${ch.id}.${streamExt(ch.url)}`;
   };
 

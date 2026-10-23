@@ -27,6 +27,7 @@ import { ENCODERS, DEFAULT_LIGHT_MAX, serveLight } from './light.js';
 const UPLOAD_LIMIT = 1024 * 1024 * 1024;
 const IMPORT_LIMIT = 50 * 1024 * 1024;
 const LOGIN_LOCK_AFTER = 5;
+const CONVERT_MODES = ['off', 'needed', 'always'];
 const LOGIN_LOCK_S = 60;
 
 const str = (v, max = 2000) => (v == null ? '' : String(v).trim().slice(0, max));
@@ -180,6 +181,7 @@ function outputView(req, ctx, o, withDetail = false) {
     xc_enabled: !!o.xc_enabled,
     vod_enabled: !!o.vod_enabled,
     light_enabled: !!o.light_enabled,
+    convert_mode: o.convert_mode || 'off',
     paused: !!o.paused,
     xc_username: o.xc_username,
     xc_password: o.xc_password,
@@ -476,6 +478,8 @@ export function registerApi(router, ctx) {
         // Xtream Codes accounts serve both; Safari plays HLS by itself.
         hls_available: ch.source_type === 'xc' || watchFormat(sel, ch) === 'm3u8',
         now: ch.epg_id ? onNow.get(`${ch.source_id}|${ch.epg_id}`) || null : null,
+        // As last seen in its stream ({ video, audio, convert }), null until it has played.
+        codecs: ctx.streams.codecs.get(ch.id) || null,
       })),
     });
   });
@@ -899,6 +903,10 @@ export function registerApi(router, ctx) {
       );
       if (nameRules) db.run('UPDATE outputs SET name_rules = ? WHERE id = ?', [JSON.stringify(nameRules.rules), o.id]);
       if (body.light_enabled !== undefined) db.run('UPDATE outputs SET light_enabled = ? WHERE id = ?', [bool(body.light_enabled), o.id]);
+      if (body.convert_mode !== undefined) {
+        if (!CONVERT_MODES.includes(body.convert_mode)) throw new HttpError(400, 'Unknown conversion setting');
+        db.run('UPDATE outputs SET convert_mode = ? WHERE id = ?', [body.convert_mode, o.id]);
+      }
       for (const kind of ['movie', 'series']) {
         const key = `include_all_${kind}`;
         if (body[key] !== undefined) db.run(`UPDATE outputs SET ${key} = ? WHERE id = ?`, [bool(body[key]), o.id]);
@@ -949,9 +957,9 @@ export function registerApi(router, ctx) {
     const id = db.tx(() => {
       const copyId = db.get(
         `INSERT INTO outputs (name, token, stream_mode, include_all, include_all_movie, include_all_series, number_start, epg_days,
-                              xc_enabled, xc_username, xc_password, name_rules, vod_enabled, light_enabled, paused, created_at, updated_at)
+                              xc_enabled, xc_username, xc_password, name_rules, vod_enabled, light_enabled, convert_mode, paused, created_at, updated_at)
          SELECT ?, ?, stream_mode, include_all, include_all_movie, include_all_series, number_start, epg_days,
-                0, NULL, NULL, name_rules, vod_enabled, light_enabled, paused, ?, ?
+                0, NULL, NULL, name_rules, vod_enabled, light_enabled, convert_mode, paused, ?, ?
            FROM outputs WHERE id = ? RETURNING id`,
         [`${o.name} (copy)`.slice(0, 200), randomToken(), t, t, o.id],
       ).id;

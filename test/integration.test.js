@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { tsStart } from './ts.mjs';
 import { createApp } from '../src/app.js';
 import { openDb } from '../src/db.js';
 import { importSettings } from '../src/backup.js';
@@ -156,6 +157,21 @@ function startUpstream() {
         `<channel id="${id}"><display-name>${id}</display-name>${icon ? `<icon src="${icon}"/>` : ''}</channel>\n` +
         (channelOnly ? '' : `<programme start="${xmltvTime(new Date(now + fromH * 3600_000))}" stop="${xmltvTime(new Date(now + toH * 3600_000))}" channel="${id}"><title>${title}</title></programme>\n`)).join('');
       return res.end(guide([['newsnet.us', 'NewsNet'], ['arena.uk', 'Arena Sports'], ['dailynews.us', 'Daily News']]).replace('</tv>', `${events}</tv>`));
+    }
+    // Real MPEG-TS tables: 960 is an old tuner channel (MPEG-2 video, AC-3 sound), 961 H.264 + AAC.
+    const tsId = /^\/live\/xu\/xp\/(96\d)\.ts$/.exec(u.pathname)?.[1];
+    if (tsId) {
+      live.requests++;
+      live.open.set(tsId, (live.open.get(tsId) || 0) + 1);
+      const tables = tsStart(tsId === '960' ? [{ type: 0x02 }, { type: 0x81 }] : [{ type: 0x1b }, { type: 0x0f }]);
+      res.writeHead(200, { 'content-type': 'video/mp2t' });
+      res.write(tables);
+      const timer = setInterval(() => res.write(tables), 20);
+      res.on('close', () => {
+        clearInterval(timer);
+        live.open.set(tsId, live.open.get(tsId) - 1);
+      });
+      return;
     }
     const liveId = /^\/live\/xu\/xp\/(95\d)\.ts$/.exec(u.pathname)?.[1];
     if (liveId) {
@@ -1626,6 +1642,101 @@ test('a light-stream encoder buried under a burst skips ahead to live instead of
     light.stop();
     [light.cmd, streams.maxBehindBytes, app.ctx.log] = saved;
     light.reset();
+    await api('DELETE', `/api/outputs/${o.id}`);
+  }
+});
+
+test('Convert for playback: only channels in codecs that don\'t play everywhere go out as H.264 + AAC; the rest pass through', async () => {
+  xcCats.push({ category_id: '36', category_name: 'US| CODECS' });
+  xcStreams.push(
+    { num: 160, name: 'Old Tuner', stream_id: 960, stream_icon: '', epg_channel_id: '', category_id: '36' },
+    { num: 161, name: 'Modern', stream_id: 961, stream_icon: '', epg_channel_id: '', category_id: '36' },
+  );
+  await api('POST', `/api/sources/${xcId}/refresh`);
+  await app.ctx.jobs.idle();
+  const { light } = app.ctx;
+  const ffmpegLog = path.join(os.tmpdir(), `iptvm-convert-${process.pid}.log`);
+  fs.rmSync(ffmpegLog, { force: true });
+  process.env.FAKE_FFMPEG_LOG = ffmpegLog;
+  const saved = light.cmd;
+  light.cmd = [process.execPath, fileURLToPath(new URL('./fake-ffmpeg.mjs', import.meta.url))];
+  light.reset();
+  const runs = () => (fs.existsSync(ffmpegLog) ? fs.readFileSync(ffmpegLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : [])
+    .filter((a) => a.includes('pipe:1') && !a.includes('lavfi'));
+  const until = async (cond, what) => {
+    for (const end = Date.now() + 8000; Date.now() < end && !(await cond());) await new Promise((r) => setTimeout(r, 30));
+    assert.ok(await cond(), what);
+  };
+  // The first bytes a player gets, then hang up.
+  const first = async (url) => {
+    const r = await fetch(url);
+    if (r.status !== 200) return { status: r.status };
+    const reader = r.body.getReader();
+    const { value } = await reader.read();
+    await reader.cancel();
+    return { status: 200, bytes: Buffer.from(value) };
+  };
+  const o = (await api('POST', '/api/outputs', { name: 'Recorder' })).data;
+  try {
+    assert.equal((await api('PUT', `/api/outputs/${o.id}`, { convert_mode: 'sometimes' })).status, 400);
+    let r = await api('PUT', `/api/outputs/${o.id}`, {
+      stream_mode: 'direct', convert_mode: 'needed', xc_enabled: true, xc_username: 'rec', xc_password: 'rp', source_ids: [xcId],
+      rules: [{ action: 'include', op: 'equals', value: 'us| codecs' }],
+    });
+    assert.equal(r.data.convert_mode, 'needed');
+    // Direct output, but its streams go through here so they can be converted.
+    const text = await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text();
+    const urls = text.split('\n').filter((l) => l.startsWith('http'));
+    assert.ok(urls.every((u) => u.startsWith(`${base}/s/${o.token}/`)), urls.join('\n'));
+    const urlOf = (name) => text.split('\n')[text.split('\n').findIndex((l) => l.endsWith(`,${name}`)) + 1];
+
+    // MPEG-2 + AC-3: converted (the stand-in ffmpeg marks its output).
+    const old = await first(urlOf('Old Tuner'));
+    assert.equal(old.status, 200);
+    assert.match(old.bytes.toString('latin1'), /^LIGHT\[libx264\];/);
+    const args = runs().at(-1).join(' ');
+    assert.ok(args.includes('-c:a aac') && args.includes('min(1080,ih)'), args);
+    // H.264 + AAC: the provider's bytes, untouched; no ffmpeg.
+    const before = runs().length;
+    const modern = await first(urlOf('Modern'));
+    assert.equal(modern.status, 200);
+    assert.equal(modern.bytes[0], 0x47, 'MPEG-TS straight from the provider');
+    assert.equal(runs().length, before);
+    await until(() => !light.jobs.size, 'conversion stopped with its viewer');
+
+    // What was found shows in the lineup.
+    const lineup = (await api('GET', `/api/outputs/${o.id}/lineup`)).data;
+    const codecs = Object.fromEntries(lineup.channels.map((c) => [c.name, c.codecs]));
+    assert.deepEqual(codecs, { 'Old Tuner': { video: 'mpeg2', audio: 'ac3', convert: true }, Modern: { video: 'h264', audio: 'aac', convert: false } });
+
+    // Through the Xtream Codes login too; HLS requests stay HLS.
+    assert.match((await first(`${base}/live/rec/rp/${lineup.channels.find((c) => c.name === 'Old Tuner').id}.ts`)).bytes.toString('latin1'), /^LIGHT\[/);
+    // "Always": every channel.
+    await api('PUT', `/api/outputs/${o.id}`, { convert_mode: 'always' });
+    assert.match((await first(urlOf('Modern'))).bytes.toString('latin1'), /^LIGHT\[/);
+    await until(() => !light.jobs.size, 'stopped');
+
+    // Without ffmpeg: everything passes through as it is.
+    await api('PUT', `/api/outputs/${o.id}`, { convert_mode: 'needed' });
+    light.cmd = [path.join(os.tmpdir(), 'no-such-ffmpeg-here')];
+    light.reset();
+    assert.equal((await first(urlOf('Old Tuner'))).bytes[0], 0x47);
+
+    // Kept in backups and copies; off again gives the provider's own links in Direct mode.
+    assert.equal((await api('GET', '/api/export')).data.outputs.find((x) => x.token === o.token).convert_mode, 'needed');
+    const dupe = (await api('POST', `/api/outputs/${o.id}/clone`)).data;
+    assert.equal(dupe.convert_mode, 'needed');
+    await api('DELETE', `/api/outputs/${dupe.id}`);
+    await api('PUT', `/api/outputs/${o.id}`, { convert_mode: 'off' });
+    const direct = (await (await fetch(`${base}/o/${o.token}/playlist.m3u`)).text()).split('\n').filter((l) => l.startsWith('http'));
+    assert.ok(direct.every((u) => u.startsWith(`${up}/live/xu/xp/`)), direct.join('\n'));
+    await until(() => live.open.get('960') === 0 && live.open.get('961') === 0, 'provider connections closed');
+  } finally {
+    light.stop();
+    light.cmd = saved;
+    light.reset();
+    delete process.env.FAKE_FFMPEG_LOG;
+    fs.rmSync(ffmpegLog, { force: true });
     await api('DELETE', `/api/outputs/${o.id}`);
   }
 });

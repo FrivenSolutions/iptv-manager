@@ -3,9 +3,12 @@ export function streamExt(url) {
   return m ? m[1].toLowerCase() : 'ts';
 }
 
+/** Whether the output converts channels for playback (stream.js), so its streams go through here. */
+export const converts = (output) => !!output.convert_mode && output.convert_mode !== 'off';
+
 /** The URL an IPTV client should play for a channel in this output. */
 export function streamUrl(base, output, ch) {
-  if (output.stream_mode === 'direct') return ch.url;
+  if (output.stream_mode === 'direct' && !converts(output)) return ch.url;
   return `${base}/s/${output.token}/${ch.id}.${streamExt(ch.url)}`;
 }
 
@@ -27,7 +30,7 @@ export function buildM3U(output, channels, base, urlFor = (ch) => streamUrl(base
     line += `,${String(ch.name).replace(/[\r\n]+/g, ' ')}`;
     out.push(line);
     // Per-stream player options only make sense when the client talks to the provider itself.
-    if (output.stream_mode === 'direct') out.push(...ch.opts);
+    if (output.stream_mode === 'direct' && !converts(output)) out.push(...ch.opts);
     out.push(urlFor(ch));
   }
   return out.join('\n') + '\n';

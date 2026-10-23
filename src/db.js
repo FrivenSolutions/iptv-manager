@@ -347,6 +347,11 @@ const MIGRATIONS = [
   -- Light streams: the M3U playlist offers a 720p copy of each channel (tileiptv-light).
   ALTER TABLE outputs ADD COLUMN light_enabled INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- Convert for playback: 'off', 'needed' (channels in codecs that don't play everywhere, such as
+  -- MPEG-2 video or Dolby sound) or 'always'. Converted streams are H.264 with AAC sound.
+  ALTER TABLE outputs ADD COLUMN convert_mode TEXT NOT NULL DEFAULT 'off';
+  `,
 ];
 
 // node:sqlite refuses undefined and booleans; map them to what SQLite stores.
